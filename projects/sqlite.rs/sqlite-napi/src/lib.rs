@@ -3,8 +3,8 @@
 use napi::bindgen_prelude::{BigInt, Buffer};
 use napi_derive::napi;
 use sqlite::{
-    RecordLimits, RecordValue, SchemaObjectKind, TableLimits, TextEncoding, blank_database, decode_library_version,
-    decode_record, read_existing, read_named_table, read_schema, validate_database,
+    RecordLimits, RecordValue, SchemaObjectKind, TableLimits, TextEncoding, decode_library_version, decode_record,
+    read_named_table, read_schema, validate_database,
 };
 
 /// Optional resource bounds for each schema or table scan.
@@ -259,20 +259,16 @@ impl SqliteDatabase {
     /// Opens a blank in-memory SQLite format-3 snapshot.
     #[napi(factory)]
     pub fn openInMemory() -> napi::Result<Self> {
-        let bytes = blank_database().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        Ok(Self { bytes, path: None })
+        let database = sqlite::SqliteDatabase::open_in_memory().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        Ok(Self { bytes: database.pages().to_vec(), path: None })
     }
 
-    /// Opens or creates a file-backed SQLite snapshot (main-file only).
+    /// Opens or creates a file-backed SQLite snapshot, replaying `-wal` or a hot `-journal` in memory.
     #[napi(factory)]
     pub fn open(path: String) -> napi::Result<Self> {
         let path_buf = std::path::PathBuf::from(&path);
-        if path_buf.exists() {
-            let bytes = read_existing(&path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-            return Ok(Self { bytes, path: Some(path_buf) });
-        }
-        let bytes = blank_database().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        Ok(Self { bytes, path: Some(path_buf) })
+        let database = sqlite::SqliteDatabase::open(&path_buf).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        Ok(Self { bytes: database.pages().to_vec(), path: Some(path_buf) })
     }
 
     /// File path when file-backed, otherwise `null`.
