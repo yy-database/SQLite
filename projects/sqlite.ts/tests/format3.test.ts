@@ -331,16 +331,24 @@ test("update delete and rollback stay externally consistent", () => {
   }
 });
 
-test("WITHOUT ROWID tables are rejected explicitly", () => {
+test("WITHOUT ROWID rows are read from the primary-key index b-tree", () => {
   const space = workspace("without-rowid");
   try {
     const oracle = new BetterSqlite(space.path);
     oracle.prepare("create table wo (k text primary key, v integer) without rowid").run();
+    oracle.prepare("insert into wo values ('b', 2)").run();
     oracle.prepare("insert into wo values ('a', 1)").run();
+    oracle.prepare("insert into wo values ('c', 3)").run();
     oracle.close();
 
     const reader = openDatabase(space.path);
-    assert.throws(() => reader.table("wo"), /WITHOUT ROWID|without rowid|index b-tree|unsupported/i);
+    const rows = reader.tableWithoutRowid("wo");
+    assert.deepEqual(
+      rows.map((columns) => columns.map((value) => value.valueText ?? Number(value.valueInteger))),
+      [["a", 1], ["b", 2], ["c", 3]],
+    );
+    assert.deepEqual(rows[0].map((value) => value.kind), ["text", "integer"]);
+    assert.throws(() => reader.table("wo"), /index b-tree|unsupported/i);
   } finally {
     space.dispose();
   }

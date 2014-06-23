@@ -4,7 +4,7 @@ use napi::bindgen_prelude::{BigInt, Buffer};
 use napi_derive::napi;
 use sqlite::{
     RecordLimits, RecordValue, SchemaObjectKind, TableLimits, TextEncoding, decode_library_version, decode_record,
-    read_named_table, read_schema, validate_database,
+    read_named_table, read_named_without_rowid, read_schema, validate_database,
 };
 
 /// Optional resource bounds for each schema or table scan.
@@ -147,6 +147,19 @@ fn build_decoded_rows(bytes: &[u8], rows: Vec<sqlite::TableRow>, limits: TableLi
                     columns: columns.into_iter().map(record_value).collect(),
                 },
             )
+        })
+        .collect()
+}
+
+fn build_decoded_payloads(bytes: &[u8], payloads: Vec<Vec<u8>>, limits: TableLimits) -> napi::Result<Vec<Vec<SqliteRecordValue>>> {
+    let encoding = detect_encoding(bytes)?;
+    let record_limits = RecordLimits { max_columns: 1024, max_payload_bytes: limits.max_payload_bytes.max(1_048_576) };
+    payloads
+        .into_iter()
+        .map(|payload| {
+            decode_record(&payload, encoding, record_limits)
+                .map(|columns| columns.into_iter().map(record_value).collect())
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
         .collect()
 }
@@ -327,6 +340,15 @@ impl SqliteDatabase {
         let resolved = SqliteReadLimits::resolve(limits);
         let rows = read_named_table(&self.bytes, &name, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
         build_decoded_rows(&self.bytes, rows, resolved)
+    }
+
+    /// Reads decoded typed records from a WITHOUT ROWID table in primary-key order.
+    #[napi]
+    pub fn tableWithoutRowid(&self, name: String, limits: Option<SqliteReadLimits>) -> napi::Result<Vec<Vec<SqliteRecordValue>>> {
+        let resolved = SqliteReadLimits::resolve(limits);
+        let payloads =
+            read_named_without_rowid(&self.bytes, &name, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        build_decoded_payloads(&self.bytes, payloads, resolved)
     }
 
     /// Reads raw records (undecoded payload) from an ordinary rowid table.
