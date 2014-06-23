@@ -18,3 +18,5 @@ projects/sqlite.rs/.cargo/config.toml
 projects/sqlite.rs/sqlite-napi/sqlite.node
 node_modules
 *.tsbuildinfo
+__pycache__/
+*.pyc
