@@ -1,0 +1,27 @@
+name: Contract
+
+on:
+  push:
+    branches: [ dev, master ]
+  pull_request:
+    branches: [ dev, master ]
+
+jobs:
+  ts-py-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.3
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Assert the checkout has no native artifact
+        run: test ! -e projects/sqlite.rs/sqlite-napi/sqlite.node
+      - name: Install SQLite test dependencies
+        run: pnpm --dir projects/sqlite.ts install --frozen-lockfile
+      - name: TS and PY contract gate
+        run: node scripts/check-test-floor.mjs

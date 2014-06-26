@@ -22,6 +22,6 @@ jobs:
             override: true
             components: rustfmt, clippy
       - name: Build
-        run: cargo build --release
+        run: cargo build --release --manifest-path projects/sqlite.rs/Cargo.toml --workspace
       - name: Tests
-        run: cargo test --release
+        run: cargo test --release --manifest-path projects/sqlite.rs/Cargo.toml --workspace
