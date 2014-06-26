@@ -79,6 +79,15 @@ function readWithoutRowid({ path, table }) {
     .map((columns) => columns.map(decodeValue));
 }
 
+function readIndex({ path, index }) {
+  return native.SqliteDatabase.open(path)
+    .index(index)
+    .map((row) => ({
+      rowid: String(row.rowid),
+      columns: row.columns.map(decodeValue),
+    }));
+}
+
 function meta({ path }) {
   const database = native.SqliteDatabase.open(path);
   const pages = database.pages();
@@ -105,7 +114,7 @@ function oracle({ path, sql }) {
 
 const [command, payload] = process.argv.slice(2);
 const input = JSON.parse(payload ?? readFileSync(0, "utf8"));
-const handlers = { build, read, readWithoutRowid, schema, meta, oracle };
+const handlers = { build, read, readWithoutRowid, readIndex, schema, meta, oracle };
 const handler = handlers[command];
 if (!handler) {
   throw new Error(`unknown bridge command ${command}`);

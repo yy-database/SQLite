@@ -73,5 +73,9 @@ def native_schema(path: pathlib.Path) -> list[dict]:
     return call("schema", {"path": str(path)})
 
 
+def native_index(path: pathlib.Path, index_name: str) -> list[dict]:
+    return call("readIndex", {"path": str(path), "index": index_name})
+
+
 def oracle(path: pathlib.Path, sql: str) -> object:
     return call("oracle", {"path": str(path), "sql": sql})
