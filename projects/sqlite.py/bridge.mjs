@@ -96,6 +96,8 @@ function meta({ path }) {
     bytes: pages.length,
     pageSize: rawPageSize === 1 ? 65536 : rawPageSize,
     databasePages: pages.readUInt32BE(28),
+    encoding: database.encoding(),
+    textEncoding: pages.readUInt32BE(56),
   };
 }
 

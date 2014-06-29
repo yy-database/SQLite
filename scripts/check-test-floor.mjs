@@ -11,8 +11,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const TS_FLOOR = 11;
-const PY_FLOOR = 11;
+const TS_FLOOR = 15;
+const PY_FLOOR = 15;
 const PYTHON = process.env.PYTHON ?? (process.platform === "win32" ? "python" : "python3");
 const manifest = JSON.parse(readFileSync(join(root, "scripts", "external-truth.json"), "utf8"));
 const allowedSources = new Set(manifest.sources);
