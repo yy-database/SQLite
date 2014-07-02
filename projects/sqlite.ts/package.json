@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "pretest": "node ../../scripts/build-napi.mjs",
-    "test": "node --experimental-strip-types --test \"tests/**/*.test.ts\""
+    "test": "node --experimental-strip-types --test \"tests/**/*.test.ts\"",
+    "examples": "node --experimental-strip-types examples/roundtrip.ts"
   },
   "devDependencies": {
     "better-sqlite3": "^12.2.0"
