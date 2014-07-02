@@ -1,0 +1,185 @@
+{
+  "description": "Feature scenario catalog. Every row targets one implementation risk in database.rs and must have a falsifiable external oracle.",
+  "scenarios": [
+    {
+      "id": "narrow-leaf-split",
+      "title": "Narrow rows fill multiple leaf pages",
+      "capability": "leaf-split",
+      "risk": "Leaf split and divider keys must preserve rowid order across pages",
+      "scale": { "rows": 1000, "shape": "narrow rows (id, label)", "pageSize": 1024, "minPages": 2 },
+      "oracle": { "sources": ["better-sqlite3", "python-sqlite3"], "method": "row-by-row order comparison plus PRAGMA integrity_check" },
+      "cases": {
+        "sqlite.ts": "narrow rows fill multiple leaf pages with matching dividers",
+        "sqlite.py": "test_narrow_rows_fill_multiple_leaf_pages"
+      }
+    },
+    {
+      "id": "wide-overflow",
+      "title": "Wide rows with overflow payloads",
+      "capability": "overflow",
+      "risk": "Overflow chain ownership, payload split and repeated 3000 byte blobs",
+      "scale": { "rows": 1000, "shape": "every 10th row carries a 3000 byte BLOB", "pageSize": 1024, "minPages": 2 },
+      "oracle": { "sources": ["better-sqlite3", "python-sqlite3"], "method": "per-row sha256 of the blob plus PRAGMA integrity_check" },
+      "cases": {
+        "sqlite.ts": "wide rows round trip every overflow payload",
+        "sqlite.py": "test_wide_rows_round_trip_overflow_payloads"
+      }
+    },
+    {
+      "id": "middle-delete",
+      "title": "Shuffled rowids with a middle delete",
+      "capability": "internal-page",
+      "risk": "Interior page upper-bound keys and routing after deleting a contiguous middle range",
+      "scale": { "rows": 1000, "shape": "shuffled rowids then delete 200 middle rows", "pageSize": 512, "minPages": 2 },
+      "oracle": { "sources": ["better-sqlite3", "python-sqlite3"], "method": "row-by-row comparison of the surviving 800 rows in both directions plus PRAGMA integrity_check" },
+      "cases": {
+        "sqlite.ts": "deleting the middle 200 rows keeps interior routing exact",
+        "sqlite.py": "test_middle_delete_keeps_interior_routing"
+      }
+    },
+    {
+      "id": "without-rowid",
+      "title": "WITHOUT ROWID shuffled insert",
+      "capability": "without-rowid",
+      "risk": "Primary-key index b-tree walk when rows were inserted out of key order",
+      "scale": { "rows": 1000, "shape": "WITHOUT ROWID table with shuffled keys", "pageSize": 1024, "minPages": 2 },
+      "oracle": { "sources": ["better-sqlite3", "python-sqlite3"], "method": "sorted primary-key comparison plus PRAGMA integrity_check" },
+      "cases": {
+        "sqlite.ts": "WITHOUT ROWID rows stay in primary-key order",
+        "sqlite.py": "test_without_rowid_rows_stay_in_key_order"
+      }
+    },
+    {
+      "id": "duplicate-index-keys",
+      "title": "Secondary index with many duplicate keys",
+      "capability": "index-btree",
+      "risk": "Multi-page index key order with rowid tie breaks and automatic indexes",
+      "scale": { "rows": 1000, "shape": "10 distinct labels repeated 100 times, plus a UNIQUE autoindex", "pageSize": 512, "minPages": 2 },
+      "oracle": { "sources": ["better-sqlite3", "python-sqlite3"], "method": "INDEXED BY ordered comparison of label and rowid pairs plus PRAGMA integrity_check" },
+      "cases": {
+        "sqlite.ts": "duplicate index keys preserve label and rowid order",
+        "sqlite.py": "test_duplicate_index_keys_preserve_order"
+      }
+    },
+    {
+      "id": "mixed-serial-types",
+      "title": "Mixed serial types at scale",
+      "capability": "serial-types",
+      "risk": "Serial type widths for i64 extremes, REAL, UTF-8 text, NULL and BLOB",
+      "scale": { "rows": 1000, "shape": "i64 min and max, fractional REAL, Chinese text, NULL and BLOB", "pageSize": 1024, "minPages": 2 },
+      "oracle": { "sources": ["better-sqlite3", "python-sqlite3"], "method": "typed value comparison in both directions plus PRAGMA integrity_check" },
+      "cases": {
+        "sqlite.ts": "mixed serial types survive both directions",
+        "sqlite.py": "test_mixed_serial_types_survive_both_directions"
+      }
+    },
+    {
+      "id": "wal-many-checkpoints",
+      "title": "WAL with 50 transactions and repeated checkpoints",
+      "capability": "wal",
+      "risk": "WAL replay across repeated checkpoint rotations and truncation",
+      "scale": { "rows": 1000, "shape": "50 transactions of 20 rows with a PASSIVE checkpoint after each round", "pageSize": 512, "minPages": 2 },
+      "oracle": { "sources": ["better-sqlite3", "python-sqlite3"], "method": "row-by-row comparison, -wal and -shm existence, PRAGMA integrity_check" },
+      "cases": {
+        "sqlite.ts": "WAL replay survives 50 checkpoint rounds",
+        "sqlite.py": "test_wal_replay_survives_many_checkpoints"
+      }
+    },
+    {
+      "id": "hot-journal-crash",
+      "title": "Crash during a 1000 row write",
+      "capability": "journal",
+      "risk": "Hot journal rollback of partially written pages",
+      "scale": { "rows": 1000, "shape": "1000 committed rows then a 200 row transaction killed before commit", "pageSize": 512, "minPages": 2 },
+      "oracle": { "sources": ["python-sqlite3"], "method": "committed row comparison after crash plus PRAGMA integrity_check" },
+      "cases": {
+        "sqlite.ts": "hot journal rolls a killed 200 row transaction back",
+        "sqlite.py": "test_hot_journal_rolls_a_killed_transaction_back"
+      }
+    },
+    {
+      "id": "same-key-rewrites",
+      "title": "Thousand updates of one key",
+      "capability": "mutation",
+      "risk": "In-page rewrite and change counter after repeated UPDATE on one rowid",
+      "scale": { "rows": 1, "updates": 1000, "shape": "1000 successive updates of one row in both directions", "pageSize": 512, "minPages": 1 },
+      "oracle": { "sources": ["better-sqlite3", "python-sqlite3"], "method": "final value comparison in both directions plus PRAGMA integrity_check" },
+      "cases": {
+        "sqlite.ts": "thousand same-key updates settle on one value",
+        "sqlite.py": "test_thousand_same_key_updates_settle"
+      }
+    },
+    {
+      "id": "page-size-matrix",
+      "title": "Same workload at 512, 1024 and 4096",
+      "capability": "page-header",
+      "risk": "Hard-coded page size assumptions in header parsing and B-tree math",
+      "scale": { "rows": 1000, "shape": "identical rows at each legal page size", "pageSize": [512, 1024, 4096], "minPages": 2 },
+      "oracle": { "sources": ["better-sqlite3", "python-sqlite3"], "method": "PRAGMA page_size and header offset 16 comparison plus row-by-row read" },
+      "cases": {
+        "sqlite.ts": "page sizes 512 1024 and 4096 agree with external pragma",
+        "sqlite.py": "test_page_sizes_agree_with_external_pragma"
+      }
+    },
+    {
+      "id": "utf16-scale",
+      "title": "UTF-16 database at scale",
+      "capability": "text-encoding",
+      "risk": "Text decoding when the schema and rows declare UTF-16",
+      "scale": { "rows": 1000, "shape": "UTF-16LE database with Chinese labels", "pageSize": 1024, "minPages": 2 },
+      "oracle": { "sources": ["better-sqlite3", "python-sqlite3"], "method": "PRAGMA encoding plus row-by-row text comparison" },
+      "cases": {
+        "sqlite.ts": "1000 UTF-16 rows decode through the declared encoding",
+        "sqlite.py": "test_utf16_rows_decode_through_declared_encoding"
+      }
+    },
+    {
+      "id": "strict-view-virtual",
+      "title": "STRICT, view and virtual tables",
+      "capability": "schema-objects",
+      "risk": "Unsupported schema objects must fail closed instead of being misread",
+      "scale": { "rows": 1000, "shape": "STRICT table plus a view and an FTS5 virtual table", "pageSize": 1024, "minPages": 2 },
+      "oracle": { "sources": ["better-sqlite3", "python-sqlite3"], "method": "sqlite_master comparison and expected rejection errors" },
+      "cases": {
+        "sqlite.ts": "STRICT tables read while views and virtual tables fail closed",
+        "sqlite.py": "test_strict_tables_read_and_views_fail_closed"
+      }
+    },
+    {
+      "id": "real-affinity",
+      "title": "REAL affinity on integral and fractional values",
+      "capability": "real-affinity",
+      "risk": "Integral REAL values are stored as integers and may report the wrong storage class",
+      "scale": { "rows": 1000, "shape": "half integral and half fractional values in a REAL column", "pageSize": 1024, "minPages": 2 },
+      "oracle": { "sources": ["better-sqlite3", "python-sqlite3"], "method": "numeric value comparison against external typeof output plus PRAGMA integrity_check" },
+      "cases": {
+        "sqlite.ts": "REAL affinity keeps numeric values at 1000 rows",
+        "sqlite.py": "test_real_affinity_keeps_numeric_values"
+      }
+    },
+    {
+      "id": "rowid-alias",
+      "title": "INTEGER PRIMARY KEY rowid alias at scale",
+      "capability": "rowid-alias",
+      "risk": "Explicit ids and rowid alias drift, including extreme ids",
+      "scale": { "rows": 1000, "shape": "shuffled explicit ids including negative and large values", "pageSize": 1024, "minPages": 2 },
+      "oracle": { "sources": ["better-sqlite3", "python-sqlite3"], "method": "rowid equals id comparison in both directions plus PRAGMA integrity_check" },
+      "cases": {
+        "sqlite.ts": "INTEGER PRIMARY KEY stays a rowid alias at 1000 rows",
+        "sqlite.py": "test_integer_primary_key_alias_at_scale"
+      }
+    },
+    {
+      "id": "sqlite-master-scale",
+      "title": "Schema listing at scale",
+      "capability": "sqlite-master",
+      "risk": "sqlite_master decoding with explicit indexes and an automatic index",
+      "scale": { "rows": 1000, "shape": "table with two explicit indexes and one UNIQUE autoindex", "pageSize": 1024, "minPages": 2 },
+      "oracle": { "sources": ["better-sqlite3", "python-sqlite3"], "method": "sqlite_master type and name comparison plus rootpage sanity" },
+      "cases": {
+        "sqlite.ts": "sqlite_master lists explicit and automatic indexes at scale",
+        "sqlite.py": "test_sqlite_master_lists_indexes_at_scale"
+      }
+    }
+  ]
+}
