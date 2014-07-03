@@ -372,23 +372,24 @@ class ScenarioTest(unittest.TestCase):
                 self.assertEqual([(row["rowid"], row["columns"][1]["value"]) for row in native_rows(space.path, "p")], external)
 
     def test_utf16_rows_decode_through_declared_encoding(self) -> None:
-        with Workspace("sc-utf16") as space:
-            connection = sqlite3.connect(space.path)
-            try:
-                connection.execute("pragma encoding = 'UTF-16le'")
-                connection.execute("pragma page_size = 1024")
-                connection.execute("create table u (id integer primary key, label text)")
-                connection.executemany("insert into u (id, label) values (?, ?)", [(index, f"案例-{index}") for index in shuffled()])
-                connection.commit()
-                self.assertEqual(connection.execute("pragma encoding").fetchone()[0].upper(), "UTF-16LE")
-                external = [(str(row[0]), row[1]) for row in connection.execute("select rowid, label from u order by rowid")]
-                self.assertEqual(connection.execute("pragma integrity_check").fetchone()[0], "ok")
-            finally:
-                connection.close()
-            meta = call("meta", {"path": str(space.path)})
-            self.assertEqual(meta["encoding"], "utf16le")
-            self.assertEqual(meta["textEncoding"], 2)
-            self.assertEqual([(row["rowid"], row["columns"][1]["value"]) for row in native_rows(space.path, "u")], external)
+        for pragma, encoding, marker in (("UTF-16le", "utf16le", 2), ("UTF-16be", "utf16be", 3)):
+            with Workspace(f"sc-utf16-{encoding}") as space:
+                connection = sqlite3.connect(space.path)
+                try:
+                    connection.execute(f"pragma encoding = '{pragma}'")
+                    connection.execute("pragma page_size = 1024")
+                    connection.execute("create table u (id integer primary key, label text)")
+                    connection.executemany("insert into u (id, label) values (?, ?)", [(index, f"案例-{index}") for index in shuffled()])
+                    connection.commit()
+                    self.assertEqual(connection.execute("pragma encoding").fetchone()[0].upper(), pragma.upper())
+                    external = [(str(row[0]), row[1]) for row in connection.execute("select rowid, label from u order by rowid")]
+                    self.assertEqual(connection.execute("pragma integrity_check").fetchone()[0], "ok")
+                finally:
+                    connection.close()
+                meta = call("meta", {"path": str(space.path)})
+                self.assertEqual(meta["encoding"], encoding)
+                self.assertEqual(meta["textEncoding"], marker)
+                self.assertEqual([(row["rowid"], row["columns"][1]["value"]) for row in native_rows(space.path, "u")], external)
 
     def test_strict_tables_read_and_views_fail_closed(self) -> None:
         with Workspace("sc-objects") as space:
