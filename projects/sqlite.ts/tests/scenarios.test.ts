@@ -485,7 +485,7 @@ test("1000 UTF-16 rows decode through the declared encoding", () => {
   }
 });
 
-test("STRICT tables read while views and virtual tables fail closed", () => {
+test("STRICT tables read and simple views resolve while virtual tables fail closed", () => {
   const space = workspace("objects");
   try {
     const seed = new BetterSqlite(space.path);
@@ -507,7 +507,7 @@ test("STRICT tables read while views and virtual tables fail closed", () => {
       "schema listing must match the external sqlite_master",
     );
     assert.equal(reader.table("s").length, ROWS);
-    assert.throws(() => reader.table("v"), /view/i, "a view must fail closed");
+    assert.equal(reader.table("v").length, ROWS, "a simple projection view resolves against its base table");
     assert.throws(() => reader.table("vt"), /virtual/i, "a virtual table must fail closed");
   } finally {
     space.dispose();

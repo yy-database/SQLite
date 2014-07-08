@@ -390,7 +390,7 @@ class ScenarioTest(unittest.TestCase):
                 self.assertEqual(meta["textEncoding"], marker)
                 self.assertEqual([(row["rowid"], row["columns"][1]["value"]) for row in native_rows(space.path, "u")], external)
 
-    def test_strict_tables_read_and_views_fail_closed(self) -> None:
+    def test_strict_tables_read_and_views_resolve(self) -> None:
         with Workspace("sc-objects") as space:
             connection = sqlite3.connect(space.path)
             try:
@@ -408,9 +408,7 @@ class ScenarioTest(unittest.TestCase):
 
             self.assertEqual(sorted((item["kind"], item["name"]) for item in native_schema(space.path)), sorted(master))
             self.assertEqual(len(native_rows(space.path, "s")), ROWS)
-            with self.assertRaises(RuntimeError) as view_error:
-                native_rows(space.path, "v")
-            self.assertIn("view", str(view_error.exception).lower())
+            self.assertEqual(len(native_rows(space.path, "v")), ROWS)
             with self.assertRaises(RuntimeError) as virtual_error:
                 native_rows(space.path, "vt")
             self.assertIn("virtual", str(virtual_error.exception).lower())

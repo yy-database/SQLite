@@ -633,7 +633,7 @@ test("external UTF-16 databases decode text through the declared encoding", () =
   }
 });
 
-test("external views virtual tables and STRICT tables stay inspectable but not row-scannable", () => {
+test("external views resolve to their base table while virtual tables fail closed", () => {
   const space = workspace("objects");
   try {
     const path = join(space.path, "..", "objects.sqlite3");
@@ -661,7 +661,11 @@ test("external views virtual tables and STRICT tables stay inspectable but not r
       reader.table("base").map((row) => row.columns[1].valueText),
       ["strict-row"],
     );
-    assert.throws(() => reader.table("v"), /view|unsupported/i);
+    assert.deepEqual(
+      reader.table("v").map((row) => row.columns.map((column) => column.valueText ?? Number(column.valueInteger))),
+      [[1, "strict-row"]],
+      "a simple projection view resolves against its base table",
+    );
     assert.throws(() => reader.table("vt"), /virtual|unsupported/i);
   } finally {
     space.dispose();

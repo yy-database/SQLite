@@ -83,9 +83,24 @@ export interface NativeDatabaseConstructor {
   openInMemory(): NativeDatabase;
 }
 
+export interface NativeSnapshot {
+  schema(limits?: ReadLimits): SchemaObject[];
+  table(name: string, limits?: ReadLimits): RawRow[];
+  tableDecoded(name: string, limits?: ReadLimits): DecodedRow[];
+  sqliteVersion(): string;
+  encoding(): string;
+  ping(): number;
+  pages(): Buffer;
+}
+
+export interface NativeSnapshotConstructor {
+  new (bytes: Buffer, maxSnapshotBytes?: number): NativeSnapshot;
+}
+
 export interface NativeBindings {
   SqliteWriter: NativeWriterConstructor;
   SqliteDatabase: NativeDatabaseConstructor;
+  SqliteSnapshot: NativeSnapshotConstructor;
   decodeRecord(payload: Buffer, encoding?: string): RecordValue[];
 }
 
@@ -119,4 +134,8 @@ export function openWriter(path: string): NativeWriter {
 
 export function openDatabase(path: string): NativeDatabase {
   return bindings.SqliteDatabase.open(path);
+}
+
+export function openSnapshot(bytes: Buffer, maxSnapshotBytes?: number): NativeSnapshot {
+  return new bindings.SqliteSnapshot(bytes, maxSnapshotBytes);
 }
