@@ -1,0 +1,18 @@
+[package]
+name = "sqlite-pyo3"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PyO3 bindings for SQLite format-3 snapshot read/write (independent of YYDB)"
+readme = "readme.md"
+publish = false
+
+[lib]
+name = "sqlite_format3"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sqlite = { workspace = true }
+pyo3 = { workspace = true }
