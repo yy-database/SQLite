@@ -1,13 +1,17 @@
-// One-command acceptance harness for the two SQLite binding suites.
+// One-command acceptance harness for the SQLite suites.
 //
 // It builds `sqlite.node`, runs `sqlite.ts` and `sqlite.py` in separate child
-// processes, then fails if either suite reports a failure, executes fewer than
-// `FLOOR` cases, skips a case, or stops calling a real external engine.
+// processes, then runs the three platform smokes (`node`, `wasm`, `python`) so
+// every shipped binding proves the same external truth. It fails if a suite
+// reports a failure, executes fewer than `FLOOR` cases, skips a case, or stops
+// calling a real external engine.
 
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { platformStages } from "../platforms/stages.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const FLOOR = 30;
@@ -78,6 +82,7 @@ const suites = [
   { name: "sqlite.ts", ...runTs() },
   { name: "sqlite.py", ...runPy() },
 ];
+const platforms = platformStages.map((stage) => stage.run());
 
 let failed = false;
 const externals = externalReasons();
@@ -97,5 +102,14 @@ for (const suite of suites) {
     }ms${reasons.length === 0 ? "" : ` (${reasons.join(", ")})`}`,
   );
   if (reasons.length > 0 && suite.tail) console.log(suite.tail);
+}
+for (const item of platforms) {
+  if (!item.ok) failed = true;
+  console.log(
+    `${item.ok ? "ok" : "red"} ${item.name}: executed=${item.executed} skipped=${item.skipped} elapsed=${item.elapsed}ms${
+      item.ok ? "" : ` (${item.reasons.join(", ")})`
+    }`,
+  );
+  if (!item.ok && item.tail) console.log(item.tail);
 }
 process.exit(failed ? 1 : 0);
