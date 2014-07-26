@@ -1,0 +1,16 @@
+{
+    "name": "@sqlite/sqlite-fixtures",
+    "version": "0.1.0",
+    "private": true,
+    "description": "SQLite format-3 byte fixtures produced by external engines",
+    "license": "MPL-2.0",
+    "type": "module",
+    "exports": {
+        ".": "./index.js",
+        "./fixtures/*": "./fixtures/*"
+    },
+    "files": [
+        "index.js",
+        "fixtures"
+    ]
+}

@@ -6,9 +6,9 @@ against an external engine.
 
 | Layer | Binding crate | Command | Verification |
 |-------|---------------|---------|--------------|
-| `node/` | `sqlite-napi` | `node platforms/node/smoke.mjs` | 1000 rows through the Node-API writer, then CPython `sqlite3` `PRAGMA integrity_check` |
-| `wasm/` | `sqlite-wasm` | `node platforms/wasm/build.mjs` then `node platforms/wasm/smoke.mjs` | 1000 rows through in-memory SQL, snapshot written to disk, then CPython `sqlite3` check |
-| `python/` | `sqlite-pyo3` | `node platforms/python/run_tests.mjs` | maturin wheel in a clean venv, five feature tests (roundtrip, WAL, hot journal, `WITHOUT ROWID`, UTF-16) |
+| `node/` | `sqlite-napi` | `node projects/sqlite.ts/packages/sqlite-harness/stages/node/smoke.mjs` | 1000 rows through the Node-API writer, then CPython `sqlite3` `PRAGMA integrity_check` |
+| `wasm/` | `sqlite-wasm` | `node projects/sqlite.ts/packages/sqlite-harness/stages/wasm/build.mjs` then `.../smoke.mjs` | 1000 rows through in-memory SQL, snapshot written to disk, then CPython `sqlite3` check |
+| `python/` | `sqlite-pyo3` | `node projects/sqlite.ts/packages/sqlite-harness/stages/python/run_tests.mjs` | maturin wheel in a clean venv, five feature tests (roundtrip, WAL, hot journal, `WITHOUT ROWID`, UTF-16) |
 
 `verify_sqlite.py` is the shared external oracle: it opens a `.sqlite3` file
 with CPython's standard library and reports `PRAGMA integrity_check`, the row

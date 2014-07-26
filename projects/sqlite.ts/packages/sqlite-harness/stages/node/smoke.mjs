@@ -1,15 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
+
+import { repository, stagesDir } from "../paths.mjs";
 
 const require = createRequire(import.meta.url);
 
-const here = dirname(fileURLToPath(import.meta.url));
-const root = resolve(here, "../..");
-const packageDir = resolve(root, "projects/sqlite.rs/sqlite-napi");
-const outDir = resolve(here, "out");
+const packageDir = resolve(repository, "projects/sqlite.rs/sqlite-napi");
+const outDir = resolve(stagesDir, "node/out");
 const databasePath = resolve(outDir, "node-smoke.sqlite3");
 
 function run(command, args, cwd) {
@@ -28,7 +27,7 @@ function assert(condition, message) {
   }
 }
 
-run(process.execPath, [resolve(root, "scripts/build-napi.mjs")], root);
+run(process.execPath, [resolve(repository, "scripts/build-napi.mjs")], repository);
 
 const binding = require(resolve(packageDir, "sqlite.node"));
 const columns = [
@@ -48,7 +47,7 @@ const rows = writer.tableDecoded("bench");
 assert(rows.length === 1000, `writer sees 1000 rows, got ${rows.length}`);
 assert(rows[0].rowid === 1n, "first rowid is 1");
 
-const external = spawnSync("python", [resolve(root, "platforms/verify_sqlite.py"), databasePath, "bench", "id,label,score"], { encoding: "utf8" });
+const external = spawnSync("python", [resolve(stagesDir, "verify_sqlite.py"), databasePath, "bench", "id,label,score"], { encoding: "utf8" });
 if (external.status !== 0) {
   throw new Error(`python verification failed:\n${external.stdout}\n${external.stderr}`);
 }

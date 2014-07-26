@@ -1,14 +1,14 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
+
+import { stagesDir, wasmPlatform } from "../paths.mjs";
 
 const require = createRequire(import.meta.url);
-const { MemoryDatabase } = require("./pkg/sqlite_wasm.js");
+const { MemoryDatabase } = require(resolve(wasmPlatform, "pkg/sqlite_wasm.js"));
 
-const here = dirname(fileURLToPath(import.meta.url));
-const outDir = resolve(here, "out");
+const outDir = resolve(stagesDir, "wasm/out");
 const databasePath = resolve(outDir, "smoke.sqlite3");
 
 function assert(condition, message) {
@@ -17,7 +17,7 @@ function assert(condition, message) {
   }
 }
 
-const wasmBytes = readFileSync(resolve(here, "pkg/sqlite_wasm_bg.wasm")).length;
+const wasmBytes = readFileSync(resolve(wasmPlatform, "pkg/sqlite_wasm_bg.wasm")).length;
 const database = new MemoryDatabase(4096);
 const created = JSON.parse(database.exec("create table bench (id integer primary key, label text not null, score real)"));
 assert(created[0].statement === "create-table", "create table result shape");
@@ -36,7 +36,7 @@ assert(sampled[0].rows[0][0] === 1 && sampled[0].rows[0][1] === "row-1", "first 
 mkdirSync(outDir, { recursive: true });
 writeFileSync(databasePath, database.snapshot());
 
-const external = spawnSync("python", [resolve(here, "../verify_sqlite.py"), databasePath, "bench", "id,label,score"], { encoding: "utf8" });
+const external = spawnSync("python", [resolve(stagesDir, "verify_sqlite.py"), databasePath, "bench", "id,label,score"], { encoding: "utf8" });
 if (external.status !== 0) {
   throw new Error(`python verification failed:\n${external.stdout}\n${external.stderr}`);
 }

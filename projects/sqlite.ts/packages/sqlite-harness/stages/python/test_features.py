@@ -2,7 +2,7 @@
 
 Run inside a clean virtual environment that has the wheel installed:
 
-    python -m unittest discover -s platforms/python/tests -v
+    python -m unittest discover -s projects/sqlite.ts/packages/sqlite-harness/stages/python -v
 
 Every assertion is made against an external truth source: CPython's standard
 library `sqlite3` (including `PRAGMA integrity_check`), never against the
