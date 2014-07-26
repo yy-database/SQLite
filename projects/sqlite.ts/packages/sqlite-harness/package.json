@@ -1,0 +1,23 @@
+{
+    "name": "@sqlite/sqlite-harness",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Self-improvement toolbox for SQLite: test, bench, conformance, fixtures and oracle",
+    "license": "MPL-2.0",
+    "type": "module",
+    "bin": {
+        "sqlite-harness": "./cli.mjs"
+    },
+    "scripts": {
+        "test": "node cli.mjs test",
+        "bench": "node cli.mjs bench",
+        "conformance": "node cli.mjs conformance",
+        "fixtures": "node cli.mjs fixtures",
+        "oracle": "node cli.mjs oracle"
+    },
+    "devDependencies": {
+        "@sqlite/sqlite": "workspace:*",
+        "better-sqlite3": "^12.2.0",
+        "sql.js": "^1.15.2"
+    }
+}

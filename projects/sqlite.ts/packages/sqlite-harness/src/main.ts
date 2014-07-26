@@ -5,10 +5,10 @@ import { nativeModulePath, parseOptions } from "./util.ts";
 
 const USAGE = `sqlite-harness
 
-  node harness/cli.mjs <command> [--json]
+  node projects/sqlite.ts/packages/sqlite-harness/cli.mjs <command> [--json]
 
 Commands
-  test         build the native module, run the TypeScript and Python suites, check floors
+  test         build the native module, run the TypeScript and Python suites, then all platform smokes
   bench        run the same workload on this repository and on better-sqlite3
   conformance  parse externally produced fixtures and compare with an external engine
   fixtures     regenerate the fixture assets from external engines and print sha256
