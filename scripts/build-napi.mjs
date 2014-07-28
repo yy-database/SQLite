@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,5 +33,15 @@ if (!artifact) {
 
 mkdirSync(outDir, { recursive: true });
 const destination = join(outDir, "sqlite.node");
-copyFileSync(artifact, destination);
+try {
+  copyFileSync(artifact, destination);
+} catch (error) {
+  // Another process can hold the binding while a concurrent suite runs. If the
+  // destination already matches the fresh artifact there is nothing to do.
+  const fresh =
+    existsSync(destination) &&
+    statSync(artifact).size === statSync(destination).size &&
+    statSync(destination).mtimeMs >= statSync(artifact).mtimeMs;
+  if (!fresh) throw error;
+}
 console.log(destination);

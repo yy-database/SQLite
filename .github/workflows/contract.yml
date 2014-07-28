@@ -22,7 +22,7 @@ jobs:
       - name: Assert the checkout has no native artifact
         run: test ! -e projects/sqlite.rs/sqlite-napi/sqlite.node
       - name: Install SQLite test dependencies
-        run: pnpm --dir projects/sqlite.ts install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
       - name: TS and PY contract gate
         run: node scripts/check-test-floor.mjs
       - name: Downstream examples
