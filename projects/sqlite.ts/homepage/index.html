@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>sqlite-format3</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f7f4ee;
+        --fg: #1f1d1a;
+        --muted: #6b6459;
+        --line: #ddd4c6;
+        --accent: #2f6b52;
+        --panel: #fffdf9;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #16181a;
+          --fg: #e9e5dc;
+          --muted: #a39b8c;
+          --line: #2f3336;
+          --accent: #8fd3ae;
+          --panel: #1d2022;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 16px/1.65 "Segoe UI", system-ui, sans-serif;
+      }
+      main { max-width: 960px; margin: 0 auto; padding: 56px 24px 80px; }
+      h1 { font-size: 2.4rem; margin: 0 0 8px; letter-spacing: -0.02em; }
+      h2 { font-size: 1.25rem; margin: 40px 0 12px; }
+      p { color: var(--muted); margin: 0 0 12px; }
+      .tag {
+        display: inline-block;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 2px 10px;
+        margin-right: 8px;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+      table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 0.95rem; }
+      th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { color: var(--muted); font-weight: 600; }
+      td code, p code { font-family: ui-monospace, "Cascadia Code", monospace; font-size: 0.9em; }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 18px 20px;
+        margin-top: 16px;
+      }
+      .accent { color: var(--accent); }
+      pre {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 16px 18px;
+        overflow: auto;
+        font-size: 0.9rem;
+      }
+      footer { margin-top: 48px; color: var(--muted); font-size: 0.85rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="tag">SQLite format-3</span><span class="tag">Rust core</span><span class="tag">Node-API · PyO3 · WebAssembly</span>
+      <h1>sqlite-format3</h1>
+      <p>读写 SQLite 主文件与原始页快照的独立实现。三个绑定共用同一套纯 Rust 页面与记录层，不依赖上游 SQLite 引擎。</p>
+
+      <h2>版本</h2>
+      <table>
+        <tr><th>项</th><th>值</th></tr>
+        <tr><td>包版本</td><td><code>0.1.0</code></td></tr>
+        <tr><td>文件格式</td><td>SQLite format-3</td></tr>
+        <tr><td>镜像头版本</td><td><code>3.45.0</code></td></tr>
+        <tr><td>绑定</td><td><code>sqlite-napi</code> · <code>sqlite-pyo3</code> · <code>sqlite-wasm</code></td></tr>
+      </table>
+
+      <h2>能力</h2>
+      <table>
+        <tr><th>能力</th><th>Node-API</th><th>PyO3</th><th>WebAssembly</th></tr>
+        <tr><td>读取普通表、索引、视图、触发器</td><td>是</td><td>是</td><td>否</td></tr>
+        <tr><td>读取 <code>WITHOUT ROWID</code> 表</td><td>是</td><td>是</td><td>否</td></tr>
+        <tr><td>读取 UTF-8 / UTF-16 文本</td><td>是</td><td>是</td><td>仅写入 UTF-8</td></tr>
+        <tr><td>回放 <code>-wal</code> 与热 journal</td><td>是</td><td>是</td><td>否</td></tr>
+        <tr><td>创建表、索引、插入、更新、删除、事务</td><td>是</td><td>是</td><td>仅建表与插入</td></tr>
+        <tr><td>执行 SQL</td><td>否</td><td>否</td><td>受限子集</td></tr>
+        <tr><td>导出内存页快照</td><td>是</td><td>是</td><td>是</td></tr>
+      </table>
+      <p class="accent">WebAssembly 的 SQL 子集仅接受 <code>CREATE TABLE</code>、<code>INSERT</code>、<code>SELECT count(*)</code> / 列投影 + <code>LIMIT</code>，其余语句结构化拒绝。</p>
+
+      <h2>快速验证</h2>
+      <pre><code># Node-API：1000 行入库，CPython sqlite3 过 integrity_check
+node projects/sqlite.ts/packages/sqlite-harness/stages/node/smoke.mjs
+
+# WebAssembly：内存库写 1000 行，导出快照后外部校验
+node projects/sqlite.ts/packages/sqlite-harness/stages/wasm/build.mjs
+node projects/sqlite.ts/packages/sqlite-harness/stages/wasm/smoke.mjs
+
+# PyO3：maturin wheel + 干净 venv + 5 项特性测试
+node projects/sqlite.ts/packages/sqlite-harness/stages/python/run_tests.mjs</code></pre>
+
+      <h2>文档</h2>
+      <div class="panel">
+        <a href="documents/zh-hans/index.md">快速开始</a> ·
+        <a href="documents/zh-hans/02-bindings.md">绑定选择</a> ·
+        <a href="documents/zh-hans/03-limits.md">边界与限制</a>
+      </div>
+
+      <footer>外部真值：CPython 标准库 <code>sqlite3</code> 的 <code>PRAGMA integrity_check</code> 与行数读取。</footer>
+    </main>
+  </body>
+</html>
