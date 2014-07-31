@@ -1,8 +1,0 @@
-{
-    "name": "@sqlite/sqlite-client",
-    "version": "0.1.0",
-    "private": true,
-    "description": "Client surface for the SQLite format-3 bindings",
-    "license": "MPL-2.0",
-    "type": "module"
-}
