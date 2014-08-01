@@ -3,11 +3,10 @@ import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 
-import { repository, stagesDir } from "../paths.mjs";
+import { nativeBindingPath, repository, stagesDir } from "../paths.mjs";
 
 const require = createRequire(import.meta.url);
 
-const packageDir = resolve(repository, "projects/sqlite.rs/sqlite-napi");
 const outDir = resolve(stagesDir, "node/out");
 const databasePath = resolve(outDir, "node-smoke.sqlite3");
 
@@ -29,7 +28,7 @@ function assert(condition, message) {
 
 run(process.execPath, [resolve(repository, "scripts/build-napi.mjs")], repository);
 
-const binding = require(resolve(packageDir, "sqlite.node"));
+const binding = require(nativeBindingPath());
 const columns = [
   { name: "id", declaredType: "INTEGER", primaryKey: true },
   { name: "label", declaredType: "TEXT", notNull: true },

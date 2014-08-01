@@ -1,5 +1,6 @@
+import { existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { dirname, join, resolve } from "node:path";
 
 const require = createRequire(import.meta.url);
 
@@ -104,11 +105,68 @@ export interface NativeBindings {
   decodeRecord(payload: Buffer, encoding?: string): RecordValue[];
 }
 
-export const nativePath =
-  process.env.SQLITE_NATIVE ??
-  fileURLToPath(new URL("../../sqlite.rs/sqlite-napi/sqlite.node", import.meta.url));
+export type PlatformKey = "win32-x64" | "linux-x64" | "darwin-x64" | "darwin-arm64";
 
-export const bindings: NativeBindings = require(nativePath);
+/** Map Node platform and arch to the optionalDependency package suffix. */
+export function platformKey(platform = process.platform, arch = process.arch): PlatformKey | null {
+  if (platform === "win32" && arch === "x64") return "win32-x64";
+  if (platform === "linux" && arch === "x64") return "linux-x64";
+  if (platform === "darwin" && arch === "x64") return "darwin-x64";
+  if (platform === "darwin" && arch === "arm64") return "darwin-arm64";
+  return null;
+}
+
+function loadModule(specifier: string): NativeBindings {
+  const loaded = require(specifier) as NativeBindings & { default?: NativeBindings };
+  return (loaded.default ?? loaded) as NativeBindings;
+}
+
+/** Absolute path of the `.node` binary staged in the platform package `lib/`. */
+export function nativeBindingPath(): string {
+  const fromEnv = process.env.SQLITE_NATIVE?.trim();
+  if (fromEnv) {
+    const bindingPath = resolve(fromEnv);
+    if (!existsSync(bindingPath)) {
+      throw new Error(`SQLITE_NATIVE points to missing binding: ${fromEnv}`);
+    }
+    return bindingPath;
+  }
+  const key = platformKey();
+  if (!key) {
+    throw new Error(`SQLite native binding not available for ${process.platform}-${process.arch}`);
+  }
+  const libDir = join(dirname(require.resolve(`@sqlite/sqlite-${key}`)), "lib");
+  const fileName = existsSync(libDir)
+    ? readdirSync(libDir).find((entry) => entry.endsWith(".node"))
+    : undefined;
+  if (!fileName) {
+    throw new Error(`Missing .node binary in ${libDir}. Run pnpm build:napi from the repo root.`);
+  }
+  return join(libDir, fileName);
+}
+
+/** Load the platform binding through the package entry installed for this host. */
+export function loadNative(): NativeBindings {
+  const fromEnv = process.env.SQLITE_NATIVE?.trim();
+  if (fromEnv) {
+    return loadModule(nativeBindingPath());
+  }
+  const key = platformKey();
+  if (!key) {
+    throw new Error(`SQLite native binding not available for ${process.platform}-${process.arch}`);
+  }
+  const pkg = `@sqlite/sqlite-${key}`;
+  try {
+    return loadModule(pkg);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `SQLite native binding not found. Run pnpm build:napi from the repo root, reinstall @sqlite/sqlite with optional dependencies, set SQLITE_NATIVE, or stage ${pkg}. ${message}`,
+    );
+  }
+}
+
+export const bindings: NativeBindings = loadNative();
 
 export function writeValue(value: unknown): unknown {
   if (value === undefined) {
