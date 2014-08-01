@@ -1,47 +1,56 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { NATIVE_ARTIFACTS } from "./native-artifacts.mjs";
+
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const manifest = join(root, "projects", "sqlite.rs", "Cargo.toml");
-const outDir = join(root, "projects", "sqlite.rs", "sqlite-napi");
-
-const result = spawnSync(
-  "cargo",
-  ["build", "--release", "--manifest-path", manifest, "-p", "sqlite-napi"],
-  { stdio: "inherit" }
+const artifact = NATIVE_ARTIFACTS.find(
+  (entry) => entry.hostPlatform === process.platform && entry.hostArch === process.arch,
 );
 
-if (result.status !== 0) {
-  process.exit(result.status ?? 1);
-}
-
-const targetDir = join(root, "projects", "sqlite.rs", "target", "release");
-const candidates =
-  process.platform === "win32"
-    ? ["sqlite_napi.dll"]
-    : process.platform === "darwin"
-      ? ["libsqlite_napi.dylib"]
-      : ["libsqlite_napi.so"];
-
-const artifact = candidates.map((name) => join(targetDir, name)).find((path) => existsSync(path));
 if (!artifact) {
-  console.error(`native artifact not found under ${targetDir}`);
-  process.exit(1);
+  throw new Error(`No SQLite native package mapping for ${process.platform}-${process.arch}`);
 }
 
-mkdirSync(outDir, { recursive: true });
-const destination = join(outDir, "sqlite.node");
+const build = spawnSync(
+  "cargo",
+  ["build", "--manifest-path", manifest, "-p", "sqlite-napi", "--release"],
+  { cwd: root, stdio: "inherit" },
+);
+if (build.status !== 0) {
+  process.exit(build.status ?? 1);
+}
+
+const src = join(root, "projects", "sqlite.rs", "target", "release", artifact.cargoRelease);
+if (!existsSync(src)) {
+  throw new Error(`missing cargo artifact: ${src}`);
+}
+
+const libDir = join(root, "projects", "sqlite.ts", "platforms", artifact.pkg, "lib");
+mkdirSync(libDir, { recursive: true });
+
+for (const existing of readdirSync(libDir).filter((name) => name.endsWith(".node"))) {
+  try {
+    unlinkSync(join(libDir, existing));
+  } catch (error) {
+    // A concurrent suite can still hold the previous binding.
+    if (error.code !== "EBUSY" && error.code !== "EPERM") throw error;
+  }
+}
+
+const dest = join(libDir, artifact.fileName);
 try {
-  copyFileSync(artifact, destination);
+  copyFileSync(src, dest);
 } catch (error) {
   // Another process can hold the binding while a concurrent suite runs. If the
   // destination already matches the fresh artifact there is nothing to do.
   const fresh =
-    existsSync(destination) &&
-    statSync(artifact).size === statSync(destination).size &&
-    statSync(destination).mtimeMs >= statSync(artifact).mtimeMs;
+    existsSync(dest) &&
+    statSync(src).size === statSync(dest).size &&
+    statSync(dest).mtimeMs >= statSync(src).mtimeMs;
   if (!fresh) throw error;
 }
-console.log(destination);
+console.log(dest);
