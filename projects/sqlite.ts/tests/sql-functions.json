@@ -1,0 +1,527 @@
+{
+  "group": "functions",
+  "cases": [
+    {
+      "source": "sql.rs::select_projects_lower_and_upper",
+      "note": "VOS `i64` maps to `integer`, `utf8` to `text`, `bool` to `integer` (0/1), `f64` to `real`, `[]u8` to `blob`, and `uuid`/`date`/`time`/`decimal` to `text`. SQLite folds case for ASCII only, so `upper('straße')` keeps `ß` where yydb produced `STRASSE`.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select lower('Straße') as lower_value, upper('straße') as upper_value from Account where account_id = 1" }
+      ],
+      "expect": [{ "rows": [[{ "t": "straße" }, { "t": "STRAßE" }]] }]
+    },
+    {
+      "source": "sql.rs::select_length_counts_unicode_characters",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select length('héllo') as accented, length(email) as email_length from Account where account_id = 1" }
+      ],
+      "expect": [{ "rows": [[{ "i": "5" }, { "i": "16" }]] }]
+    },
+    {
+      "source": "sql.rs::select_substr_uses_one_based_character_positions",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select substr('abcdef', 2) as tail, substr('abcdef', 2, 3) as middle, substr('abcdef', -2) as last_two, substr('abcdef', -2, 1) as last_one from Account where account_id = 1"
+        }
+      ],
+      "expect": [{ "rows": [[{ "t": "bcdef" }, { "t": "bcd" }, { "t": "ef" }, { "t": "e" }]] }]
+    },
+    {
+      "source": "sql.rs::substr_outside_the_string_yields_empty_text",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [{ "sql": "select substr('abc', 5) as past_end from Account where account_id = 1" }],
+      "expect": [{ "rows": [[{ "t": "" }]] }]
+    },
+    {
+      "source": "sql.rs::select_projects_trim_and_concat",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select trim('  padded  ') as trimmed, concat(tenant, ':', email) as joined from Account where account_id = 1"
+        }
+      ],
+      "expect": [{ "rows": [[{ "t": "padded" }, { "t": "t1:ada@example.test" }]] }]
+    },
+    {
+      "source": "sql.rs::select_projects_char_length_and_replace",
+      "note": "SQLite has no `char_length`, so it is expressed as `length()`, which also counts characters rather than bytes.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select length('héllo') as accented, length(email) as email_length, replace(email, '@example.test', '@example.org') as rewritten, replace('aXaXa', 'X', '-') as every_match, replace(tenant, 't', 'T') as prefixed from Account where account_id = 1"
+        }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [
+              { "i": "5" },
+              { "i": "16" },
+              { "t": "ada@example.org" },
+              { "t": "a-a-a" },
+              { "t": "T1" }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::replace_with_an_empty_needle_returns_the_input",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select replace('abc', '', '-') as untouched, replace('', '', '-') as blank from Account where account_id = 1"
+        }
+      ],
+      "expect": [{ "rows": [[{ "t": "abc" }, { "t": "" }]] }]
+    },
+    {
+      "source": "sql.rs::char_length_and_replace_accept_nested_calls",
+      "note": "`char_length` is expressed as SQLite's `length()`. `upper()` only folds ASCII, which is enough for this address, so the nested `replace` still strips `@EXAMPLE.TEST`.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select length(concat(lower(tenant), '-', email)) as joined_length, replace(upper(email), '@EXAMPLE.TEST', '') as local_part from Account where account_id = 1"
+        }
+      ],
+      "expect": [{ "rows": [[{ "i": "19" }, { "t": "ADA" }]] }]
+    },
+    {
+      "source": "sql.rs::scalar_functions_compose_with_aggregates_and_ordering",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select sum(lengths.n) as total from (select length(email) as n from Account) as lengths" },
+        { "sql": "select upper(tenant) as tenant_upper from Account order by account_id" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "52" }]] },
+        { "rows": [[{ "t": "T1" }], [{ "t": "T1" }], [{ "t": "T2" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::returning_supports_scalar_functions",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "insert into Account (account_id, email, tenant, score, active) values (4, 'mixed@Example.Test', 't3', 5, true) returning upper(email) as uppercased"
+        }
+      ],
+      "expect": [{ "rows": [[{ "t": "MIXED@EXAMPLE.TEST" }]] }]
+    },
+    {
+      "source": "sql.rs::scalar_functions_propagate_null_arguments",
+      "note": "`char_length` is expressed as `length()`. SQLite's `concat()` ignores `NULL` arguments where yydb's `CONCAT` propagated `NULL`, so `c` is `'a'` and `d` is `'!'`. Every other function stays `NULL`-propagating.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)",
+        "update Account set tenant = NULL where account_id = 1"
+      ],
+      "steps": [
+        {
+          "sql": "select lower(NULL) as l, upper(NULL) as u, length(NULL) as n, substr(NULL, 1) as s, trim(NULL) as t, concat('a', NULL) as c, concat(tenant, '!') as d, length(NULL) as cl, replace(NULL, 'a', 'b') as rn, replace(tenant, NULL, 'b') as rf, replace(tenant, 't', NULL) as rt from Account where account_id = 1"
+        }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [
+              null,
+              null,
+              null,
+              null,
+              null,
+              { "t": "a" },
+              { "t": "!" },
+              null,
+              null,
+              null,
+              null
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::scalar_functions_reject_non_text_arguments",
+      "note": "yydb rejects non-text arguments and non-integer `substr` positions, while SQLite coerces them instead: numbers are converted to text (`lower(account_id)` yields `'1'`, `length(account_id)` yields `1`) and a text position becomes a number. `char_length` is expressed as `length()`.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select lower(account_id) as v from Account" },
+        { "sql": "select concat(tenant, account_id) as v from Account" },
+        { "sql": "select substr(tenant, tenant) as v from Account" },
+        { "sql": "select length(account_id) as v from Account" },
+        { "sql": "select replace(tenant, account_id, 'x') as v from Account" }
+      ],
+      "expect": [
+        { "rows": [[{ "t": "1" }], [{ "t": "2" }], [{ "t": "3" }]] },
+        { "rows": [[{ "t": "t11" }], [{ "t": "t12" }], [{ "t": "t23" }]] },
+        { "rows": [[{ "t": "t1" }], [{ "t": "t1" }], [{ "t": "t2" }]] },
+        { "rows": [[{ "i": "1" }], [{ "i": "1" }], [{ "i": "1" }]] },
+        { "rows": [[{ "t": "tx" }], [{ "t": "t1" }], [{ "t": "t2" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::scalar_functions_reject_wrong_argument_counts_at_prepare_time",
+      "note": "yydb rejects every wrong arity at prepare time. SQLite also rejects them when the statement is prepared, except `concat()`, which accepts a single argument and returns it. `char_length` is expressed as `length()`.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select lower() as v from Account" },
+        { "sql": "select lower(email, email) as v from Account" },
+        { "sql": "select substr(email) as v from Account" },
+        { "sql": "select concat(email) as v from Account" },
+        { "sql": "select length() as v from Account" },
+        { "sql": "select length(email, email) as v from Account" },
+        { "sql": "select replace(email) as v from Account" },
+        { "sql": "select replace(email, 'a') as v from Account" },
+        { "sql": "select coalesce() as v from Account" }
+      ],
+      "expect": [
+        { "error": true },
+        { "error": true },
+        { "error": true },
+        {
+          "rows": [
+            [{ "t": "ada@example.test" }],
+            [{ "t": "linus@example.test" }],
+            [{ "t": "grace@example.test" }]
+          ]
+        },
+        { "error": true },
+        { "error": true },
+        { "error": true },
+        { "error": true },
+        { "error": true }
+      ]
+    },
+    {
+      "source": "sql.rs::substr_rejects_ambiguous_positions",
+      "note": "yydb rejects a start of 0 and a negative length, while SQLite treats a start of 0 as 1 and returns an empty string for a negative length.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select substr('abc', 0) as v from Account" },
+        { "sql": "select substr('abc', 1, -1) as v from Account" }
+      ],
+      "expect": [
+        { "rows": [[{ "t": "abc" }], [{ "t": "abc" }], [{ "t": "abc" }]] },
+        { "rows": [[{ "t": "" }], [{ "t": "" }], [{ "t": "" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::coalesce_returns_the_first_non_null_argument",
+      "note": "SQLite's `concat()` ignores `NULL` arguments, so the nested fallback `coalesce(tenant, concat(tenant, '!'))` yields `'!'` where yydb propagated `NULL`.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)",
+        "update Account set tenant = NULL where account_id = 1"
+      ],
+      "steps": [
+        {
+          "sql": "select coalesce(tenant, 'missing') as fallback, coalesce(NULL, tenant, email) as chained, coalesce(tenant, concat(tenant, '!')) as nested_fallback, coalesce(NULL, NULL) as all_null, coalesce(NULL, score) as number from Account where account_id = 1"
+        }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [
+              { "t": "missing" },
+              { "t": "ada@example.test" },
+              { "t": "!" },
+              null,
+              { "i": "10" }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::coalesce_accepts_nested_scalar_calls",
+      "note": "`char_length` is expressed as `length()`. Row 1 has no tenant, so the fallback reaches the upper-cased email.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)",
+        "update Account set tenant = NULL where account_id = 1"
+      ],
+      "steps": [
+        {
+          "sql": "select coalesce(lower(tenant), upper(email)) as chosen, length(coalesce(tenant, email)) as length from Account order by account_id"
+        }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "t": "ADA@EXAMPLE.TEST" }, { "i": "16" }],
+            [{ "t": "t1" }, { "i": "2" }],
+            [{ "t": "t2" }, { "i": "2" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::coalesce_rejects_mixed_value_kinds",
+      "note": "yydb requires every non-`NULL` argument of `coalesce` to share one value kind, while SQLite returns the first non-`NULL` argument whatever its storage class is.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select coalesce(tenant, account_id) as v from Account" },
+        { "sql": "select coalesce(NULL, tenant, account_id) as v from Account" }
+      ],
+      "expect": [
+        { "rows": [[{ "t": "t1" }], [{ "t": "t1" }], [{ "t": "t2" }]] },
+        { "rows": [[{ "t": "t1" }], [{ "t": "t1" }], [{ "t": "t2" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::coalesce_rejects_nested_aggregates",
+      "note": "yydb rejects an aggregate nested inside `coalesce`, while SQLite accepts it and returns the aggregate result.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select coalesce(sum(score), 0) as v from Account" },
+        { "sql": "select coalesce(0, avg(score)) as v from Account" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "60" }]] },
+        { "rows": [[{ "i": "0" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::aggregate_argument_accepts_a_nested_scalar_call",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [{ "sql": "select sum(length(email)) as total from Account" }],
+      "expect": [{ "rows": [[{ "i": "52" }]] }]
+    },
+    {
+      "source": "sql.rs::nested_calls_accept_several_nested_arguments",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select concat(lower(email), upper(tenant)) as joined from Account where account_id = 2" }
+      ],
+      "expect": [{ "rows": [[{ "t": "linus@example.testT1" }]] }]
+    },
+    {
+      "source": "sql.rs::three_nested_calls_propagate_null",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)",
+        "update Account set tenant = NULL where account_id = 1"
+      ],
+      "steps": [
+        { "sql": "select length(lower(trim(tenant))) as depth from Account order by account_id" },
+        { "sql": "select sum(length(lower(trim(tenant)))) as total from Account" }
+      ],
+      "expect": [
+        { "rows": [[null], [{ "i": "2" }], [{ "i": "2" }]] },
+        { "rows": [[{ "i": "4" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::aggregate_calls_nested_in_another_call_are_rejected",
+      "note": "SQLite rejects a nested aggregate (`sum(avg(...))`, `count(sum(...))`) but allows a scalar function to wrap an aggregate, so `lower(sum(score))` returns `'60'`. yydb rejected all three.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select sum(avg(score)) as v from Account" },
+        { "sql": "select count(sum(score)) as v from Account" },
+        { "sql": "select lower(sum(score)) as v from Account" }
+      ],
+      "expect": [
+        { "error": true },
+        { "error": true },
+        { "rows": [[{ "t": "60" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::scalar_expressions_in_where_evaluate_per_row",
+      "note": "yydb binds `$1` positionally, so it becomes the anonymous `?` parameter, which all three engines accept. The insert mirrors the extra NULL-tenant row before the last predicate.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where lower(email) = 'ada@example.test' order by account_id" },
+        { "sql": "select account_id from Account where length(lower(email)) > 17 order by account_id" },
+        { "sql": "select account_id from Account where score + 1 >= 21 order by account_id" },
+        {
+          "sql": "select account_id from Account where lower(email) = ? order by account_id",
+          "params": ["ada@example.test"]
+        },
+        {
+          "sql": "insert into Account (account_id, email, tenant, score, active) values (4, 'null@example.test', NULL, 5, true)"
+        },
+        { "sql": "select account_id from Account where lower(tenant) = 't1' order by account_id" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }]] },
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }]] },
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }]] },
+        { "rows": [[{ "i": "1" }]] },
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::order_by_scalar_expression_executes_per_row",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account order by lower(email)" },
+        { "sql": "select account_id from Account order by score + 1 desc" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "3" }], [{ "i": "2" }]] },
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }], [{ "i": "1" }]] }
+      ]
+    }
+  ]
+}
