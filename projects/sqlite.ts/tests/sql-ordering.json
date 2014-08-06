@@ -1,0 +1,296 @@
+{
+  "group": "ordering",
+  "cases": [
+    {
+      "source": "sql.rs::select_with_order_by_multiple_columns",
+      "note": "VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account order by tenant asc, score desc" }
+      ],
+      "expect": [{ "rows": [[{ "i": "2" }], [{ "i": "1" }], [{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::order_by_scalar_expression_executes_per_row",
+      "note": "VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。同一行为已在函数语料中覆盖，此处按 ORDER BY 源测试保持粒度。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account order by lower(email)" },
+        { "sql": "select account_id from Account order by score + 1 desc" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "3" }], [{ "i": "2" }]] },
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }], [{ "i": "1" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::order_by_constant_scalar_subquery_keeps_scan_order",
+      "note": "标量子查询折叠为同一个值 30，所有行并列，保持扫描顺序；VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account order by (select max(score) from Account)" }
+      ],
+      "expect": [{ "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::order_by_uncorrelated_scalar_subquery_sorts_after_the_folded_value",
+      "note": "首排序键折叠为常量 30 而全部并列，由第二键 `account_id desc` 决定；VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account order by (select score from Account where account_id = 2), account_id desc" }
+      ],
+      "expect": [{ "rows": [[{ "i": "3" }], [{ "i": "2" }], [{ "i": "1" }]] }]
+    },
+    {
+      "source": "sql.rs::order_by_empty_scalar_subquery_sorts_by_null",
+      "note": "零行子查询折叠为 NULL，所有行在首键上并列，由第二键 `account_id desc` 决定；VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account order by (select score from Account where account_id = 99), account_id desc" }
+      ],
+      "expect": [{ "rows": [[{ "i": "3" }], [{ "i": "2" }], [{ "i": "1" }]] }]
+    },
+    {
+      "source": "sql.rs::limit_and_offset_accept_scalar_subquery_counts",
+      "note": "SQLite 不允许独立 OFFSET，第二步改写为 `limit -1 offset (…)`。VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account order by account_id limit (select count(*) from Account where tenant = 't1')" },
+        { "sql": "select account_id from Account order by account_id limit -1 offset (select count(*) from Account where tenant = 't2')" },
+        { "sql": "select account_id from Account order by account_id limit 2 offset (select count(*) from Account where tenant = 't2')" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }]] },
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }]] },
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::limit_empty_scalar_subquery_is_no_limit",
+      "note": "yydb 把 NULL 的 `LIMIT`/`OFFSET` 当作省略子句并返回全部行，SQLite 对 NULL 直接报 `datatype mismatch`，以三引擎一致结果为准。SQLite 还要求 LIMIT 在 OFFSET 前，第二步改写为 `limit 3 offset (…)`。VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account order by account_id limit (select score from Account where account_id = 99)" },
+        { "sql": "select account_id from Account order by account_id limit 3 offset (select score from Account where account_id = 99)" }
+      ],
+      "expect": [{ "error": true }, { "error": true }]
+    },
+    {
+      "source": "sql.rs::order_by_rejects_a_multi_row_scalar_subquery",
+      "note": "yydb 拒绝多行标量子查询（`at most one row`），SQLite 允许 `ORDER BY` 中的多行子查询并取其首行值 10，所有行并列回到扫描顺序，以三引擎一致结果为准。VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account order by (select score from Account)" }
+      ],
+      "expect": [{ "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::order_by_rejects_a_multi_column_scalar_subquery",
+      "note": "两列子查询不是标量值，yydb 与 SQLite 均在准备阶段拒绝（SQLite 报 `sub-select returns 2 columns - expected 1`）。VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account order by (select account_id, score from Account)" }
+      ],
+      "expect": [{ "error": true }]
+    },
+    {
+      "source": "sql.rs::order_by_rejects_a_correlated_scalar_subquery",
+      "note": "yydb 明确拒绝 ORDER BY 中的相关标量子查询（`correlated scalar subquery`），SQLite 允许其出现在 ORDER BY 并逐行求值，此处三引擎一致返回 1,2,3，以实际结果为准。VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select a.account_id from Account as a order by (select score from Account where tenant = a.tenant)" }
+      ],
+      "expect": [{ "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::limit_rejects_a_correlated_scalar_subquery",
+      "note": "yydb 以 `correlated scalar subquery` 拒绝，SQLite 同样拒绝（`LIMIT`/`OFFSET` 表达式在行作用域外求值，报 `no such column: a.tenant`），错误形态一致。VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select a.account_id from Account as a limit (select score from Account where tenant = a.tenant)" }
+      ],
+      "expect": [{ "error": true }]
+    },
+    {
+      "source": "sql.rs::limit_rejects_a_correlated_subquery_inside_an_expression",
+      "note": "算术包住的相关子查询仍读取外层行，yydb 拒绝，SQLite 同样报 `no such column: a.tenant`，错误形态一致。VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select a.account_id from Account as a limit (select score from Account where tenant = a.tenant) + 1" }
+      ],
+      "expect": [{ "error": true }]
+    },
+    {
+      "source": "sql.rs::limit_rejects_non_scalar_and_non_integer_subquery_results",
+      "note": "第一步 yydb 拒绝多行 LIMIT（`at most one row`），SQLite 改取子查询首行值 10 作为上限，三行全部返回；第二步文本 LIMIT 两边都报错（SQLite `datatype mismatch`），以三引擎一致结果为准。VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account limit (select score from Account)" },
+        { "sql": "select account_id from Account limit (select email from Account where account_id = 1)" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] },
+        { "error": true }
+      ]
+    },
+    {
+      "source": "sql.rs::limit_rejects_a_reference_to_an_unknown_qualifier",
+      "note": "子查询指向不存在于作用域的限定符，yydb 报 `not a row source`，SQLite 报 `no such column: missing.tenant`，错误形态一致。VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account limit (select score from Account where tenant = missing.tenant)" }
+      ],
+      "expect": [{ "error": true }]
+    },
+    {
+      "source": "sql.rs::order_by_folds_a_subquery_nested_in_an_expression",
+      "note": "子查询折叠为常量 30，排序键变成 `30 - score`：id2=0、id3=10、id1=20。VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account order by (select max(score) from Account) - score" }
+      ],
+      "expect": [{ "rows": [[{ "i": "2" }], [{ "i": "3" }], [{ "i": "1" }]] }]
+    },
+    {
+      "source": "sql.rs::limit_accepts_an_uncorrelated_subquery_inside_an_expression",
+      "note": "tenant `t2` 的 `COUNT(*)` 为 1，表达式加一得到上限 2。VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account order by account_id limit (select count(*) from Account where tenant = 't2') + 1" }
+      ],
+      "expect": [{ "rows": [[{ "i": "1" }], [{ "i": "2" }]] }]
+    },
+    {
+      "source": "sql.rs::limit_rejects_a_negative_or_fractional_subquery_count",
+      "note": "yydb 拒绝负数与小数上限；SQLite 把负上限（`10 - 100`）当作无上限、把 `avg` 得到的 20.0 当真数上限 20，两者都返回全部三行，以三引擎一致结果为准。VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account limit (select score - 100 from Account where account_id = 1)" },
+        { "sql": "select account_id from Account limit (select avg(score) from Account where account_id = 1 or account_id = 2)" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    }
+  ]
+}
