@@ -46,6 +46,27 @@ function outcomeText(outcome: StepOutcome): string {
   return `rows: ${JSON.stringify(outcome.rows ?? [])}`;
 }
 
+// JavaScript adapters cannot always tell an INTEGER from a REAL: `sql.js`
+// hands back plain numbers for both classes, and `Number.isInteger` is true
+// for integral REALs such as 9.22e19. Expectations therefore compare numeric
+// cells by value, while text, blob and NULL stay exact. Queries that need the
+// storage class itself assert on `typeof(...)`.
+function cellMatches(actual: Cell, expected: Cell): boolean {
+  if (actual === null || expected === null) return actual === expected;
+  const numeric = (cell: Cell): string | undefined => ("i" in cell ? cell.i : "r" in cell ? cell.r : undefined);
+  const left = numeric(actual);
+  const right = numeric(expected);
+  if (left !== undefined && right !== undefined) {
+    const a = Number(left);
+    const b = Number(right);
+    if (Number.isNaN(a) && Number.isNaN(b)) return true;
+    return a === b;
+  }
+  if ("t" in actual && "t" in expected) return actual.t === expected.t;
+  if ("b" in actual && "b" in expected) return actual.b === expected.b;
+  return false;
+}
+
 function assertExpectation(actual: StepOutcome, expected: { rows?: Cell[][] } | { error: true }, label: string): void {
   if ("error" in expected) {
     assert.ok(actual.error !== undefined, `${label}: expected an error, got ${outcomeText(actual)}`);
@@ -57,7 +78,8 @@ function assertExpectation(actual: StepOutcome, expected: { rows?: Cell[][] } | 
   const text = (cells: Cell[]) => cells.map((cell) => (cell === null ? "NULL" : JSON.stringify(cell))).join(",");
   assert.equal(rows.length, wanted.length, `${label}: expected ${wanted.length} rows (${wanted.map(text).join(" / ")}), got ${rows.map(text).join(" / ")}`);
   for (let index = 0; index < wanted.length; index += 1) {
-    assert.deepEqual(rows[index], wanted[index], `${label}: row ${index + 1} differs`);
+    const matches = rows[index].length === wanted[index].length && rows[index].every((cell, column) => cellMatches(cell, wanted[index][column]));
+    assert.ok(matches, `${label}: row ${index + 1} differs (got ${text(rows[index])}, expected ${text(wanted[index])})`);
   }
 }
 
