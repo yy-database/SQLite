@@ -1,0 +1,709 @@
+{
+  "group": "writes",
+  "cases": [
+    {
+      "source": "sql.rs::multi_row_insert_rejects_a_repeated_primary_key_without_publishing",
+      "note": "VOS mapping: `@@account_id: i64` -> `account_id integer primary key`, `email: utf8` -> `email text`, `score: i64` -> `score integer`.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'ada@test', 10), (1, 'linus@test', 30)" },
+        { "sql": "select account_id from Account order by account_id" }
+      ],
+      "expect": [
+        { "error": true },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::multi_row_insert_rolls_back_when_a_row_conflicts_with_a_stored_row",
+      "note": "The externally bound `Account_email_key` unique constraint is declared inline as `email text unique`.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text unique, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (2, 'linus@test', 30), (3, 'ada@test', 20)" },
+        { "sql": "select account_id from Account order by account_id" }
+      ],
+      "expect": [
+        { "error": true },
+        { "rows": [[{ "i": "1" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::multi_row_insert_rejects_a_unique_conflict_inside_the_statement",
+      "note": "The externally bound `Account_email_key` unique constraint is declared inline as `email text unique`.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text unique, score integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'ada@test', 10), (2, 'ada@test', 30)" },
+        { "sql": "select account_id from Account order by account_id" }
+      ],
+      "expect": [
+        { "error": true },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_do_nothing_skips_a_row_that_collides_on_the_primary_key",
+      "note": "`affected` and write-result rows have no channel in the external harness, so the outcome is read back from the table.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'other@test', 99) on conflict (account_id) do nothing" },
+        { "sql": "select email, score from Account" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "t": "ada@test" }, { "i": "10" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_do_nothing_skips_only_the_colliding_rows_of_one_statement",
+      "note": "yydb reports `affected = 2` and returns the keys of the written rows. SQLite exposes neither through the harness, so the same fact is asserted through the final table contents.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (2, 'linus@test', 30), (1, 'other@test', 99), (3, 'grace@test', 20) on conflict (account_id) do nothing" },
+        { "sql": "select account_id from Account order by account_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_do_nothing_without_a_collision_inserts_every_row",
+      "note": "`affected = 2` is asserted through the final table contents.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'ada@test', 10), (2, 'linus@test', 30) on conflict (account_id) do nothing" },
+        { "sql": "select account_id from Account order by account_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_do_nothing_detects_a_collision_inside_the_same_statement",
+      "note": "`affected = 1` is asserted through the final table contents. The first candidate row wins the key, which SQLite also keeps.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'ada@test', 10), (1, 'linus@test', 30) on conflict (account_id) do nothing" },
+        { "sql": "select email from Account" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "t": "ada@test" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_targets_a_declared_unique_constraint",
+      "note": "The externally bound `Account_email_key` unique constraint is declared inline as `email text unique`, which is what `on conflict (email)` targets.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text unique, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (2, 'ada@test', 30) on conflict (email) do nothing" },
+        { "sql": "select account_id from Account order by account_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_rejects_a_target_no_unique_constraint_covers",
+      "note": "`score` carries no unique constraint in either engine, so the conflict target is rejected before any row is published.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text unique, score integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'ada@test', 10) on conflict (score) do nothing" },
+        { "sql": "select account_id from Account order by account_id" }
+      ],
+      "expect": [
+        { "error": true },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_rejects_an_unknown_target_column",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'ada@test', 10) on conflict (missing) do nothing" },
+        { "sql": "select account_id from Account order by account_id" }
+      ],
+      "expect": [
+        { "error": true },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_do_update_replaces_the_conflicting_row",
+      "note": "`affected = 1` is asserted through the updated stored row.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'other@test', 99) on conflict (account_id) do update set score = 42" },
+        { "sql": "select email, score from Account" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "t": "ada@test" }, { "i": "42" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_do_update_inserts_a_row_that_does_not_conflict",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (2, 'linus@test', 30) on conflict (account_id) do update set score = 42" },
+        { "sql": "select score from Account where account_id = 2" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "30" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_do_update_mixes_updated_and_inserted_rows",
+      "note": "yydb returns the keys of the two written rows. The same outcome is asserted through the final table contents.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10), (2, 'linus@test', 30)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (2, 'linus2@test', 31), (3, 'grace@test', 20) on conflict (account_id) do update set score = 99" },
+        { "sql": "select account_id, score from Account order by account_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }, { "i": "10" }], [{ "i": "2" }, { "i": "99" }], [{ "i": "3" }, { "i": "20" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_do_update_where_selects_whether_the_row_is_updated",
+      "note": "The `where` predicate is evaluated against the stored conflicting row in both engines, so the second statement drops the update.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'other@test', 99) on conflict (account_id) do update set score = 20 where score = 10" },
+        { "sql": "insert into Account (account_id, email, score) values (1, 'other@test', 99) on conflict (account_id) do update set score = 30 where score = 10" },
+        { "sql": "select score from Account" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [] },
+        { "rows": [[{ "i": "20" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_do_update_reads_the_conflicting_rows_own_columns",
+      "note": "Both engines resolve the unqualified `score` in the assignment to the stored conflicting row, not the candidate row.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'other@test', 99) on conflict (account_id) do update set score = score + 5" },
+        { "sql": "select score from Account" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "15" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_do_update_targets_a_unique_column_and_keeps_the_stored_key",
+      "note": "The externally bound `Account_email_key` unique constraint is declared inline as `email text unique`. The stored primary key survives the update in both engines.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text unique, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (2, 'ada@test', 99) on conflict (email) do update set score = 30" },
+        { "sql": "select account_id, score from Account" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }, { "i": "30" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_do_update_rolls_back_when_the_updated_row_breaks_a_unique_rule",
+      "note": "The externally bound `Account_email_key` unique constraint is declared inline as `email text unique`. The failing statement leaves the stored row untouched.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text unique, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10), (2, 'linus@test', 30)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'other@test', 99) on conflict (account_id) do update set email = 'linus@test'" },
+        { "sql": "select email from Account where account_id = 1" }
+      ],
+      "expect": [
+        { "error": true },
+        { "rows": [[{ "t": "ada@test" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_do_update_rejects_an_excluded_reference_in_assignments",
+      "note": "yydb rejects `excluded` in DO UPDATE assignments because it does not model the pseudo-table. SQLite supports `excluded`, so the engine-truth result is asserted: the candidate value 99 is written over the stored 10.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'other@test', 99) on conflict (account_id) do update set score = excluded.score" },
+        { "sql": "select score from Account" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "99" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_do_update_rejects_an_excluded_reference_in_where",
+      "note": "yydb rejects `excluded` in a DO UPDATE `where` clause because it does not model the pseudo-table. SQLite supports it, and the candidate score 99 satisfies the predicate, so the update runs.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'other@test', 99) on conflict (account_id) do update set score = 20 where excluded.score > 5" },
+        { "sql": "select score from Account" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "20" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_do_update_rejects_a_primary_key_assignment",
+      "note": "yydb rejects assigning the primary key inside DO UPDATE. SQLite allows it: the stored row 1 moves to key 7 and keeps its stored email and score.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'other@test', 99) on conflict (account_id) do update set account_id = 7" },
+        { "sql": "select account_id, email, score from Account" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "7" }, { "t": "ada@test" }, { "i": "10" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_do_update_rejects_an_unknown_assignment_column",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'other@test', 99) on conflict (account_id) do update set missing = 1" },
+        { "sql": "select account_id from Account order by account_id" }
+      ],
+      "expect": [
+        { "error": true },
+        { "rows": [[{ "i": "1" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::on_conflict_do_update_rejects_a_target_no_unique_constraint_covers",
+      "note": "`score` carries no unique constraint in either engine, so the conflict target is rejected before any row is published.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text unique, score integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'ada@test', 10) on conflict (score) do update set score = 20" },
+        { "sql": "select account_id from Account order by account_id" }
+      ],
+      "expect": [
+        { "error": true },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_returning_hands_back_the_inserted_row",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'ada@test', 10) returning account_id, email, score" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }, { "t": "ada@test" }, { "i": "10" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_returning_hands_back_every_row_in_statement_order",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'ada@test', 10), (2, 'linus@test', 30) returning account_id, score" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }, { "i": "10" }], [{ "i": "2" }, { "i": "30" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_returning_projects_aliases_and_expressions",
+      "note": "`CAST(score AS TEXT)` renders the integer as the text `10` in all three engines.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'ada@test', 10) returning email as who, cast(score as text) as label, case when score >= 20 then 'high' else 'low' end as band" }
+      ],
+      "expect": [
+        { "rows": [[{ "t": "ada@test" }, { "t": "10" }, { "t": "low" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_returning_star_returns_the_written_row",
+      "note": "`returning *` lists the written row in catalog column order in every engine.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'ada@test', 10) returning *" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }, { "t": "ada@test" }, { "i": "10" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_returning_returns_the_row_updated_by_on_conflict",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'other@test', 99) on conflict (account_id) do update set score = 42 returning account_id, score" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }, { "i": "42" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_returning_omits_rows_the_conflict_clause_skipped",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, score) values (1, 'ada@test', 10)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'other@test', 99) on conflict (account_id) do nothing returning account_id" }
+      ],
+      "expect": [
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_select_returning_hands_back_the_produced_rows",
+      "note": "Schema `Source`/`Target`/`Mirror` are the INSERT ... SELECT fixtures, `Event.happened_on: date` -> `happened_on text`.",
+      "schema": [
+        "create table Source (source_id integer primary key, email text, score integer)",
+        "create table Target (target_id integer primary key, email text, score integer)",
+        "create table Mirror (mirror_id integer primary key, email text, score integer)",
+        "create table Event (event_id integer primary key, happened_on text)"
+      ],
+      "seed": [
+        "insert into Source (source_id, email, score) values (1, 'ada@test', 10), (2, 'linus@test', 30), (3, 'grace@test', 20)"
+      ],
+      "steps": [
+        { "sql": "insert into Target (target_id, email, score) select source_id, email, score from Source order by source_id returning target_id, score" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }, { "i": "10" }], [{ "i": "2" }, { "i": "30" }], [{ "i": "3" }, { "i": "20" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_returning_rejects_an_unknown_column_without_publishing",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'ada@test', 10) returning missing" },
+        { "sql": "select account_id from Account order by account_id" }
+      ],
+      "expect": [
+        { "error": true },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_returning_rejects_an_unknown_column_inside_an_expression",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'ada@test', 10) returning case when missing > 1 then 'x' else 'y' end as band" },
+        { "sql": "select account_id from Account order by account_id" }
+      ],
+      "expect": [
+        { "error": true },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_returning_rejects_an_aggregate_function",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'ada@test', 10) returning count(*)" }
+      ],
+      "expect": [
+        { "error": true }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_select_publishes_the_rows_of_a_single_table_source",
+      "note": "`affected = 2` is asserted through the final table contents.",
+      "schema": [
+        "create table Source (source_id integer primary key, email text, score integer)",
+        "create table Target (target_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Source (source_id, email, score) values (1, 'ada@test', 10), (2, 'linus@test', 30), (3, 'grace@test', 20)"
+      ],
+      "steps": [
+        { "sql": "insert into Target (target_id, email, score) select source_id, email, score from Source where score >= 20" },
+        { "sql": "select target_id, score from Target order by target_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "2" }, { "i": "30" }], [{ "i": "3" }, { "i": "20" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_select_projects_constant_columns_into_the_target",
+      "note": "The target columns are filled positionally, so the select aliases differing from the target column names changes nothing.",
+      "schema": [
+        "create table Source (source_id integer primary key, email text, score integer)",
+        "create table Target (target_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Source (source_id, email, score) values (1, 'ada@test', 10), (2, 'linus@test', 30), (3, 'grace@test', 20)"
+      ],
+      "steps": [
+        { "sql": "insert into Target (target_id, email, score) select 900 as id_col, 'copy@test' as mail_col, 7 as score_col from Source where source_id = 1" },
+        { "sql": "select target_id, email, score from Target" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "900" }, { "t": "copy@test" }, { "i": "7" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_select_star_uses_the_catalog_column_order",
+      "note": "`insert into Mirror select * from Target` maps source fields to target fields in catalog declaration order.",
+      "schema": [
+        "create table Source (source_id integer primary key, email text, score integer)",
+        "create table Target (target_id integer primary key, email text, score integer)",
+        "create table Mirror (mirror_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Source (source_id, email, score) values (1, 'ada@test', 10), (2, 'linus@test', 30), (3, 'grace@test', 20)"
+      ],
+      "steps": [
+        { "sql": "insert into Target (target_id, email, score) select source_id, email, score from Source where source_id = 2" },
+        { "sql": "insert into Mirror select * from Target" },
+        { "sql": "select mirror_id, email, score from Mirror" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [] },
+        { "rows": [[{ "i": "2" }, { "t": "linus@test" }, { "i": "30" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_select_rejects_a_source_column_count_mismatch",
+      "schema": [
+        "create table Source (source_id integer primary key, email text, score integer)",
+        "create table Target (target_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Source (source_id, email, score) values (1, 'ada@test', 10), (2, 'linus@test', 30), (3, 'grace@test', 20)"
+      ],
+      "steps": [
+        { "sql": "insert into Target (target_id, score) select source_id, email, score from Source" },
+        { "sql": "select target_id from Target" }
+      ],
+      "expect": [
+        { "error": true },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_select_rejects_a_value_the_target_column_cannot_hold",
+      "note": "VOS `date` maps to SQLite `text`, so SQLite has no ISO-date scalar coercion. yydb rejects the non-date text with a scalar error, while SQLite stores the same text, and the engine-truth rows are asserted here.",
+      "schema": [
+        "create table Source (source_id integer primary key, email text, score integer)",
+        "create table Event (event_id integer primary key, happened_on text)"
+      ],
+      "seed": [
+        "insert into Source (source_id, email, score) values (1, 'ada@test', 10), (2, 'linus@test', 30), (3, 'grace@test', 20)"
+      ],
+      "steps": [
+        { "sql": "insert into Event (event_id, happened_on) select source_id, email from Source" },
+        { "sql": "select event_id, happened_on from Event order by event_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }, { "t": "ada@test" }], [{ "i": "2" }, { "t": "linus@test" }], [{ "i": "3" }, { "t": "grace@test" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_select_publishes_nothing_when_a_row_violates_a_unique_constraint",
+      "note": "The externally bound `Target_email_key` unique constraint is declared inline as `email text unique`. Both engines roll the whole statement back.",
+      "schema": [
+        "create table Source (source_id integer primary key, email text, score integer)",
+        "create table Target (target_id integer primary key, email text unique, score integer)"
+      ],
+      "seed": [
+        "insert into Source (source_id, email, score) values (1, 'shared@test', 10), (2, 'shared@test', 30), (3, 'other@test', 20)"
+      ],
+      "steps": [
+        { "sql": "insert into Target (target_id, email, score) select source_id, email, score from Source" },
+        { "sql": "select target_id from Target" }
+      ],
+      "expect": [
+        { "error": true },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_select_from_the_target_table_reads_the_pre_statement_snapshot",
+      "note": "yydb reads the pre-statement snapshot and republishes the three identical rows as a no-op reporting `affected = 3`. SQLite re-inserts the same primary keys, raises a unique violation and rolls the statement back, so the table keeps its three rows.",
+      "schema": [
+        "create table Source (source_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Source (source_id, email, score) values (1, 'ada@test', 10), (2, 'linus@test', 30), (3, 'grace@test', 20)"
+      ],
+      "steps": [
+        { "sql": "insert into Source (source_id, email, score) select source_id, email, score from Source" },
+        { "sql": "select source_id, score from Source order by source_id" }
+      ],
+      "expect": [
+        { "error": true },
+        { "rows": [[{ "i": "1" }, { "i": "10" }], [{ "i": "2" }, { "i": "30" }], [{ "i": "3" }, { "i": "20" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_select_rejects_sources_the_read_pipeline_cannot_shape",
+      "note": "Sub-case: aggregate function in the source select. yydb rejects aggregates in an INSERT ... SELECT source, SQLite allows them, so the engine-truth rows are asserted.",
+      "schema": [
+        "create table Source (source_id integer primary key, email text, score integer)",
+        "create table Target (target_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Source (source_id, email, score) values (1, 'ada@test', 10), (2, 'linus@test', 30), (3, 'grace@test', 20)"
+      ],
+      "steps": [
+        { "sql": "insert into Target (target_id, email, score) select count(*) as n, 'x@test', 0 from Source" },
+        { "sql": "select target_id, email, score from Target" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "3" }, { "t": "x@test" }, { "i": "0" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_select_rejects_sources_the_read_pipeline_cannot_shape",
+      "note": "Sub-case: GROUP BY in the source select. yydb rejects a grouping pipeline there, SQLite allows it, so the engine-truth rows are asserted.",
+      "schema": [
+        "create table Source (source_id integer primary key, email text, score integer)",
+        "create table Target (target_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Source (source_id, email, score) values (1, 'ada@test', 10), (2, 'linus@test', 30), (3, 'grace@test', 20)"
+      ],
+      "steps": [
+        { "sql": "insert into Target (target_id, email, score) select score, email, source_id from Source group by score" },
+        { "sql": "select target_id, email, score from Target order by target_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "10" }, { "t": "ada@test" }, { "i": "1" }], [{ "i": "20" }, { "t": "grace@test" }, { "i": "3" }], [{ "i": "30" }, { "t": "linus@test" }, { "i": "2" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_select_rejects_sources_the_read_pipeline_cannot_shape",
+      "note": "Sub-case: a source column appearing more than once. yydb rejects the ambiguous read pipeline, SQLite accepts the positional mapping and keeps the text in the integer `score` column because integer affinity does not convert it.",
+      "schema": [
+        "create table Source (source_id integer primary key, email text, score integer)",
+        "create table Target (target_id integer primary key, email text, score integer)"
+      ],
+      "seed": [
+        "insert into Source (source_id, email, score) values (1, 'ada@test', 10), (2, 'linus@test', 30), (3, 'grace@test', 20)"
+      ],
+      "steps": [
+        { "sql": "insert into Target (target_id, email, score) select source_id, email, email from Source" },
+        { "sql": "select target_id, email, score from Target order by target_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }, { "t": "ada@test" }, { "t": "ada@test" }], [{ "i": "2" }, { "t": "linus@test" }, { "t": "linus@test" }], [{ "i": "3" }, { "t": "grace@test" }, { "t": "grace@test" }]] }
+      ]
+    }
+  ]
+}
