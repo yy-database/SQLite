@@ -405,6 +405,89 @@
         { "rows": [[null]] },
         { "rows": [[{ "i": "1" }]] }
       ]
+    },
+    {
+      "source": "sql.rs::insert_bind_positional_parameters_in_values",
+      "note": "The statement parameter names are a binder detail. SQLite keeps the same declaration order for `?` placeholders, so the ported assertion reads the inserted row back.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "steps": [
+        {
+          "sql": "insert into Account (account_id, email, tenant, score, active) values (?, ?, ?, ?, ?)",
+          "params": [{ "i": "4" }, { "t": "ada@param.test" }, { "t": "tp" }, { "i": "99" }, { "i": "1" }]
+        },
+        { "sql": "select account_id, email, score from Account where account_id = 4" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "4" }, { "t": "ada@param.test" }, { "i": "99" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::update_with_positional_parameter_in_where",
+      "note": "Positional binding in a `where` clause. The affected-row count is engine metadata, so the ported assertion reads the updated value instead.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set score = 777 where account_id = ?", "params": [{ "i": "2" }] },
+        { "sql": "select score from Account where account_id = 2" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "777" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::delete_with_positional_parameter_in_where",
+      "note": "Positional binding in a `delete` predicate. The affected-row count is engine metadata, so the ported assertion reads the remaining rows instead.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "delete from Account where tenant = ?", "params": [{ "t": "t1" }] },
+        { "sql": "select account_id from Account order by account_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_values_publishes_every_row_and_reports_the_row_count",
+      "note": "Multi-row `insert ... values` publishes the rows it wrote in yydb. SQLite exposes neither the published rows nor the affected count here, so the ported assertion reads the table back and counts it.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, score integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, score) values (1, 'ada@test', 10), (2, 'linus@test', 30), (3, 'grace@test', 20)" },
+        { "sql": "select account_id, score from Account order by account_id" },
+        { "sql": "insert into Account (account_id, email, score) values (4, 'ken@test', 40)" },
+        { "sql": "select count(*) from Account" }
+      ],
+      "expect": [
+        { "rows": [] },
+        {
+          "rows": [
+            [{ "i": "1" }, { "i": "10" }],
+            [{ "i": "2" }, { "i": "30" }],
+            [{ "i": "3" }, { "i": "20" }]
+          ]
+        },
+        { "rows": [] },
+        { "rows": [[{ "i": "4" }]] }
+      ]
     }
   ]
 }

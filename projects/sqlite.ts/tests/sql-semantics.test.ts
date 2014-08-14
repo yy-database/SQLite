@@ -67,6 +67,22 @@ function cellMatches(actual: Cell, expected: Cell): boolean {
   return false;
 }
 
+// Corpus parameters use the same cell shape as results so the JSON stays
+// engine-neutral. Adapters need real JavaScript values, and an integer larger
+// than the safe range must bind as a `bigint` to keep its exact value.
+function decodeParam(cell: unknown): unknown {
+  if (cell === null || typeof cell !== "object") return cell;
+  const typed = cell as { i?: string; r?: string; t?: string; b?: string };
+  if (typed.i !== undefined) {
+    const value = Number(typed.i);
+    return Number.isSafeInteger(value) ? value : BigInt(typed.i);
+  }
+  if (typed.r !== undefined) return Number(typed.r);
+  if (typed.t !== undefined) return typed.t;
+  if (typed.b !== undefined) return new Uint8Array(Buffer.from(typed.b, "hex"));
+  return cell;
+}
+
 function assertExpectation(actual: StepOutcome, expected: { rows?: Cell[][] } | { error: true }, label: string): void {
   if ("error" in expected) {
     assert.ok(actual.error !== undefined, `${label}: expected an error, got ${outcomeText(actual)}`);
@@ -87,7 +103,7 @@ for (const { file, corpus } of loadCorpus()) {
   for (const entry of corpus.cases) {
     test(`${corpus.group}: ${entry.source}`, async () => {
       const prefix: Step[] = [...(entry.schema ?? []), ...(entry.seed ?? [])].map((sql) => ({ sql }));
-      const steps: Step[] = [...prefix, ...entry.steps.map((step) => ({ sql: step.sql, params: step.params }))];
+      const steps: Step[] = [...prefix, ...entry.steps.map((step) => ({ sql: step.sql, params: step.params?.map(decodeParam) }))];
       const outcomes = await runOn(ENGINES, steps);
       const comparison = compareOutcomes(outcomes);
       assert.ok(
