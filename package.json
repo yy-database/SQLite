@@ -7,7 +7,7 @@
         "check": "cargo check --manifest-path projects/sqlite.rs/Cargo.toml --workspace",
         "build:napi": "node scripts/build-napi.mjs",
         "fmt": "cargo fmt --manifest-path projects/sqlite.rs/Cargo.toml --all",
-        "test": "node projects/sqlite.ts/packages/sqlite-harness/cli.mjs test",
+        "test": "node projects/sqlite.ts/packages/sqlite-harness/bin/cli.mjs test",
         "test:rust": "cargo test --manifest-path projects/sqlite.rs/Cargo.toml --workspace",
         "test:py": "python -m unittest discover -s projects/sqlite.py/tests -t projects/sqlite.py/tests",
         "examples:ts": "node --experimental-strip-types projects/sqlite.ts/examples/roundtrip.ts",
@@ -20,5 +20,10 @@
     },
     "devDependencies": {
         "@doki-land/nifty": "^0.1.10"
+    },
+    "pnpm": {
+        "onlyBuiltDependencies": [
+            "better-sqlite3"
+        ]
     }
 }

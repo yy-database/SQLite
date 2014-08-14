@@ -4,5 +4,5 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const cli = join(root, "projects/sqlite.ts/packages/sqlite-harness/cli.mjs");
+const cli = join(root, "projects/sqlite.ts/packages/sqlite-harness/bin/cli.mjs");
 process.exit(spawnSync(process.execPath, [cli, "test"], { stdio: "inherit" }).status ?? 1);

@@ -35,7 +35,7 @@ in `projects/sqlite.rs/.cargo/config.toml` (see `config.example.toml`).
 
 ```shell
 # build `sqlite.node`, run both suites and all three platform smokes
-node projects/sqlite.ts/packages/sqlite-harness/cli.mjs test
+node projects/sqlite.ts/packages/sqlite-harness/bin/cli.mjs test
 
 # one suite at a time
 cd projects/sqlite.ts && node --experimental-strip-types --test "tests/**/*.test.ts"
