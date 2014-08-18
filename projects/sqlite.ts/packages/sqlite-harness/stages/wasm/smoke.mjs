@@ -17,6 +17,58 @@ function assert(condition, message) {
   }
 }
 
+// Published host contract: the JSON envelope, the fail-closed statement subset
+// and the rejection messages. The expectation comes from the documented shape
+// in `projects/sqlite.ts/homepage/documents/zh-hans`, never from round-tripping
+// the engine against itself.
+function checkHostContract() {
+  const database = new MemoryDatabase(4096);
+
+  const roundTrip = JSON.parse(
+    database.exec(
+      "create table t (id integer primary key, label text not null); insert into t (label) values ('alpha'); select count(*) from t; select * from t;",
+    ),
+  );
+  assert(roundTrip.length === 4, `four statement results, got ${roundTrip.length}`);
+  assert(roundTrip[2].columns[0] === "count(*)", "count(*) exposes its column name");
+  assert(JSON.stringify(roundTrip[2].rows) === "[[1]]", "count(*) sees one row");
+  assert(
+    JSON.stringify(roundTrip[3]) ===
+      JSON.stringify({ statement: "select", affected: 0, columns: ["id", "label"], rows: [[1, "alpha"]] }),
+    "select round-trips the rowid alias and the text value",
+  );
+
+  const created = JSON.parse(database.exec("create table probe (id integer primary key, label text)"));
+  assert(created[0].statement === "create-table" && created[0].affected === 1, "create-table envelope reports one table");
+  const inserted = JSON.parse(database.exec("insert into probe (label) values ('a')"));
+  assert(inserted[0].statement === "insert" && inserted[0].affected === 1, "insert envelope reports one row");
+  assert(JSON.stringify(inserted[0].rows) === "[[1]]", "insert returns the assigned rowid");
+  assert(
+    database.exec("select * from probe") === '[{"statement":"select","affected":0,"columns":["id","label"],"rows":[[1,"a"]]}]',
+    "select envelope matches the documented JSON wiring",
+  );
+
+  const missing = throws(() => database.exec("insert into missing values (1)"));
+  assert(/unknown table/.test(missing), `unknown table is rejected, got ${missing}`);
+  const arity = throws(() => database.exec("insert into probe values (1)"));
+  assert(/expects 2 values/.test(arity), `arity mismatch is rejected, got ${arity}`);
+  const deleted = throws(() => database.exec("delete from probe"));
+  assert(/unsupported statement/.test(deleted), `delete is rejected, got ${deleted}`);
+  const ordered = throws(() => database.exec("select * from probe order by id"));
+  assert(/unsupported `SELECT` clause/.test(ordered), `order by is rejected, got ${ordered}`);
+}
+
+function throws(run) {
+  try {
+    run();
+  } catch (error) {
+    return String(error?.message ?? error);
+  }
+  throw new Error("assertion failed: expected the statement to be rejected");
+}
+
+checkHostContract();
+
 const wasmBytes = readFileSync(resolve(wasmPlatform, "pkg/sqlite_wasm_bg.wasm")).length;
 const database = new MemoryDatabase(4096);
 const created = JSON.parse(database.exec("create table bench (id integer primary key, label text not null, score real)"));
