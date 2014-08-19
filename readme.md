@@ -40,13 +40,17 @@ node projects/sqlite.ts/packages/sqlite-harness/bin/cli.mjs test
 # one suite at a time
 cd projects/sqlite.ts && node --experimental-strip-types --test "tests/**/*.test.ts"
 cd projects/sqlite.py && python -m unittest discover -v -s tests -t tests
+
+# Rust keeps a single smoke: it compiles, opens a database and round-trips one row
+cargo test --release --workspace
 ```
 
 `node scripts/check-test-floor.mjs` delegates to `projects/sqlite.ts/packages/sqlite-harness`, so CI and local runs share one
-implementation. The harness fails when either suite reports a failure, executes fewer than 30 cases,
-or skips a case. It also reads the suite sources and fails if they stop calling a real external
-engine (`better-sqlite3`, Python `sqlite3`, `PRAGMA integrity_check`). There is no JSON metadata and
-no allowlist.
+implementation. The harness fails when either suite reports a failure, executes fewer cases than
+its floor (335 for `sqlite.ts` and 300 for `sqlite.py`, overridable through `TS_TEST_FLOOR` and
+`PY_TEST_FLOOR`), or skips a case. It also reads the suite sources and fails if they stop calling a
+real external engine (`better-sqlite3`, Python `sqlite3`, `PRAGMA integrity_check`). There is no
+JSON metadata and no allowlist.
 
 ### `projects/sqlite.ts/tests`
 
@@ -60,6 +64,7 @@ no allowlist.
 | `corpus.test.ts` | 2 | externally written corpus (all storage classes, index/view/STRICT), UTF-16LE and UTF-16BE |
 | `stress-matrix.test.ts` | 7 | 10k-row sequential/shuffled/bulk/hollow/overflow/index-churn loads, Python oracle |
 | `wal-journal.test.ts` | 2 | committed WAL frames and hot rollback journal semantics |
+| `sql-semantics.test.ts` | 283 | `sql-*.json` corpus judged by three external builds at once (`better-sqlite3`, `node:sqlite`, `sql.js`) |
 
 ### `projects/sqlite.py/tests`
 
@@ -69,6 +74,7 @@ no allowlist.
 | `test_scenarios.py` | 15 | end-to-end scenarios against Python `sqlite3` |
 | `test_edges.py` | 5 | 65536 page size, composite WITHOUT ROWID, exact page counts, seeded differential stream, fixture and rejection boundaries |
 | `test_wal_journal.py` | 2 | WAL and hot journal semantics |
+| `test_sql_semantics.py` | 265 | the shared `sql-*.json` corpus replayed on Python's standard-library `sqlite3` |
 
 ## Branch
 
