@@ -11,7 +11,7 @@ publish = false
 
 [lib]
 name = "sqlite_format3"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [dependencies]
 sqlite = { workspace = true }
