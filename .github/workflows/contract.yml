@@ -19,6 +19,13 @@ jobs:
         with:
           version: 10.18.3
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@0.2.127
+      - name: Install the wheel build tool
+        run: python3 -m pip install --quiet maturin
       - name: Assert the checkout has no native artifact
         run: test ! -e projects/sqlite.rs/sqlite-napi/sqlite.node
       - name: Install SQLite test dependencies
