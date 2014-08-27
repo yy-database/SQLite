@@ -135,7 +135,7 @@ export function nativeBindingPath(): string {
   if (!key) {
     throw new Error(`SQLite native binding not available for ${process.platform}-${process.arch}`);
   }
-  const libDir = join(dirname(require.resolve(`@sqlite/sqlite-${key}`)), "lib");
+  const libDir = join(dirname(require.resolve(`@yydb/sqlite-node-${key}`)), "lib");
   const fileName = existsSync(libDir)
     ? readdirSync(libDir).find((entry) => entry.endsWith(".node"))
     : undefined;
@@ -155,13 +155,13 @@ export function loadNative(): NativeBindings {
   if (!key) {
     throw new Error(`SQLite native binding not available for ${process.platform}-${process.arch}`);
   }
-  const pkg = `@sqlite/sqlite-${key}`;
+  const pkg = `@yydb/sqlite-node-${key}`;
   try {
     return loadModule(pkg);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `SQLite native binding not found. Run pnpm build:napi from the repo root, reinstall @sqlite/sqlite with optional dependencies, set SQLITE_NATIVE, or stage ${pkg}. ${message}`,
+      `SQLite native binding not found. Run pnpm build:napi from the repo root, reinstall @yydb/sqlite with optional dependencies, set SQLITE_NATIVE, or stage ${pkg}. ${message}`,
     );
   }
 }

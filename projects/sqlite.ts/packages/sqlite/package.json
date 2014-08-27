@@ -1,5 +1,5 @@
 {
-    "name": "@sqlite/sqlite",
+    "name": "@yydb/sqlite",
     "version": "0.1.0",
     "private": true,
     "description": "TypeScript surface over the SQLite format-3 native binding",
@@ -21,10 +21,10 @@
         "sql.js": "^1.15.2"
     },
     "optionalDependencies": {
-        "@sqlite/sqlite-darwin-arm64": "workspace:*",
-        "@sqlite/sqlite-darwin-x64": "workspace:*",
-        "@sqlite/sqlite-linux-x64": "workspace:*",
-        "@sqlite/sqlite-win32-x64": "workspace:*"
+        "@yydb/sqlite-node-darwin-arm64": "workspace:*",
+        "@yydb/sqlite-node-darwin-x64": "workspace:*",
+        "@yydb/sqlite-node-linux-x64": "workspace:*",
+        "@yydb/sqlite-node-win32-x64": "workspace:*"
     },
     "engines": {
         "node": ">=18"

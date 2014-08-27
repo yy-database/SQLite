@@ -1,5 +1,5 @@
 {
-    "name": "@sqlite/sqlite-unknown-wasm32",
+    "name": "@yydb/sqlite-wasm",
     "version": "0.1.0",
     "private": true,
     "description": "WebAssembly build of the in-memory SQLite format-3 database",
