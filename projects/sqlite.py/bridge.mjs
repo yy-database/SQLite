@@ -8,6 +8,14 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 
+const project = dirname(fileURLToPath(import.meta.url));
+const repository = resolve(project, "..", "..");
+
+/** Resolve a development-only oracle from the workspace root dependencies. */
+function oracleRequire(specifier) {
+  return require(require.resolve(specifier, { paths: [repository] }));
+}
+
 // The binding is staged in `../sqlite.ts/platforms/<pkg>/lib` by
 // `scripts/build-napi.mjs`. The bridge is test-only glue, so it reads that
 // staged artefact directly instead of resolving an optional dependency that
@@ -25,7 +33,6 @@ function nativePath() {
   if (fromEnv) return resolve(fromEnv);
   const key = platformKey();
   if (!key) throw new Error(`no SQLite native binding for ${process.platform}-${process.arch}`);
-  const project = dirname(fileURLToPath(import.meta.url));
   const libDir = join(project, "..", "sqlite.ts", "platforms", `sqlite-node-${key}`, "lib");
   const fileName = existsSync(libDir)
     ? readdirSync(libDir).find((entry) => entry.endsWith(".node"))
@@ -131,7 +138,7 @@ function meta({ path }) {
 }
 
 function oracle({ path, sql }) {
-  const Database = require("../sqlite.ts/node_modules/better-sqlite3");
+  const Database = oracleRequire("better-sqlite3");
   const db = new Database(path);
   let rows;
   if (/^\s*pragma\s+/i.test(sql)) {
