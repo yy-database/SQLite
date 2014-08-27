@@ -1,12 +1,12 @@
 {
-    "name": "@yydb/sqlite-node-darwin-x64",
+    "name": "@yydb/sqlite-darwin-arm64",
     "version": "0.1.0",
     "private": true,
-    "description": "Node-API binding for macOS x64",
+    "description": "Node-API binding for macOS arm64",
     "license": "MPL-2.0",
     "type": "module",
     "os": ["darwin"],
-    "cpu": ["x64"],
+    "cpu": ["arm64"],
     "main": "./index.js",
     "exports": {
         ".": "./index.js"

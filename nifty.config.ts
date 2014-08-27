@@ -20,7 +20,7 @@ export default defineConfig({
             '**/*.md',
             '**/*.css',
             '**/*.html',
-            'projects/sqlite.ts/platforms/sqlite-wasm/pkg/**',
+            'projects/sqlite.ts/platforms/sqlite-unknown-wasm32/pkg/**',
         ],
     },
 });

@@ -33,7 +33,7 @@ function nativePath() {
   if (fromEnv) return resolve(fromEnv);
   const key = platformKey();
   if (!key) throw new Error(`no SQLite native binding for ${process.platform}-${process.arch}`);
-  const libDir = join(project, "..", "sqlite.ts", "platforms", `sqlite-node-${key}`, "lib");
+  const libDir = join(project, "..", "sqlite.ts", "platforms", `sqlite-${key}`, "lib");
   const fileName = existsSync(libDir)
     ? readdirSync(libDir).find((entry) => entry.endsWith(".node"))
     : undefined;
