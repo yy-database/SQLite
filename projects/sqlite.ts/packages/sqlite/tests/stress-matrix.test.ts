@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createWriter, openWriter, writeSlots } from "../packages/sqlite/src/index.ts";
+import { createWriter, openWriter, writeSlots } from "../src/index.ts";
 
 // External truth: every scenario is reopened by `better-sqlite3`, checked with
 // `PRAGMA integrity_check`, and sampled row by row. The sequential artifact also

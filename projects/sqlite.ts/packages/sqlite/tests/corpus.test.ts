@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { openDatabase } from "../packages/sqlite/src/index.ts";
+import { openDatabase } from "../src/index.ts";
 
 // External truth: the corpus is written by Python `sqlite3` and by
 // `better-sqlite3`, then compared row by row and with `PRAGMA integrity_check`.

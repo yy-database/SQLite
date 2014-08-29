@@ -4,7 +4,7 @@ import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createWriter, openDatabase, writeSlots } from "../packages/sqlite/src/index.ts";
+import { createWriter, openDatabase, writeSlots } from "../src/index.ts";
 
 const require = createRequire(import.meta.url);
 

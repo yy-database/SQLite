@@ -4,7 +4,7 @@
 // floor. The source scan keeps the suites honest about calling real external
 // engines instead of judging themselves.
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { emit, execFile, nativeModulePath, repoPath, type CliOptions } from "./util.ts";
@@ -44,7 +44,7 @@ function runTs(): Suite {
   const result = execFile(
     process.execPath,
     ["--test-reporter=tap", "--experimental-strip-types", "--test", "tests/*.test.ts"],
-    repoPath("projects", "sqlite.ts"),
+    repoPath("projects", "sqlite.ts", "packages", "sqlite"),
     { SQLITE_NATIVE: nativePath() },
   );
   const output = result.stdout;
@@ -65,13 +65,11 @@ function runTs(): Suite {
   };
 }
 
-// The Python suite lives at `projects/sqlite.py/tests`. A concurrent layout
-// change moved it under `examples/` for a while, so both locations are
-// accepted and whichever exists is used.
+// The Python suite lives inside the packaging project so the wheel metadata and
+// its acceptance cases stay in one package directory.
 function pythonTests(): { cwd: string; relative: string } {
-  const root = repoPath("projects", "sqlite.py");
-  if (existsSync(join(root, "tests"))) return { cwd: root, relative: "tests" };
-  return { cwd: join(root, "examples"), relative: "tests" };
+  const cwd = repoPath("projects", "sqlite.py", "packages", "sqlite");
+  return { cwd, relative: "tests" };
 }
 
 function runPy(): Suite {
@@ -121,8 +119,8 @@ function sources(directory: string): string {
 
 function externalCheck(): { ok: boolean; missing: string[]; used: string[] } {
   const text = [
-    sources(repoPath("projects", "sqlite.ts", "tests")),
-    sources(repoPath("projects", "sqlite.py", "tests")),
+    sources(repoPath("projects", "sqlite.ts", "packages", "sqlite", "tests")),
+    sources(repoPath("projects", "sqlite.py", "packages", "sqlite", "tests")),
   ].join("\n");
   const used = EXTERNAL_CALLS.filter((name) => text.includes(name));
   const missing = EXTERNAL_CALLS.filter((name) => !text.includes(name));
