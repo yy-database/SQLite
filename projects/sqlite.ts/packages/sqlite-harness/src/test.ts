@@ -43,7 +43,13 @@ function build(): { ok: boolean; output: string } {
 function runTs(): Suite {
   const result = execFile(
     process.execPath,
-    ["--test-reporter=tap", "--experimental-strip-types", "--test", "tests/*.test.ts"],
+    [
+      "--test-reporter=tap",
+      "--experimental-strip-types",
+      "--test",
+      "tests/*.test.ts",
+      "../../emulators/sqlite/tests/*.test.ts",
+    ],
     repoPath("projects", "sqlite.ts", "packages", "sqlite"),
     { SQLITE_NATIVE: nativePath() },
   );

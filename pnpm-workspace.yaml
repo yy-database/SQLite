@@ -1,4 +1,5 @@
 packages:
   - "projects/sqlite.ts/packages/*"
   - "projects/sqlite.ts/platforms/*"
+  - "projects/sqlite.ts/emulators/*"
   - "projects/sqlite.ts/homepage"
