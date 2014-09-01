@@ -27,7 +27,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-bindgen-cli@0.2.127
-      # The platform stages build a wheel for the five case Python stage.
+      # The platform stages build a wheel for the installed-wheel Python stage.
       - name: Install the wheel build tool
         run: python3 -m pip install --quiet maturin
       - name: Assert the checkout has no native artifact
@@ -35,7 +35,9 @@ jobs:
       - name: Install SQLite test dependencies
         run: pnpm install --no-frozen-lockfile
       # One entry builds the native binding, then runs every suite and every
-      # platform stage: `sqlite.ts`, `sqlite.py`, node, wasm and python.
+      # platform stage: `sqlite.ts`, `sqlite.py`, node, wasm and python. The
+      # report separates external conformance, storage primitives and SQL
+      # execution instead of printing one aggregate number.
       - name: TypeScript suite, Python suite and platform stages
         run: node scripts/check-test-floor.mjs
       - name: Downstream examples

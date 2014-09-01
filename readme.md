@@ -46,11 +46,21 @@ cargo test --release --workspace
 ```
 
 `node scripts/check-test-floor.mjs` delegates to `projects/sqlite.ts/packages/sqlite-harness`, so CI and local runs share one
-implementation. The harness fails when either suite reports a failure, executes fewer cases than
-its floor (335 for `sqlite.ts` and 300 for `sqlite.py`, overridable through `TS_TEST_FLOOR` and
-`PY_TEST_FLOOR`), or skips a case. It also reads the suite sources and fails if they stop calling a
-real external engine (`better-sqlite3`, Python `sqlite3`, `PRAGMA integrity_check`). There is no
-JSON metadata and no allowlist.
+implementation. Coverage is reported as three independent layers, never as one aggregate:
+
+| Layer | What it counts | Current floor |
+|-------|----------------|---------------|
+| `external` | Cross-engine conformance judged by `better-sqlite3`, `node:sqlite`, `sql.js` and the CPython `sqlite3` module. Reported but not repository coverage | 283 TS + 265 PY |
+| `storage` | This repository's writer / reader / snapshot primitives, platform packages and the installed wheel | 62 TS + 35 PY |
+| `sql` | SQL text executed by this repository's own engine | 0 TS + 0 PY |
+
+The floors are overridable through `TS_EXTERNAL_FLOOR`, `TS_STORAGE_FLOOR`, `TS_SQL_FLOOR`,
+`PY_EXTERNAL_FLOOR`, `PY_STORAGE_FLOOR` and `PY_SQL_FLOOR`. The harness fails when a suite reports
+a failure, executes fewer cases than its layer floor, or skips a case. Platform stages report
+assertion counts and keep the written row count in a separate `rows` (data volume) field. It also
+reads the suite sources and fails if they stop calling a real external engine
+(`better-sqlite3`, Python `sqlite3`, `PRAGMA integrity_check`). There is no JSON metadata and no
+allowlist.
 
 ### `projects/sqlite.ts/packages/sqlite/tests`
 
