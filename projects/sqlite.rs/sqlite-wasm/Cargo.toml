@@ -14,6 +14,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 sqlite = { workspace = true }
+sqlite-sql = { path = "../sqlite-sql" }
 wasm-bindgen = { workspace = true }
 # `yydb-types` (pulled in by `sqlite-storage`) depends on `uuid`. Enabling the
 # `js` randomness source here unifies `uuid` features for the wasm graph, where

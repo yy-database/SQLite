@@ -1,4 +1,4 @@
-//! Minimal SQL front end for the in-memory wasm database.
+//! Minimal SQL front end for the format-3 writer.
 //!
 //! Supported statements, deliberately small and fail-closed:
 //!
@@ -9,10 +9,14 @@
 //! | `SELECT` | `count(*)`, `*`, or an explicit column list, with optional `LIMIT` |
 //!
 //! Anything else (`WHERE`, `JOIN`, `UPDATE`, `DELETE`, table-level constraints,
-//! views, triggers, `ALTER`, `DROP`) is rejected with a message instead of
-//! being silently approximated.
+//! views, triggers, `ALTER`, `DROP`) is rejected with a structured error instead
+//! of being silently approximated. Every rejection carries the statement kind,
+//! the offending clause when one is recognized, and the byte offset inside the
+//! input.
 
 use sqlite::{ColumnSpec, WriteValue};
+
+use crate::error::SqlError;
 
 /// One literal value parsed from a `VALUES` tuple or a `DEFAULT` clause.
 #[derive(Clone, Debug, PartialEq)]
@@ -85,6 +89,17 @@ pub enum Statement {
     },
 }
 
+impl Statement {
+    /// Lowercase name reported in `ExecResult::statement`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::CreateTable { .. } => "create-table",
+            Self::Insert { .. } => "insert",
+            Self::Select { .. } => "select",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum Token {
     Word(String),
@@ -99,6 +114,7 @@ enum Token {
     Star,
     Semi,
     Minus,
+    Operator(String),
 }
 
 impl Token {
@@ -116,14 +132,15 @@ impl Token {
             Self::Star => "`*`".to_string(),
             Self::Semi => "`;`".to_string(),
             Self::Minus => "`-`".to_string(),
+            Self::Operator(operator) => format!("`{operator}`"),
         }
     }
 }
 
 /// Parses one or more semicolon-separated statements.
-pub fn parse(source: &str) -> Result<Vec<Statement>, String> {
-    let tokens = tokenize(source)?;
-    let mut parser = Parser { tokens, at: 0 };
+pub fn parse(source: &str) -> Result<Vec<Statement>, SqlError> {
+    let (tokens, offsets) = tokenize(source)?;
+    let mut parser = Parser { tokens, offsets, at: 0, end: source.len(), kind: None };
     let mut statements = Vec::new();
     while !parser.done() {
         if parser.peek() == Some(&Token::Semi) {
@@ -138,9 +155,10 @@ pub fn parse(source: &str) -> Result<Vec<Statement>, String> {
     Ok(statements)
 }
 
-fn tokenize(source: &str) -> Result<Vec<Token>, String> {
+fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<usize>), SqlError> {
     let bytes = source.as_bytes();
     let mut tokens = Vec::new();
+    let mut offsets = Vec::new();
     let mut at = 0usize;
     while at < bytes.len() {
         let byte = bytes[at];
@@ -152,10 +170,11 @@ fn tokenize(source: &str) -> Result<Vec<Token>, String> {
                 }
             }
             b'/' if bytes.get(at + 1) == Some(&b'*') => {
+                let start = at;
                 at += 2;
                 loop {
                     if at + 1 >= bytes.len() {
-                        return Err("unterminated `/* ... */` comment".to_string());
+                        return Err(SqlError::syntax("unterminated `/* ... */` comment", Some(start)));
                     }
                     if bytes[at] == b'*' && bytes[at + 1] == b'/' {
                         at += 2;
@@ -165,40 +184,57 @@ fn tokenize(source: &str) -> Result<Vec<Token>, String> {
                 }
             }
             b',' => {
+                offsets.push(at);
                 tokens.push(Token::Comma);
                 at += 1;
             }
             b'(' => {
+                offsets.push(at);
                 tokens.push(Token::LParen);
                 at += 1;
             }
             b')' => {
+                offsets.push(at);
                 tokens.push(Token::RParen);
                 at += 1;
             }
             b'*' => {
+                offsets.push(at);
                 tokens.push(Token::Star);
                 at += 1;
             }
             b';' => {
+                offsets.push(at);
                 tokens.push(Token::Semi);
                 at += 1;
             }
             b'-' => {
+                offsets.push(at);
                 tokens.push(Token::Minus);
+                at += 1;
+            }
+            // Comparison and arithmetic punctuation is tokenized so a clause
+            // rejection (`WHERE x = 1`) reports the clause and offset instead of
+            // failing as an unsupported character.
+            b'=' | b'<' | b'>' | b'!' | b'+' | b'/' | b'%' | b'&' | b'|' | b'^' | b'~' | b'?' | b':' => {
+                offsets.push(at);
+                tokens.push(Token::Operator(char::from(byte).to_string()));
                 at += 1;
             }
             b'\'' => {
                 let (text, next) = read_quoted(source, at, b'\'', b'\'')?;
+                offsets.push(at);
                 tokens.push(Token::Text(text));
                 at = next;
             }
             b'"' => {
                 let (text, next) = read_quoted(source, at, b'"', b'"')?;
+                offsets.push(at);
                 tokens.push(Token::Quoted(text));
                 at = next;
             }
             b'[' => {
+                let start = at;
                 let mut text = String::new();
                 at += 1;
                 while at < bytes.len() {
@@ -209,22 +245,26 @@ fn tokenize(source: &str) -> Result<Vec<Token>, String> {
                     at += 1;
                 }
                 if at >= bytes.len() {
-                    return Err("unterminated `[...]` identifier".to_string());
+                    return Err(SqlError::syntax("unterminated `[...]` identifier", Some(start)));
                 }
+                offsets.push(start);
                 tokens.push(Token::Quoted(text));
                 at += 1;
             }
             b'`' => {
                 let (text, next) = read_quoted(source, at, b'`', b'`')?;
+                offsets.push(at);
                 tokens.push(Token::Quoted(text));
                 at = next;
             }
             byte if byte.is_ascii_digit() => {
                 let (token, next) = read_number(source, at)?;
+                offsets.push(at);
                 tokens.push(token);
                 at = next;
             }
             byte if is_word_start(byte) => {
+                let start = at;
                 let mut word = String::new();
                 while at < bytes.len() && is_word_part(bytes[at]) {
                     word.push(char::from(bytes[at]));
@@ -232,17 +272,21 @@ fn tokenize(source: &str) -> Result<Vec<Token>, String> {
                 }
                 if word.eq_ignore_ascii_case("x") && bytes.get(at) == Some(&b'\'') {
                     let (text, next) = read_quoted(source, at, b'\'', b'\'')?;
-                    tokens.push(Token::Blob(decode_hex(&text)?));
+                    offsets.push(start);
+                    tokens.push(Token::Blob(decode_hex(&text, start)?));
                     at = next;
                 }
                 else {
+                    offsets.push(start);
                     tokens.push(Token::Word(word));
                 }
             }
-            other => return Err(format!("unsupported character `{}` in SQL", char::from(other))),
+            other => {
+                return Err(SqlError::syntax(format!("unsupported character `{}` in SQL", char::from(other)), Some(at)));
+            }
         }
     }
-    Ok(tokens)
+    Ok((tokens, offsets))
 }
 
 fn is_word_start(byte: u8) -> bool {
@@ -253,7 +297,7 @@ fn is_word_part(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
 }
 
-fn read_quoted(source: &str, at: usize, open: u8, close: u8) -> Result<(String, usize), String> {
+fn read_quoted(source: &str, at: usize, open: u8, close: u8) -> Result<(String, usize), SqlError> {
     let bytes = source.as_bytes();
     debug_assert_eq!(bytes.get(at), Some(&open));
     let mut text = String::new();
@@ -270,10 +314,10 @@ fn read_quoted(source: &str, at: usize, open: u8, close: u8) -> Result<(String, 
         text.push(char::from(bytes[index]));
         index += 1;
     }
-    Err("unterminated quoted literal".to_string())
+    Err(SqlError::syntax("unterminated quoted literal", Some(at)))
 }
 
-fn read_number(source: &str, at: usize) -> Result<(Token, usize), String> {
+fn read_number(source: &str, at: usize) -> Result<(Token, usize), SqlError> {
     let bytes = source.as_bytes();
     let start = at;
     let mut index = at;
@@ -283,8 +327,9 @@ fn read_number(source: &str, at: usize) -> Result<(Token, usize), String> {
         while index < bytes.len() && bytes[index].is_ascii_hexdigit() {
             index += 1;
         }
-        let value = i64::from_str_radix(&source[digits_start..index], 16)
-            .map_err(|_| "hexadecimal integer literal is out of the signed 64-bit range".to_string())?;
+        let value = i64::from_str_radix(&source[digits_start..index], 16).map_err(|_| {
+            SqlError::syntax("hexadecimal integer literal is out of the signed 64-bit range", Some(start))
+        })?;
         return Ok((Token::Int(value), index));
     }
     while index < bytes.len() && bytes[index].is_ascii_digit() {
@@ -312,27 +357,31 @@ fn read_number(source: &str, at: usize) -> Result<(Token, usize), String> {
     }
     let text = &source[start..index];
     if real {
-        let value = text.parse::<f64>().map_err(|_| format!("real literal `{text}` is not a finite f64"))?;
+        let value = text
+            .parse::<f64>()
+            .map_err(|_| SqlError::syntax(format!("real literal `{text}` is not a finite f64"), Some(start)))?;
         if !value.is_finite() {
-            return Err(format!("real literal `{text}` is not a finite f64"));
+            return Err(SqlError::syntax(format!("real literal `{text}` is not a finite f64"), Some(start)));
         }
         Ok((Token::Real(value), index))
     }
     else {
-        let value = text.parse::<i64>().map_err(|_| format!("integer literal `{text}` is out of the signed 64-bit range"))?;
+        let value = text.parse::<i64>().map_err(|_| {
+            SqlError::syntax(format!("integer literal `{text}` is out of the signed 64-bit range"), Some(start))
+        })?;
         Ok((Token::Int(value), index))
     }
 }
 
-fn decode_hex(text: &str) -> Result<Vec<u8>, String> {
+fn decode_hex(text: &str, at: usize) -> Result<Vec<u8>, SqlError> {
     if text.len() % 2 != 0 {
-        return Err("blob literal must have an even number of hex digits".to_string());
+        return Err(SqlError::syntax("blob literal must have an even number of hex digits", Some(at)));
     }
     let mut bytes = Vec::with_capacity(text.len() / 2);
     let mut index = 0;
     while index < text.len() {
         let byte = u8::from_str_radix(&text[index..index + 2], 16)
-            .map_err(|_| "blob literal contains a non-hex digit".to_string())?;
+            .map_err(|_| SqlError::syntax("blob literal contains a non-hex digit", Some(at)))?;
         bytes.push(byte);
         index += 2;
     }
@@ -341,7 +390,10 @@ fn decode_hex(text: &str) -> Result<Vec<u8>, String> {
 
 struct Parser {
     tokens: Vec<Token>,
+    offsets: Vec<usize>,
     at: usize,
+    end: usize,
+    kind: Option<&'static str>,
 }
 
 impl Parser {
@@ -361,8 +413,20 @@ impl Parser {
         token
     }
 
-    fn take(&mut self) -> Result<Token, String> {
-        self.next().ok_or_else(|| "unexpected end of SQL".to_string())
+    fn offset(&self) -> usize {
+        self.offsets.get(self.at).copied().unwrap_or(self.end)
+    }
+
+    fn error(&self, code: &'static str, message: impl Into<String>) -> SqlError {
+        let mut error = SqlError::new(code, message).at(self.offset());
+        if let Some(kind) = self.kind {
+            error = error.in_statement(kind);
+        }
+        error
+    }
+
+    fn take(&mut self) -> Result<Token, SqlError> {
+        self.next().ok_or_else(|| self.error("syntax", "unexpected end of SQL"))
     }
 
     fn peek_word(&self) -> Option<&str> {
@@ -382,55 +446,60 @@ impl Parser {
         }
     }
 
-    fn expect_word(&mut self, keyword: &str) -> Result<(), String> {
+    fn expect_word(&mut self, keyword: &str) -> Result<(), SqlError> {
         if self.eat_word(keyword) {
             Ok(())
         }
         else {
             match self.peek() {
-                Some(token) => Err(format!("expected `{keyword}` but found {}", token.describe())),
-                None => Err(format!("expected `{keyword}` but the statement ended")),
+                Some(token) => Err(self.error("syntax", format!("expected `{keyword}` but found {}", token.describe()))),
+                None => Err(self.error("syntax", format!("expected `{keyword}` but the statement ended"))),
             }
         }
     }
 
-    fn expect_char(&mut self, expected: &Token) -> Result<(), String> {
+    fn expect_char(&mut self, expected: &Token) -> Result<(), SqlError> {
         match self.peek() {
             Some(token) if token == expected => {
                 self.at += 1;
                 Ok(())
             }
-            Some(token) => Err(format!("expected {} but found {}", describe_expected(expected), token.describe())),
-            None => Err(format!("expected {} but the statement ended", describe_expected(expected))),
+            Some(token) => Err(self.error("syntax", format!("expected {} but found {}", describe_expected(expected), token.describe()))),
+            None => Err(self.error("syntax", format!("expected {} but the statement ended", describe_expected(expected)))),
+
         }
     }
 
-    fn name(&mut self) -> Result<String, String> {
+    fn name(&mut self) -> Result<String, SqlError> {
         match self.next() {
             Some(Token::Word(word)) => Ok(word),
             Some(Token::Quoted(word)) => Ok(word),
-            Some(token) => Err(format!("expected an identifier but found {}", token.describe())),
-            None => Err("expected an identifier but the statement ended".to_string()),
+            Some(token) => Err(self.error("syntax", format!("expected an identifier but found {}", token.describe()))),
+            None => Err(self.error("syntax", "expected an identifier but the statement ended")),
         }
     }
 
-    fn statement(&mut self) -> Result<Statement, String> {
+    fn statement(&mut self) -> Result<Statement, SqlError> {
         if self.eat_word("create") {
+            self.kind = Some("create-table");
             return self.create_table();
         }
         if self.eat_word("insert") {
+            self.kind = Some("insert");
             return self.insert();
         }
         if self.eat_word("select") {
+            self.kind = Some("select");
             return self.select();
         }
         let found = self.peek().map(Token::describe).unwrap_or_else(|| "end of SQL".to_string());
-        Err(format!(
-            "unsupported statement starting at {found}; this engine accepts `CREATE TABLE`, `INSERT`, and `SELECT` only"
+        Err(self.error(
+            "unsupported-statement",
+            format!("unsupported statement starting at {found}; this engine accepts `CREATE TABLE`, `INSERT`, and `SELECT` only"),
         ))
     }
 
-    fn create_table(&mut self) -> Result<Statement, String> {
+    fn create_table(&mut self) -> Result<Statement, SqlError> {
         self.expect_word("table")?;
         let if_not_exists = if self.eat_word("if") {
             self.expect_word("not")?;
@@ -453,14 +522,14 @@ impl Parser {
                     self.at += 1;
                     break;
                 }
-                Some(token) => return Err(format!("expected `,` or `)` after a column definition but found {}", token.describe())),
-                None => return Err("create table column list is not closed".to_string()),
+                Some(token) => return Err(self.error("syntax", format!("expected `,` or `)` after a column definition but found {}", token.describe()))),
+                None => return Err(self.error("syntax", "create table column list is not closed")),
             }
         }
         Ok(Statement::CreateTable { name, if_not_exists, columns })
     }
 
-    fn column_spec(&mut self) -> Result<ColumnSpec, String> {
+    fn column_spec(&mut self) -> Result<ColumnSpec, SqlError> {
         let name = self.name()?;
         let mut declared_type = Vec::new();
         while let Some(word) = self.peek_word() {
@@ -501,11 +570,19 @@ impl Parser {
             else if self.eat_word("default") {
                 spec.default_value = Some(self.literal()?.to_write_value());
             }
-            else if self.eat_word("constraint") || self.eat_word("check") || self.eat_word("references") || self.eat_word("collate") {
-                return Err(format!("unsupported column constraint in `{}`", spec.name));
+            else if self.eat_word("constraint")
+                || self.eat_word("check")
+                || self.eat_word("references")
+                || self.eat_word("collate")
+            {
+                let mut error = self.error("unsupported-column-constraint", format!("unsupported column constraint in `{}`", spec.name));
+                error.clause = Some(self.constraint_name());
+                return Err(error);
             }
             else if self.eat_word("generated") {
-                return Err(format!("unsupported generated column `{}`", spec.name));
+                let mut error = self.error("unsupported-generated-column", format!("unsupported generated column `{}`", spec.name));
+                error.clause = Some("GENERATED".to_string());
+                return Err(error);
             }
             else {
                 break;
@@ -514,14 +591,25 @@ impl Parser {
         Ok(spec)
     }
 
-    fn literal(&mut self) -> Result<Literal, String> {
+    fn constraint_name(&self) -> String {
+        let at = self.at.saturating_sub(1);
+        match self.tokens.get(at) {
+            Some(Token::Word(word)) => word.to_ascii_uppercase(),
+            Some(token) => token.describe(),
+            None => "constraint".to_string(),
+        }
+    }
+
+    fn literal(&mut self) -> Result<Literal, SqlError> {
         let negative = matches!(self.peek(), Some(Token::Minus));
         if negative {
             self.at += 1;
         }
         let token = self.take()?;
         let literal = match token {
-            Token::Int(value) if negative => Literal::Integer(value.checked_neg().ok_or_else(|| "integer literal underflow".to_string())?),
+            Token::Int(value) if negative => {
+                Literal::Integer(value.checked_neg().ok_or_else(|| self.error("syntax", "integer literal underflow"))?)
+            }
             Token::Real(value) if negative => Literal::Real(-value),
             Token::Int(value) => Literal::Integer(value),
             Token::Real(value) => Literal::Real(value),
@@ -530,18 +618,18 @@ impl Parser {
             Token::Word(word) if word.eq_ignore_ascii_case("null") => Literal::Null,
             Token::Word(word) if word.eq_ignore_ascii_case("true") => Literal::Integer(1),
             Token::Word(word) if word.eq_ignore_ascii_case("false") => Literal::Integer(0),
-            other => return Err(format!("expected a literal but found {}", other.describe())),
+            other => return Err(self.error("syntax", format!("expected a literal but found {}", other.describe()))),
         };
         if negative && matches!(literal, Literal::Integer(_) | Literal::Real(_)) {
             return Ok(literal);
         }
         if negative {
-            return Err("`-` must prefix a numeric literal".to_string());
+            return Err(self.error("syntax", "`-` must prefix a numeric literal"));
         }
         Ok(literal)
     }
 
-    fn insert(&mut self) -> Result<Statement, String> {
+    fn insert(&mut self) -> Result<Statement, SqlError> {
         self.expect_word("into")?;
         let table = self.name()?;
         let columns = if self.peek() == Some(&Token::LParen) {
@@ -557,8 +645,8 @@ impl Parser {
                         self.at += 1;
                         break;
                     }
-                    Some(token) => return Err(format!("expected `,` or `)` in the column list but found {}", token.describe())),
-                    None => return Err("insert column list is not closed".to_string()),
+                    Some(token) => return Err(self.error("syntax", format!("expected `,` or `)` in the column list but found {}", token.describe()))),
+                    None => return Err(self.error("syntax", "insert column list is not closed")),
                 }
             }
             Some(names)
@@ -581,8 +669,8 @@ impl Parser {
                         self.at += 1;
                         break;
                     }
-                    Some(token) => return Err(format!("expected `,` or `)` in a VALUES tuple but found {}", token.describe())),
-                    None => return Err("insert VALUES tuple is not closed".to_string()),
+                    Some(token) => return Err(self.error("syntax", format!("expected `,` or `)` in a VALUES tuple but found {}", token.describe()))),
+                    None => return Err(self.error("syntax", "insert VALUES tuple is not closed")),
                 }
             }
             rows.push(values);
@@ -595,7 +683,7 @@ impl Parser {
         Ok(Statement::Insert { table, columns, rows })
     }
 
-    fn select(&mut self) -> Result<Statement, String> {
+    fn select(&mut self) -> Result<Statement, SqlError> {
         let items = if self.peek() == Some(&Token::Star) {
             self.at += 1;
             SelectItems::Star
@@ -616,8 +704,8 @@ impl Parser {
                         self.at += 1;
                     }
                     Some(Token::Word(word)) if word.eq_ignore_ascii_case("from") => break,
-                    Some(token) => return Err(format!("expected `,` or `FROM` in the projection but found {}", token.describe())),
-                    None => return Err("select projection is incomplete".to_string()),
+                    Some(token) => return Err(self.error("syntax", format!("expected `,` or `FROM` in the projection but found {}", token.describe()))),
+                    None => return Err(self.error("syntax", "select projection is incomplete")),
                 }
             }
             SelectItems::Named(names)
@@ -631,8 +719,16 @@ impl Parser {
             }
             match self.take()? {
                 Token::Int(value) if !negative && value >= 0 => Some(value as usize),
-                Token::Int(_) => return Err("`LIMIT` must be a non-negative integer".to_string()),
-                token => return Err(format!("`LIMIT` must be an integer but found {}", token.describe())),
+                Token::Int(_) => {
+                    let mut error = self.error("invalid-limit", "`LIMIT` must be a non-negative integer");
+                    error.clause = Some("LIMIT".to_string());
+                    return Err(error);
+                }
+                token => {
+                    let mut error = self.error("invalid-limit", format!("`LIMIT` must be an integer but found {}", token.describe()));
+                    error.clause = Some("LIMIT".to_string());
+                    return Err(error);
+                }
             }
         }
         else {
@@ -641,7 +737,15 @@ impl Parser {
         match self.peek() {
             None | Some(Token::Semi) => Ok(Statement::Select { table, items, limit }),
             Some(token) => {
-                Err(format!("unsupported `SELECT` clause starting at {}; this engine supports `FROM` and `LIMIT` only", token.describe()))
+                let mut error = self.error(
+                    "unsupported-clause",
+                    format!("unsupported `SELECT` clause starting at {}; this engine supports `FROM` and `LIMIT` only", token.describe()),
+                );
+                error.clause = Some(match token {
+                    Token::Word(word) => word.to_ascii_uppercase(),
+                    token => token.describe(),
+                });
+                Err(error)
             }
         }
     }

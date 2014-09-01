@@ -46,6 +46,48 @@ export interface ColumnSpec {
   unique?: boolean;
 }
 
+/** One executed cell: native JSON scalars, with blobs tagged as `{ $blob }`. */
+export type ExecValue = null | number | string | { $blob: string };
+
+/** Result of one SQL statement. */
+export interface ExecResult {
+  statement: "create-table" | "insert" | "select";
+  affected: number;
+  columns: string[];
+  rows: ExecValue[][];
+}
+
+/** Structured rejection raised by the fail-closed SQL engine. */
+export interface ExecError {
+  code: string;
+  message: string;
+  statement?: string | null;
+  clause?: string | null;
+  position?: number | null;
+}
+
+/** Non-throwing outcome of `tryExecute`. */
+export interface ExecOutcome {
+  ok: boolean;
+  result?: ExecResult;
+  error?: ExecError;
+}
+
+export interface NativeEngine {
+  exec(sql: string): ExecResult[];
+  execute(statement: string): ExecResult;
+  executeBatch(statements: string[]): ExecResult[];
+  tryExecute(statement: string): ExecOutcome;
+  snapshot(): Buffer;
+  pageSize(): number;
+  sqliteVersion(): string;
+  ping(): number;
+}
+
+export interface NativeEngineConstructor {
+  create(pageSize?: number): NativeEngine;
+}
+
 export interface NativeWriter {
   createTable(name: string, columnsJson: string): void;
   createIndex(name: string, table: string, columns: string[], unique?: boolean): void;
@@ -102,6 +144,7 @@ export interface NativeBindings {
   SqliteWriter: NativeWriterConstructor;
   SqliteDatabase: NativeDatabaseConstructor;
   SqliteSnapshot: NativeSnapshotConstructor;
+  SqliteEngine: NativeEngineConstructor;
   decodeRecord(payload: Buffer, encoding?: string): RecordValue[];
 }
 
@@ -196,4 +239,20 @@ export function openDatabase(path: string): NativeDatabase {
 
 export function openSnapshot(bytes: Buffer, maxSnapshotBytes?: number): NativeSnapshot {
   return new bindings.SqliteSnapshot(bytes, maxSnapshotBytes);
+}
+
+/** Creates an in-memory SQL engine over the pure-Rust format-3 writer. */
+export function createEngine(pageSize?: number): NativeEngine {
+  return bindings.SqliteEngine.create(pageSize);
+}
+
+/**
+ * Executes one statement and returns `{ statement, affected, columns, rows }`.
+ *
+ * Rejections throw an `Error` carrying the engine message. Use
+ * `NativeEngine.tryExecute` when the caller needs the structured error
+ * (`code`, `statement`, `clause`, `position`) instead of an exception.
+ */
+export function executeSql(engine: NativeEngine, statement: string): ExecResult {
+  return engine.execute(statement);
 }

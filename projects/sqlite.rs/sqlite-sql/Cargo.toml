@@ -1,0 +1,17 @@
+[package]
+name = "sqlite-sql"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Fail-closed SQL execution over the pure-Rust SQLite format-3 writer"
+publish = false
+
+[lib]
+# Static library only. Every host owns its own ABI wrapper (`napi`, `pyo3`,
+# `wasm-bindgen`) and maps the same orthogonal primitives.
+crate-type = ["rlib"]
+
+[dependencies]
+sqlite = { workspace = true }

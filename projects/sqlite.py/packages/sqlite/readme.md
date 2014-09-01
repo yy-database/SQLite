@@ -22,5 +22,16 @@ database = sqlite_format3.SqliteDatabase.open("t.sqlite3")
 print(database.ping(), database.table("t"))
 ```
 
+The same wheel exposes the fail-closed SQL engine. `execute` returns
+`{"statement", "affected", "columns", "rows"}`, `execute_batch` runs a statement
+list, and `try_execute` returns `{"ok": False, "error": {...}}` instead of raising.
+
+```python
+engine = sqlite_format3.SqliteEngine.create(4096)
+engine.execute("create table people (id integer primary key, name text not null)")
+engine.execute("insert into people (name) values ('ada')")
+print(engine.execute("select * from people"))  # columns and rows
+```
+
 Verification lives in `../../examples/tests` and in the repository harness
 (`sqlite-harness`), which installs this wheel into a clean virtual environment.

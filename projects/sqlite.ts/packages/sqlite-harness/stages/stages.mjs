@@ -34,7 +34,7 @@ function spawn(command, args, cwd) {
   };
 }
 
-function summarize({ name, assertionsFloor, steps, truth }) {
+function summarize({ name, assertionsFloor, sqlFloor = 0, steps, truth }) {
   const text = steps.map((step) => step.text).join("\n");
   const elapsed = steps.reduce((total, step) => total + step.elapsed, 0);
   const assertions = count(text, /"assertions": (\d+)/);
@@ -46,6 +46,7 @@ function summarize({ name, assertionsFloor, steps, truth }) {
   const reasons = [];
   if (steps.some((step) => step.status !== 0)) reasons.push("command failed");
   if (assertions < assertionsFloor) reasons.push(`assertions ${assertions} < floor ${assertionsFloor}`);
+  if (layers.sql < sqlFloor) reasons.push(`sql assertions ${layers.sql} < floor ${sqlFloor}`);
   if (assertions !== layers.storage + layers.sql) {
     reasons.push(`assertion layers ${layers.storage}+${layers.sql} do not add up to ${assertions}`);
   }
@@ -56,7 +57,8 @@ function summarize({ name, assertionsFloor, steps, truth }) {
 function runNode() {
   return summarize({
     name: "platforms/node",
-    assertionsFloor: 7,
+    assertionsFloor: 17,
+    sqlFloor: 10,
     steps: [spawn(process.execPath, [join(here, "node", "smoke.mjs")], repository)],
     truth: (text) => text.includes('"status": "PASS"') && text.includes('"integrity_check": "ok"'),
   });
@@ -66,7 +68,8 @@ function runWasm() {
   const build = spawn(process.execPath, [join(here, "wasm", "build.mjs")], repository);
   return summarize({
     name: "platforms/wasm",
-    assertionsFloor: 19,
+    assertionsFloor: 28,
+    sqlFloor: 25,
     steps: [build, spawn(process.execPath, [join(here, "wasm", "smoke.mjs")], repository)],
     truth: (text) => text.includes('"status": "PASS"') && text.includes('"integrity_check": "ok"'),
   });
@@ -76,7 +79,8 @@ function runPython() {
   const sources = readFileSync(join(here, "python", "test_features.py"), "utf8");
   return summarize({
     name: "platforms/python",
-    assertionsFloor: 21,
+    assertionsFloor: 42,
+    sqlFloor: 21,
     steps: [spawn(process.execPath, [join(here, "python", "run_tests.mjs")], repository)],
     truth: (text) =>
       /"cases": \d+/.test(text) && /"assertions": \d+/.test(text) && sources.includes("integrity_check"),
@@ -87,7 +91,7 @@ function runPython() {
 // installs the wheel into a clean virtual environment before running, so the
 // clean-install check is part of `test` rather than a separate script.
 export const platformStages = [
-  { name: "platforms/node", commands: ["test"], assertionsFloor: 7, run: runNode },
-  { name: "platforms/wasm", commands: ["test"], assertionsFloor: 19, run: runWasm },
-  { name: "platforms/python", commands: ["test"], assertionsFloor: 21, run: runPython },
+  { name: "platforms/node", commands: ["test"], assertionsFloor: 17, sqlFloor: 10, run: runNode },
+  { name: "platforms/wasm", commands: ["test"], assertionsFloor: 28, sqlFloor: 25, run: runWasm },
+  { name: "platforms/python", commands: ["test"], assertionsFloor: 42, sqlFloor: 21, run: runPython },
 ];
