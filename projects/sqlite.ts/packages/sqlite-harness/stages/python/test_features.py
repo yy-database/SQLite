@@ -191,11 +191,16 @@ def sql_engine(directory):
     )
     check_sql(len(batch) == 3 and batch[2]["rows"] == [[1, "x"]], "batch preserves order")
 
-    rejected = engine.try_execute("select * from people order by id")
+    filtered = engine.execute("select name, score from people where score >= 9.0 order by score desc")
+    check_sql(filtered["rows"] == [["ada", 9.5]], "where comparison with order by desc")
+    nulls = engine.execute("select count(*) from people where score is null or name = 'bob'")
+    check_sql(nulls["rows"] == [[1]], "is null and equality combined with or")
+
+    rejected = engine.try_execute("select * from people group by id")
     check_sql(rejected["ok"] is False, "unsupported clause is reported, not raised")
     error = rejected["error"]
     check_sql(error["code"] == "unsupported-clause", "rejection code")
-    check_sql(error["statement"] == "select" and error["clause"] == "ORDER", "rejection statement and clause")
+    check_sql(error["statement"] == "select" and error["clause"] == "GROUP", "rejection statement and clause")
     check_sql(error["position"] == 21, "rejection position")
 
     unknown = engine.try_execute("insert into missing values (1)")

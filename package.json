@@ -20,7 +20,9 @@
     },
     "devDependencies": {
         "@doki-land/nifty": "^0.1.10",
-        "better-sqlite3": "^12.2.0"
+        "@types/node": "^24.19.2",
+        "better-sqlite3": "^12.2.0",
+        "typescript": "5.9.3"
     },
     "pnpm": {
         "onlyBuiltDependencies": [

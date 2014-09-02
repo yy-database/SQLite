@@ -87,10 +87,14 @@ assertSql(selected.columns.join(",") === "id,name,score", "engine returns the co
 assertSql(selected.rows.length === 1 && selected.rows[0][1] === "ada", "engine returns the rows");
 const batch = engine.executeBatch(["insert into people (name) values ('bob')", "select count(*) from people"]);
 assertSql(batch.length === 2 && batch[1].rows[0][0] === 2, "engine batch runs the list in order");
-const rejected = engine.tryExecute("select * from people order by id");
+const filtered = engine.execute("select name from people where score >= 9.0 order by score desc");
+assertSql(filtered.rows.length === 1 && filtered.rows[0][0] === "ada", "engine filters and orders rows");
+const nulls = engine.execute("select count(*) from people where score is null");
+assertSql(nulls.rows[0][0] === 1, "engine counts null predicates");
+const rejected = engine.tryExecute("select * from people group by id");
 assertSql(rejected.ok === false && rejected.error.code === "unsupported-clause", "engine rejects an unsupported clause");
 assertSql(
-  rejected.error.statement === "select" && rejected.error.clause === "ORDER" && rejected.error.position === 21,
+  rejected.error.statement === "select" && rejected.error.clause === "GROUP" && rejected.error.position === 21,
   "engine rejection carries statement, clause and offset",
 );
 assertSql(engine.ping() > 0, "engine header ping");

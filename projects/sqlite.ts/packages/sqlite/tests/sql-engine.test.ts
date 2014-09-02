@@ -111,17 +111,16 @@ test("unsupported clauses return a structured rejection", () => {
   const engine = createEngine();
   engine.execute("create table t (id integer primary key, label text)");
 
-  const orderBy = engine.tryExecute("select * from t order by id");
-  assert.equal(orderBy.ok, false);
-  assert.equal(orderBy.error?.code, "unsupported-clause");
-  assert.equal(orderBy.error?.statement, "select");
-  assert.equal(orderBy.error?.clause, "ORDER");
-  assert.equal(orderBy.error?.position, 16);
+  const groupBy = engine.tryExecute("select * from t group by id");
+  assert.equal(groupBy.ok, false);
+  assert.equal(groupBy.error?.code, "unsupported-clause");
+  assert.equal(groupBy.error?.statement, "select");
+  assert.equal(groupBy.error?.clause, "GROUP");
+  assert.equal(groupBy.error?.position, 16);
 
-  const where = engine.tryExecute("select * from t where id = 1");
+  const where = engine.tryExecute("select * from t where missing = 1");
   assert.equal(where.ok, false);
-  assert.equal(where.error?.code, "unsupported-clause");
-  assert.equal(where.error?.clause, "WHERE");
+  assert.equal(where.error?.code, "unknown-column");
 
   const unknown = engine.tryExecute("insert into missing values (1)");
   assert.equal(unknown.ok, false);
@@ -133,6 +132,40 @@ test("unsupported clauses return a structured rejection", () => {
   assert.equal(twoStatements.error?.code, "multiple-statements");
 
   assert.throws(() => engine.execute("drop table t"), /unsupported statement starting at/i);
+});
+
+test("where predicates and order by follow SQLite comparison rules", () => {
+  const engine = createEngine();
+  engine.execute("create table m (id integer primary key, label text, score real)");
+  engine.executeBatch([
+    "insert into m (label, score) values ('b', 1.5)",
+    "insert into m (label, score) values ('a', null)",
+    "insert into m (label, score) values ('c', 2)",
+    "insert into m (label, score) values (null, 0.0)",
+  ]);
+
+  // `NULL` sorts below every number, then text, then blob.
+  const ordered = engine.execute("select label from m order by score desc");
+  assert.deepEqual(ordered.rows, [["c"], ["b"], [null], ["a"]]);
+
+  const multi = engine.execute("select id from m order by score asc, id desc limit 2");
+  assert.deepEqual(multi.rows, [[2], [4]]);
+
+  const compared = engine.execute("select count(*) from m where score >= 1.5 and label <> 'a'");
+  assert.deepEqual(compared.rows, [[2]]);
+
+  // Integers and reals compare numerically across the two storage classes.
+  const numeric = engine.execute("select count(*) from m where score = 2");
+  assert.deepEqual(numeric.rows, [[1]]);
+
+  const isNull = engine.execute("select id from m where label is null");
+  assert.deepEqual(isNull.rows, [[4]]);
+
+  const notNull = engine.execute("select count(*) from m where not score is null");
+  assert.deepEqual(notNull.rows, [[3]]);
+
+  const text = engine.execute("select id from m where label = 'b' or label > 'b'");
+  assert.deepEqual(text.rows, [[1], [3]]);
 });
 
 test("blob cells use the tagged blob envelope", () => {
