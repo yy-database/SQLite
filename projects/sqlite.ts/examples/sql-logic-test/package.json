@@ -1,0 +1,13 @@
+{
+    "name": "@yydb/sqlite-sqllogictest",
+    "version": "0.0.0",
+    "private": true,
+    "type": "module",
+    "description": "SQLLogicTest runner for the @yydb/sqlite engine, driven by the external select* corpus",
+    "scripts": {
+        "report": "node scripts/run.mjs",
+        "report:ts": "node scripts/run.mjs --only ts",
+        "report:py": "node scripts/run.mjs --only py",
+        "typecheck": "node ../../../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json"
+    }
+}
