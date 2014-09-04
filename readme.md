@@ -7,7 +7,8 @@ Rust codecs live in the aggregated [`database.rs`](https://github.com/oovm/datab
 shape as `yydb` / `yyds` / `iris-orm`.
 
 A fail-closed SQL subset (`CREATE TABLE`, `INSERT`, `SELECT` with optional `WHERE`, `ORDER BY` and
-`LIMIT`) runs over this repository's own format-3 writer in `projects/sqlite.rs/sqlite-sql` and is
+`LIMIT`) runs over this repository's own format-3 writer in the `sqlite` facade
+(`projects/facades/sqlite/src/sql` in the aggregated `database.rs` workspace) and is
 exposed by the Node-API, PyO3 and WebAssembly bindings. `WHERE` accepts plain predicates (comparisons,
 `AND` / `OR` / `NOT`, `IS [NOT] NULL`, column references and literals). Richer SQL (joins, `GROUP BY`,
 aggregates beyond `count(*)`, subqueries) is rejected with a structured error and is **not** here.
@@ -16,7 +17,7 @@ aggregates beyond `count(*)`, subqueries) is rejected with a structured error an
 
 | Path | Role |
 |------|------|
-| `projects/sqlite.rs/` | Rust FFI workspace (`sqlite-sql` shared SQL core, `sqlite-napi` produces `sqlite.node`) |
+| `projects/sqlite.rs/` | Rust FFI workspace (`sqlite-napi` produces `sqlite.node`, shared SQL core comes from the `sqlite` facade) |
 | `projects/sqlite.ts/` | TypeScript packages, platform packages, homepage and acceptance suite |
 | `projects/sqlite.ts/packages/sqlite/` | TypeScript binding over `sqlite.node` |
 | `projects/sqlite.ts/packages/sqlite-harness/` | Self-improvement toolbox: `test`, `bench`, `conformance`, `fixtures`, `oracle` |
