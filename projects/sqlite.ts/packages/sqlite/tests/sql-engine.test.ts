@@ -364,14 +364,27 @@ test("bracketed column types keep SQLite affinity and the declared text", () => 
   }
 });
 
-test("create index accepts single, composite, unique and if not exists forms", () => {
+test("create index accepts ascending, composite, unique and if not exists forms", () => {
   const engine = createEngine();
   engine.exec(
     "create table t8 (a8 integer, b8 integer, c8 text); \
      create index t8i0 on t8(a8); \
-     create index t8all on t8(c8 desc, b8 asc, a8 desc); \
+     create index t8all on t8(c8, b8 asc, a8); \
      create unique index t8u on t8(a8)",
   );
+
+  // `ASC` names the default key order, so it is accepted. `DESC` would need a
+  // descending b-tree and the writer builds ascending keys only, so the
+  // keyword is rejected instead of being silently ignored: a declared index
+  // order that the image cannot honor is worse than a rejection.
+  const descendingSql = "create index t8desc on t8(a8 desc)";
+  const descending = engine.tryExecute(descendingSql);
+  assert.equal(descending.ok, false);
+  assert.equal(descending.error?.code, "unsupported-clause");
+  assert.equal(descending.error?.statement, "create-index");
+  assert.equal(descending.error?.clause, "DESC");
+  assert.equal(descending.error?.position, descendingSql.lastIndexOf("desc"));
+  assert.match(descending.error?.message ?? "", /`DESC` index key `a8` is not supported/);
 
   assert.throws(() => engine.execute("create index t8i0 on t8(a8)"), /index `t8i0` already exists/);
   const repeated = engine.execute("create index if not exists t8i0 on t8(a8)");
@@ -389,6 +402,19 @@ test("create index accepts single, composite, unique and if not exists forms", (
   // The unique index is enforced by later inserts.
   engine.execute("insert into t8 values (1, 2, 'x')");
   assert.throws(() => engine.execute("insert into t8 values (1, 3, 'y')"), /UNIQUE constraint failed/i);
+  // A rejected insert leaves no row behind and no dangling index key.
+  assert.deepEqual(engine.execute("select count(*) from t8").rows, [[1]]);
+
+  // The index is what rejects the duplicate: the identical table shape without
+  // any `UNIQUE` index accepts repeated keys, so the rejection above cannot be
+  // coming from a constraint recorded at `CREATE TABLE` time.
+  engine.exec("create table t8open (a8 integer, b8 integer); insert into t8open values (1, 2); insert into t8open values (1, 3)");
+  assert.deepEqual(engine.execute("select count(*) from t8open").rows, [[2]]);
+
+  // The storage-level constraint path stays independent: a column declared
+  // `UNIQUE` in `CREATE TABLE` rejects a duplicate even with no explicit index.
+  engine.exec("create table t8col (a8 integer unique, b8 integer); insert into t8col values (1, 2)");
+  assert.throws(() => engine.execute("insert into t8col values (1, 3)"), /UNIQUE constraint failed/i);
 
   // SQLite also rejects building a unique index over existing duplicates.
   engine.exec("create table dup (a integer, b text); insert into dup values (1, 'x'); insert into dup values (1, 'y')");
@@ -403,8 +429,79 @@ test("create index accepts single, composite, unique and if not exists forms", (
     const external = new BetterSqlite(workspaceHandle.path);
     try {
       assert.equal(external.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
-      const names = external.prepare("SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name").all() as unknown as Array<{ name: string }>;
+      const names = external
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 't8' ORDER BY name")
+        .all() as unknown as Array<{ name: string }>;
       assert.deepEqual(names.map((row) => row.name), ["t8all", "t8i0", "t8u"]);
+    } finally {
+      external.close();
+    }
+  } finally {
+    workspaceHandle.dispose();
+  }
+});
+
+test("index trees track interleaved writes to several indexed tables", () => {
+  const engine = createEngine(4096);
+  engine.exec(
+    "create table left8 (id integer primary key, key integer, label text); \
+     create table right8 (id integer primary key, key integer, label text); \
+     create index left8_key on left8(key); \
+     create unique index right8_key on right8(key)",
+  );
+
+  // The engine is single-connection and has no transaction statement, so a
+  // snapshot can never carry a pending writer transaction.
+  assert.equal(engine.tryExecute("begin").error?.code, "unsupported-statement");
+
+  const workspaceHandle = workspace();
+  try {
+    // Interleave writes across two indexed tables. Every insert rebuilds all
+    // index b-trees from the live key sets before returning, so each snapshot
+    // is already consistent with the rows written so far.
+    for (let round = 0; round < 100; round += 1) {
+      engine.execute(`insert into left8 (key, label) values (${round}, 'l${round}')`);
+      engine.execute(`insert into right8 (key, label) values (${round}, 'r${round}')`);
+      if (round === 48) {
+        writeFileSync(workspaceHandle.path, engine.snapshot());
+        const mid = new BetterSqlite(workspaceHandle.path);
+        try {
+          assert.equal(mid.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+          // `INDEXED BY` forces an index scan, so a stale or dropped index
+          // tree shows up as a wrong count instead of passing silently.
+          const leftCount = mid.prepare("SELECT count(*) AS n FROM left8 INDEXED BY left8_key").get() as unknown as { n: number };
+          const rightCount = mid.prepare("SELECT count(*) AS n FROM right8 INDEXED BY right8_key").get() as unknown as { n: number };
+          assert.equal(leftCount.n, 49);
+          assert.equal(rightCount.n, 49);
+        } finally {
+          mid.close();
+        }
+      }
+    }
+
+    // A failed write on the far end of the run must not disturb either image:
+    // the unique index still rejects and the row set stays at 100.
+    assert.throws(() => engine.execute("insert into right8 (key, label) values (99, 'dup')"), /UNIQUE constraint failed/i);
+
+    writeFileSync(workspaceHandle.path, engine.snapshot());
+    const external = new BetterSqlite(workspaceHandle.path);
+    try {
+      assert.equal(external.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+      const leftCount = external.prepare("SELECT count(*) AS n FROM left8 INDEXED BY left8_key").get() as unknown as { n: number };
+      const rightCount = external.prepare("SELECT count(*) AS n FROM right8 INDEXED BY right8_key").get() as unknown as { n: number };
+      assert.equal(leftCount.n, 100);
+      assert.equal(rightCount.n, 100);
+
+      // A keyed range scan through the index returns exactly the written rows.
+      const keys = external
+        .prepare("SELECT key FROM left8 INDEXED BY left8_key WHERE key BETWEEN 10 AND 12 ORDER BY key")
+        .all() as unknown as Array<{ key: number }>;
+      assert.deepEqual(keys.map((row) => row.key), [10, 11, 12]);
+
+      const names = external
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name")
+        .all() as unknown as Array<{ name: string }>;
+      assert.deepEqual(names.map((row) => row.name), ["left8_key", "right8_key"]);
     } finally {
       external.close();
     }
