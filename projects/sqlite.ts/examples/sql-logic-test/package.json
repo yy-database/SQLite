@@ -8,6 +8,10 @@
         "report": "node scripts/run.mjs",
         "report:ts": "node scripts/run.mjs --only ts",
         "report:py": "node scripts/run.mjs --only py",
+        "report:fixtures": "node scripts/run-fixtures.mjs",
+        "report:fixtures:ts": "node scripts/run-fixtures.mjs --only ts",
+        "fixtures:lock": "python scripts/gen-fixtures.py --write",
+        "fixtures:verify": "python scripts/gen-fixtures.py --verify",
         "typecheck": "node ../../../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json"
     }
 }
