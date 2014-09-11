@@ -1,0 +1,175 @@
+{
+  "category": "null-three-valued-logic",
+  "cases": [
+    {
+      "id": "null.comparison_eq",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, NULL), (2, 2), (NULL, 3)"
+      ],
+      "sql": "SELECT a FROM t WHERE b = NULL",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "null.null_eq_null",
+      "setup": [],
+      "sql": "SELECT NULL = NULL",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "null.null_ne_null",
+      "setup": [],
+      "sql": "SELECT NULL <> NULL",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "null.count_star_vs_column",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, NULL), (2, 2), (NULL, 3)"
+      ],
+      "sql": "SELECT count(*), count(b), count(a) FROM t",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            3,
+            2,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "null.is_null_rows",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, NULL), (2, 2), (NULL, 3)"
+      ],
+      "sql": "SELECT a FROM t WHERE b IS NULL",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "null.is_not_null_rows",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, NULL), (2, 2), (NULL, 3)"
+      ],
+      "sql": "SELECT a FROM t WHERE b IS NOT NULL",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2
+          ],
+          [
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "null.is_null_partition",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, NULL), (2, 2), (NULL, 3)"
+      ],
+      "sql": "SELECT count(*) FROM t WHERE b IS NULL",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "null.order_asc",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, NULL), (2, 2), (NULL, 3)"
+      ],
+      "sql": "SELECT a FROM t ORDER BY b",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "null.order_desc",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, NULL), (2, 2), (NULL, 3)"
+      ],
+      "sql": "SELECT a FROM t ORDER BY b DESC",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            null
+          ],
+          [
+            2
+          ],
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "null.or_with_is_null",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, NULL), (2, 2), (NULL, 3)"
+      ],
+      "sql": "SELECT a FROM t WHERE b = 2 OR b IS NULL",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,255 @@
+{
+  "category": "expressions",
+  "cases": [
+    {
+      "id": "expr.precedence",
+      "setup": [],
+      "sql": "SELECT 1 + 2 * 3",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            7
+          ]
+        ]
+      }
+    },
+    {
+      "id": "expr.parentheses",
+      "setup": [],
+      "sql": "SELECT (1 + 2) * 3",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            9
+          ]
+        ]
+      }
+    },
+    {
+      "id": "expr.integer_division",
+      "setup": [],
+      "sql": "SELECT 7 / 2, -7 / 2",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            3,
+            -3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "expr.division_by_zero",
+      "setup": [],
+      "sql": "SELECT 1 / 0",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "expr.integer_overflow_real",
+      "setup": [],
+      "sql": "SELECT 9223372036854775807 + 1 > 0",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "expr.column_arithmetic",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2), (2, NULL), (-3, 4)"
+      ],
+      "sql": "SELECT a * b FROM t1",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2
+          ],
+          [
+            null
+          ],
+          [
+            -12
+          ]
+        ]
+      }
+    },
+    {
+      "id": "expr.abs",
+      "setup": [],
+      "sql": "SELECT ABS(-5), ABS(3), ABS(-2.5)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            5,
+            3,
+            2.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "expr.coalesce",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2), (2, NULL), (-3, 4)"
+      ],
+      "sql": "SELECT COALESCE(NULL, b, 9) FROM t1",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2
+          ],
+          [
+            9
+          ],
+          [
+            4
+          ]
+        ]
+      }
+    },
+    {
+      "id": "expr.length",
+      "setup": [],
+      "sql": "SELECT LENGTH('hello'), LENGTH('')",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            5,
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "expr.substr",
+      "setup": [],
+      "sql": "SELECT SUBSTR('abcdef', 2, 3), SUBSTR('abcdef', -2)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "bcd",
+            "ef"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "expr.round",
+      "setup": [],
+      "sql": "SELECT ROUND(2.567, 2), ROUND(2.5)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2.57,
+            3.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "expr.typeof",
+      "setup": [],
+      "sql": "SELECT TYPEOF(1), TYPEOF(1.0), TYPEOF('1'), TYPEOF(NULL), TYPEOF(x'00')",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "integer",
+            "real",
+            "text",
+            "null",
+            "blob"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "expr.case_searched",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2), (2, NULL), (-3, 4)"
+      ],
+      "sql": "SELECT CASE WHEN a > 0 THEN 'pos' ELSE 'non' END FROM t1",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "pos"
+          ],
+          [
+            "pos"
+          ],
+          [
+            "non"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "expr.case_simple",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2), (2, NULL), (-3, 4)"
+      ],
+      "sql": "SELECT CASE a WHEN 1 THEN 'one' WHEN -3 THEN 'neg' ELSE 'other' END FROM t1",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "one"
+          ],
+          [
+            "other"
+          ],
+          [
+            "neg"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "expr.unary_minus",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2), (2, NULL), (-3, 4)"
+      ],
+      "sql": "SELECT -a FROM t1",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            -1
+          ],
+          [
+            -2
+          ],
+          [
+            3
+          ]
+        ]
+      }
+    }
+  ]
+}

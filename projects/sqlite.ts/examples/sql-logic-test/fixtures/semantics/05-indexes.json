@@ -1,0 +1,133 @@
+{
+  "category": "indexes",
+  "cases": [
+    {
+      "id": "index.create_single",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2), (2, 3)"
+      ],
+      "sql": "CREATE INDEX t1a ON t1(a)",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "index.create_multi_column",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2), (2, 3)"
+      ],
+      "sql": "CREATE INDEX t1ab ON t1(a, b)",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "index.if_not_exists",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2)"
+      ],
+      "sql": "CREATE INDEX IF NOT EXISTS t1a ON t1(a)",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "index.duplicate_name",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "CREATE INDEX t1a ON t1(a)"
+      ],
+      "sql": "CREATE INDEX t1a ON t1(b)",
+      "expect": {
+        "kind": "error",
+        "oracle": "index t1a already exists"
+      }
+    },
+    {
+      "id": "index.name_collides_with_table",
+      "setup": [
+        "CREATE TABLE foo(a INTEGER)"
+      ],
+      "sql": "CREATE INDEX foo ON foo(a)",
+      "expect": {
+        "kind": "error",
+        "oracle": "there is already a table named foo"
+      }
+    },
+    {
+      "id": "index.desc_is_rejected",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2)"
+      ],
+      "sql": "CREATE INDEX t1d ON t1(a DESC)",
+      "expect": {
+        "kind": "rejected",
+        "code": "unsupported-clause",
+        "clause": "DESC",
+        "note": "the current engine refuses a `DESC` index key as an unsupported clause; ordering semantics are not reached"
+      }
+    },
+    {
+      "id": "index.unique_on_duplicates",
+      "setup": [
+        "CREATE TABLE t2(a INTEGER)",
+        "INSERT INTO t2 VALUES (2), (2)"
+      ],
+      "sql": "CREATE UNIQUE INDEX t2a ON t2(a)",
+      "expect": {
+        "kind": "error",
+        "oracle": "UNIQUE constraint failed: t2.a"
+      }
+    },
+    {
+      "id": "index.unknown_column",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)"
+      ],
+      "sql": "CREATE INDEX t1x ON t1(nope)",
+      "expect": {
+        "kind": "error",
+        "oracle": "no such column: nope"
+      }
+    },
+    {
+      "id": "index.query_after_create",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2), (2, 3), (3, 4)",
+        "CREATE INDEX t1a ON t1(a)"
+      ],
+      "sql": "SELECT a FROM t1 WHERE a >= 2 ORDER BY a",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2
+          ],
+          [
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "index.drop",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "CREATE INDEX t1a ON t1(a)"
+      ],
+      "sql": "DROP INDEX t1a",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    }
+  ]
+}

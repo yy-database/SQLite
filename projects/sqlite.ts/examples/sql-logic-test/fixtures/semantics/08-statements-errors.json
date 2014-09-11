@@ -1,0 +1,313 @@
+{
+  "category": "statements-and-errors",
+  "cases": [
+    {
+      "id": "err.unknown_table_select",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2)"
+      ],
+      "sql": "SELECT a FROM missing",
+      "expect": {
+        "kind": "error",
+        "code": "unknown-table",
+        "oracle": "no such table: missing"
+      }
+    },
+    {
+      "id": "err.unknown_table_insert",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)"
+      ],
+      "sql": "INSERT INTO missing VALUES (1)",
+      "expect": {
+        "kind": "error",
+        "code": "unknown-table",
+        "oracle": "no such table: missing"
+      }
+    },
+    {
+      "id": "err.unknown_column_select",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2)"
+      ],
+      "sql": "SELECT nope FROM t1",
+      "expect": {
+        "kind": "error",
+        "code": "unknown-column",
+        "oracle": "no such column: nope"
+      }
+    },
+    {
+      "id": "err.unknown_column_where",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2)"
+      ],
+      "sql": "SELECT a FROM t1 WHERE nope = 1",
+      "expect": {
+        "kind": "error",
+        "code": "unknown-column",
+        "oracle": "no such column: nope"
+      }
+    },
+    {
+      "id": "err.arity_too_many",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER)"
+      ],
+      "sql": "INSERT INTO t1 VALUES (1, 2)",
+      "expect": {
+        "kind": "error",
+        "code": "arity-mismatch",
+        "oracle": "table t1 has 1 columns but 2 values were supplied"
+      }
+    },
+    {
+      "id": "err.arity_too_few",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)"
+      ],
+      "sql": "INSERT INTO t1 VALUES (1)",
+      "expect": {
+        "kind": "error",
+        "code": "arity-mismatch",
+        "oracle": "table t1 has 2 columns but 1 values were supplied"
+      }
+    },
+    {
+      "id": "err.update_is_missing",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2), (2, 3)"
+      ],
+      "sql": "UPDATE t1 SET b = 9 WHERE a = 1",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "err.delete_is_missing",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2), (2, 3)"
+      ],
+      "sql": "DELETE FROM t1 WHERE a = 1",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "err.drop_table_is_missing",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)"
+      ],
+      "sql": "DROP TABLE t1",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "err.alter_table_is_missing",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)"
+      ],
+      "sql": "ALTER TABLE t1 ADD COLUMN c INTEGER",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "err.in_is_missing",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2), (2, 3), (3, 4)"
+      ],
+      "sql": "SELECT a FROM t1 WHERE a IN (1, 3)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "err.between_is_missing",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2), (2, 3), (3, 4)"
+      ],
+      "sql": "SELECT a FROM t1 WHERE b BETWEEN 3 AND 4",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2
+          ],
+          [
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "err.offset_is_missing",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2), (2, 3), (3, 4)"
+      ],
+      "sql": "SELECT a FROM t1 ORDER BY a LIMIT 1 OFFSET 1",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "err.union_is_missing",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)"
+      ],
+      "sql": "SELECT a FROM t1 UNION SELECT b FROM t1",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "err.alias_as_is_missing",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2), (2, 3)"
+      ],
+      "sql": "SELECT a AS z FROM t1 ORDER BY z",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "err.parenthesized_type_is_missing",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)"
+      ],
+      "sql": "CREATE TABLE v(a VARCHAR(30))",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "err.projection_expression_is_missing",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b INTEGER)",
+        "INSERT INTO t1 VALUES (1, 2), (2, 3)"
+      ],
+      "sql": "SELECT a + b FROM t1",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            3
+          ],
+          [
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "err.residual_after_not_null",
+      "setup": [
+        "CREATE TABLE n(a INTEGER NOT NULL, b INTEGER)",
+        {
+          "sql": "INSERT INTO n VALUES (NULL, 2)",
+          "expect": "error"
+        }
+      ],
+      "sql": "SELECT count(*) FROM n",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "err.residual_after_unique",
+      "setup": [
+        "CREATE TABLE u(a INTEGER UNIQUE)",
+        "INSERT INTO u VALUES (1)",
+        {
+          "sql": "INSERT INTO u VALUES (1)",
+          "expect": "error"
+        }
+      ],
+      "sql": "SELECT count(*) FROM u",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "err.residual_after_arity",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER)",
+        {
+          "sql": "INSERT INTO t1 VALUES (1, 2)",
+          "expect": "error"
+        }
+      ],
+      "sql": "SELECT count(*) FROM t1",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "err.failed_create_table_invisible",
+      "setup": [
+        {
+          "sql": "CREATE TABLE dup(a INTEGER, a INTEGER)",
+          "expect": "error"
+        }
+      ],
+      "sql": "SELECT a FROM dup",
+      "expect": {
+        "kind": "error",
+        "code": "unknown-table",
+        "oracle": "no such table: dup"
+      }
+    }
+  ]
+}

@@ -1,0 +1,177 @@
+{
+  "category": "boundaries",
+  "cases": [
+    {
+      "id": "boundary.empty_table",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER)"
+      ],
+      "sql": "SELECT a FROM t1",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "boundary.empty_count",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER)"
+      ],
+      "sql": "SELECT count(*) FROM t1",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "boundary.empty_order_by",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER)"
+      ],
+      "sql": "SELECT a FROM t1 ORDER BY a",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "boundary.single_row",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b TEXT)",
+        "INSERT INTO t1 VALUES (1, 'only')"
+      ],
+      "sql": "SELECT * FROM t1",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "only"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "boundary.limit_zero",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER)",
+        "INSERT INTO t1 VALUES (1), (2), (3)"
+      ],
+      "sql": "SELECT a FROM t1 ORDER BY a LIMIT 0",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "boundary.limit_beyond",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER)",
+        "INSERT INTO t1 VALUES (1), (2), (3)"
+      ],
+      "sql": "SELECT a FROM t1 ORDER BY a LIMIT 100",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "boundary.wide_row",
+      "setup": [
+        "CREATE TABLE w(c1 INTEGER, c2 INTEGER, c3 INTEGER, c4 REAL, c5 REAL, c6 REAL, c7 TEXT, c8 TEXT, c9 TEXT, c10 INTEGER, c11 TEXT, c12 REAL)",
+        "INSERT INTO w VALUES (1, 2, 3, 1.5, 2.5, 3.5, 'a', 'b', 'c', NULL, '', 0.0)"
+      ],
+      "sql": "SELECT * FROM w",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            3,
+            1.5,
+            2.5,
+            3.5,
+            "a",
+            "b",
+            "c",
+            null,
+            "",
+            0.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "boundary.multiple_tables",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, b TEXT)",
+        "INSERT INTO t1 VALUES (1, 'one')",
+        "CREATE TABLE t2(a INTEGER, b TEXT)",
+        "INSERT INTO t2 VALUES (2, 'two')",
+        "CREATE TABLE t3(a INTEGER, b TEXT)",
+        "INSERT INTO t3 VALUES (3, 'three')",
+        "CREATE TABLE t4(a INTEGER, b TEXT)",
+        "INSERT INTO t4 VALUES (4, 'four')"
+      ],
+      "sql": "SELECT b FROM t4",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "four"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "boundary.many_tables",
+      "setup": [
+        {
+          "repeat": 60,
+          "sql": "CREATE TABLE t{n}(a INTEGER, b INTEGER, x VARCHAR)",
+          "insert": "INSERT INTO t{n} VALUES ({n}, {n}, 'x')"
+        }
+      ],
+      "sql": "SELECT count(*) FROM t60",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "boundary.long_text",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER, x TEXT)",
+        "INSERT INTO t1 VALUES (1, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')"
+      ],
+      "sql": "SELECT length(x) FROM t1",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            200
+          ]
+        ]
+      }
+    }
+  ]
+}
