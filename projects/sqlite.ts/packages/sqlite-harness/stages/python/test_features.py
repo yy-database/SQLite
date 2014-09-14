@@ -228,6 +228,54 @@ def sql_engine(directory):
     check_sql(external == [(1, "ada", 9.5), (2, "bob", None)], "external sqlite3 reads SQL-written rows")
 
 
+COMPARISONS = [
+    "score = null",
+    "null = score",
+    "score <> null",
+    "null <> score",
+    "score < null",
+    "null < score",
+    "score <= null",
+    "null <= score",
+    "score > null",
+    "null > score",
+    "score >= null",
+    "null >= score",
+]
+
+
+def three_valued_logic(directory):
+    """A comparison that touches SQL `NULL` stays unknown, so `WHERE` drops it."""
+    engine = SqliteEngine.create(4096)
+    engine.execute_batch(
+        [
+            "create table nums (id integer primary key, label text, score real)",
+            "insert into nums (label, score) values ('a', 1.5)",
+            "insert into nums (label, score) values ('b', null)",
+            "insert into nums (label, score) values (null, 2.5)",
+            "insert into nums (label, score) values ('d', null)",
+        ]
+    )
+
+    for predicate in COMPARISONS:
+        rows = engine.execute(f"select id from nums where {predicate}")["rows"]
+        check_sql(rows == [], f"three-valued-logic: `where {predicate}` treated SQL NULL as TRUE and returned {rows}")
+
+    total = engine.execute("select count(*) from nums")["rows"][0][0]
+    null_scores = engine.execute("select count(*) from nums where score is null")["rows"][0][0]
+    not_null_scores = engine.execute("select count(*) from nums where score is not null")["rows"][0][0]
+    check_sql(total - null_scores == 2, f"three-valued-logic: count(*) minus the NULL scores must be 2, got {total - null_scores}")
+    check_sql(
+        null_scores + not_null_scores == total,
+        f"three-valued-logic: IS NULL plus IS NOT NULL must cover {total} rows, got {null_scores + not_null_scores}",
+    )
+
+    ascending = engine.execute("select id, score from nums order by score asc")["rows"]
+    descending = engine.execute("select id, score from nums order by score desc")["rows"]
+    check_sql(ascending[0][1] is None, f"three-valued-logic: ascending order must start with a NULL score, got {ascending}")
+    check_sql(descending[-1][1] is None, f"three-valued-logic: descending order must end with a NULL score, got {descending}")
+
+
 CASES = [
     ("write_read_roundtrip_1000", write_read_roundtrip_1000),
     ("wal_visible", wal_visible),
@@ -235,6 +283,7 @@ CASES = [
     ("without_rowid", without_rowid),
     ("utf16", utf16),
     ("sql_engine", sql_engine),
+    ("three_valued_logic", three_valued_logic),
 ]
 
 

@@ -57,8 +57,8 @@ function summarize({ name, assertionsFloor, sqlFloor = 0, steps, truth }) {
 function runNode() {
   return summarize({
     name: "platforms/node",
-    assertionsFloor: 19,
-    sqlFloor: 12,
+    assertionsFloor: 35,
+    sqlFloor: 28,
     steps: [spawn(process.execPath, [join(here, "node", "smoke.mjs")], repository)],
     truth: (text) => text.includes('"status": "PASS"') && text.includes('"integrity_check": "ok"'),
   });
@@ -68,8 +68,8 @@ function runWasm() {
   const build = spawn(process.execPath, [join(here, "wasm", "build.mjs")], repository);
   return summarize({
     name: "platforms/wasm",
-    assertionsFloor: 29,
-    sqlFloor: 26,
+    assertionsFloor: 45,
+    sqlFloor: 42,
     steps: [build, spawn(process.execPath, [join(here, "wasm", "smoke.mjs")], repository)],
     truth: (text) => text.includes('"status": "PASS"') && text.includes('"integrity_check": "ok"'),
   });
@@ -79,8 +79,8 @@ function runPython() {
   const sources = readFileSync(join(here, "python", "test_features.py"), "utf8");
   return summarize({
     name: "platforms/python",
-    assertionsFloor: 44,
-    sqlFloor: 23,
+    assertionsFloor: 60,
+    sqlFloor: 39,
     steps: [spawn(process.execPath, [join(here, "python", "run_tests.mjs")], repository)],
     truth: (text) =>
       /"cases": \d+/.test(text) && /"assertions": \d+/.test(text) && sources.includes("integrity_check"),
@@ -91,7 +91,7 @@ function runPython() {
 // installs the wheel into a clean virtual environment before running, so the
 // clean-install check is part of `test` rather than a separate script.
 export const platformStages = [
-  { name: "platforms/node", commands: ["test"], assertionsFloor: 19, sqlFloor: 12, run: runNode },
-  { name: "platforms/wasm", commands: ["test"], assertionsFloor: 29, sqlFloor: 26, run: runWasm },
-  { name: "platforms/python", commands: ["test"], assertionsFloor: 44, sqlFloor: 23, run: runPython },
+  { name: "platforms/node", commands: ["test"], assertionsFloor: 35, sqlFloor: 28, run: runNode },
+  { name: "platforms/wasm", commands: ["test"], assertionsFloor: 45, sqlFloor: 42, run: runWasm },
+  { name: "platforms/python", commands: ["test"], assertionsFloor: 60, sqlFloor: 39, run: runPython },
 ];
