@@ -26,9 +26,9 @@ import { stagesDir } from "../stages/paths.mjs";
 type LayerName = "external" | "storage" | "sql";
 
 const TS_EXTERNAL_FILES = ["sql-semantics.test.ts"];
-const TS_SQL_FILES = ["sql-engine.test.ts", "sql-expression.test.ts"];
+const TS_SQL_FILES = ["sql-engine.test.ts", "sql-expression.test.ts", "three-valued-logic.test.ts"];
 const PY_EXTERNAL_MODULES = ["test_sql_semantics"];
-const PY_SQL_MODULES = ["test_sql_engine"];
+const PY_SQL_MODULES = ["test_sql_engine", "test_three_valued_logic"];
 
 const FLOORS: Record<LayerName, { ts: number; py: number }> = {
   external: {
@@ -43,8 +43,8 @@ const FLOORS: Record<LayerName, { ts: number; py: number }> = {
     // The TypeScript suite runs the native engine directly. The Python SQL module
     // runs against the installed wheel built by the `platforms/python` stage, so
     // both hosts are measured on the same statement surface.
-    ts: Number(process.env.TS_SQL_FLOOR ?? 23),
-    py: Number(process.env.PY_SQL_FLOOR ?? 4),
+    ts: Number(process.env.TS_SQL_FLOOR ?? 39),
+    py: Number(process.env.PY_SQL_FLOOR ?? 20),
   },
 };
 
