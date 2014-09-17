@@ -76,10 +76,15 @@ test("scalar functions cover the supported set and reject bad arity", () => {
   assert.equal(missing.error?.code, "unknown-function");
   assert.match(missing.error?.message ?? "", /no such function: nosuch/);
 
-  const aggregate = engine.tryExecute("select avg(a) from v");
+  // Supported whole-result aggregates cover the common set.
+  assert.deepEqual(engine.execute("select avg(a) from v").rows, [[0]]);
+  assert.deepEqual(engine.execute("select sum(b), min(a), max(b) from v").rows, [[6, -7, 4]]);
+
+  // Aggregates outside the supported set still fail with a structured error.
+  const aggregate = engine.tryExecute("select total(a) from v");
   assert.equal(aggregate.ok, false);
   assert.equal(aggregate.error?.code, "unsupported-clause");
-  assert.equal(aggregate.error?.clause, "AVG");
+  assert.equal(aggregate.error?.clause, "TOTAL");
 
   assert.deepEqual(engine.execute("select count(*) from v").rows, [[3]]);
 });
@@ -241,4 +246,197 @@ test("compound SELECTs report arity, clause position and left-to-right folds", (
 
   // SQLite folds strictly left to right: (l EXCEPT r) INTERSECT c keeps 3.
   assert.deepEqual(engine.execute("select x from l except select y from r intersect select z from c").rows, [[3]]);
+});
+
+function subqueryEngine(): ReturnType<typeof createEngine> {
+  const engine = createEngine();
+  engine.exec(
+    "create table o (a integer); insert into o values (1),(2),(9); \
+     create table i (a integer, b integer); insert into i values (1,100),(2,200); \
+     create table t (x integer, y integer); insert into t values (1,10),(2,20),(3,null);",
+  );
+  return engine;
+}
+
+test("scalar subqueries follow SQLite row selection in every position", () => {
+  const engine = subqueryEngine();
+
+  // One row: its only value. No row: NULL. Many rows: the first row, without
+  // an error, exactly as SQLite 3.49.1 was measured to behave.
+  assert.deepEqual(engine.execute("select (select x from t where x = 2) from o where a = 1").rows, [[2]]);
+  assert.deepEqual(engine.execute("select (select x from t where x = 9) from o where a = 1").rows, [[null]]);
+  assert.deepEqual(engine.execute("select (select x from t) from o where a = 1").rows, [[1]]);
+  assert.deepEqual(engine.execute("select (select x from t order by x desc) from o where a = 1").rows, [[3]]);
+
+  // The same evaluator serves WHERE, ORDER BY and function arguments.
+  assert.deepEqual(engine.execute("select a from o where a > (select x from t)").rows, [[2], [9]]);
+  assert.deepEqual(engine.execute("select a from o order by (select max(0 - a) from t where t.x = 1)").rows, [
+    [9],
+    [2],
+    [1],
+  ]);
+  assert.deepEqual(engine.execute("select abs((select -x from t)) from o where a = 1").rows, [[1]]);
+
+  // A scalar subquery must yield exactly one column.
+  const wide = engine.tryExecute("select (select x, y from t) from o where a = 1");
+  assert.equal(wide.ok, false);
+  assert.equal(wide.error?.code, "arity-mismatch");
+  assert.match(wide.error?.message ?? "", /sub-select returns 2 columns - expected 1/);
+});
+
+test("EXISTS and NOT EXISTS are two-valued even when the subquery returns nothing", () => {
+  const engine = subqueryEngine();
+
+  assert.deepEqual(engine.execute("select a from o where exists(select 1 from i where i.a = o.a)").rows, [[1], [2]]);
+  assert.deepEqual(engine.execute("select a from o where not exists(select 1 from i where i.a = o.a)").rows, [[9]]);
+  assert.deepEqual(engine.execute("select exists(select 1 from t where 0) from o where a = 1").rows, [[0]]);
+  assert.deepEqual(engine.execute("select not exists(select 1 from t where 0) from o where a = 1").rows, [[1]]);
+
+  // A NULL comparison inside the subquery still leaves the outer test defined.
+  assert.deepEqual(engine.execute("select not exists(select 1 from t where x = null) from o where a = 1").rows, [[1]]);
+});
+
+test("IN and NOT IN subqueries keep NULL-candidate three-valued logic", () => {
+  const engine = subqueryEngine();
+
+  // y contains one NULL, so a miss is unknown rather than false.
+  assert.deepEqual(engine.execute("select 5 in (select y from t) from o where a = 1").rows, [[null]]);
+  assert.deepEqual(engine.execute("select 5 not in (select y from t) from o where a = 1").rows, [[null]]);
+  // A hit wins over the NULL candidate.
+  assert.deepEqual(engine.execute("select 20 in (select y from t) from o where a = 1").rows, [[1]]);
+  // An empty subquery makes NOT IN true.
+  assert.deepEqual(engine.execute("select 5 not in (select x from t where 0) from o where a = 1").rows, [[1]]);
+
+  // Column probes: 1 and 2 match, 9 misses.
+  assert.deepEqual(engine.execute("select a in (select a from i) from o").rows, [[1], [1], [0]]);
+  assert.deepEqual(engine.execute("select a not in (select a from i) from o").rows, [[0], [0], [1]]);
+});
+
+test("correlated subqueries resolve outer columns with inner-name shadowing", () => {
+  const engine = subqueryEngine();
+
+  // The outer row is pushed into the inner scope, so `o.a` binds per row.
+  assert.deepEqual(engine.execute("select a, (select b from i where i.a = o.a) from o").rows, [
+    [1, 100],
+    [2, 200],
+    [9, null],
+  ]);
+
+  // An unqualified inner name resolves inside `i` first and shadows `o.a`.
+  assert.deepEqual(engine.execute("select (select a from i where a = 1) from o where a = 9").rows, [[1]]);
+  // A qualified outer reference is still reachable from that inner scope.
+  assert.deepEqual(engine.execute("select (select b from i where i.a = o.a) from o where a = 2").rows, [[200]]);
+
+  // Nested correlation adds a second enclosing scope without changing values.
+  assert.deepEqual(engine.execute("select (select (select max(x) from t) from o where o.a = 1) from o where a = 1").rows, [
+    [3],
+  ]);
+});
+
+test("whole-result aggregates cover count, avg, sum, min and max", () => {
+  const engine = subqueryEngine();
+
+  assert.deepEqual(engine.execute("select count(*) from t").rows, [[3]]);
+  assert.deepEqual(engine.execute("select count(y) from t").rows, [[2]]);
+  assert.deepEqual(engine.execute("select avg(y) from t").rows, [[15]]);
+  assert.deepEqual(engine.execute("select sum(x) from t").rows, [[6]]);
+  assert.deepEqual(engine.execute("select min(y), max(y) from t").rows, [[10, 20]]);
+
+  // An empty input gives 0 for count and NULL for every other aggregate.
+  assert.deepEqual(engine.execute("select count(*) from t where 0").rows, [[0]]);
+  assert.deepEqual(engine.execute("select avg(x), sum(x), min(x), max(x) from t where 0").rows, [[null, null, null, null]]);
+
+  // An aggregate may feed a larger expression or a scalar subquery.
+  assert.deepEqual(engine.execute("select (select max(y) + 1 from t) from o where a = 1").rows, [[21]]);
+  assert.deepEqual(engine.execute("select (select avg(x) from t) + 1 from o where a = 1").rows, [[3]]);
+
+  // Aggregates outside a whole-result projection are rejected, not guessed.
+  const misplaced = engine.tryExecute("select x from t where avg(y) > 1");
+  assert.equal(misplaced.ok, false);
+  assert.equal(misplaced.error?.code, "misuse-of-aggregate");
+  assert.match(misplaced.error?.message ?? "", /misuse of aggregate function avg\(\)/);
+});
+
+function joinEngine(): ReturnType<typeof createEngine> {
+  const engine = createEngine();
+  engine.exec(
+    "create table l (a integer, b integer); insert into l values (1,10),(2,20),(3,30); \
+     create table r (a integer, c integer); insert into r values (1,100),(1,101),(3,300),(4,400);",
+  );
+  return engine;
+}
+
+test("INNER and LEFT JOIN pair rows the way SQLite does", () => {
+  const engine = joinEngine();
+
+  assert.deepEqual(engine.execute("select l.a, r.c from l inner join r on l.a = r.a").rows, [
+    [1, 100],
+    [1, 101],
+    [3, 300],
+  ]);
+  // An unmatched left row survives with NULL on the right, in left-row order.
+  assert.deepEqual(engine.execute("select l.a, r.c from l left join r on l.a = r.a").rows, [
+    [1, 100],
+    [1, 101],
+    [2, null],
+    [3, 300],
+  ]);
+  // When any pair matches, no NULL-padded copy is added.
+  assert.deepEqual(engine.execute("select l.a, r.c from l left join r on l.a = r.a and r.c > 100").rows, [
+    [1, 101],
+    [2, null],
+    [3, 300],
+  ]);
+  // Three sources and a WHERE after the joins.
+  assert.deepEqual(engine.execute("select l.a, r.c from l join r on l.a = r.a where r.c > 200").rows, [[3, 300]]);
+  // CROSS JOIN is the same product as a comma.
+  assert.deepEqual(engine.execute("select count(*) from l cross join r").rows, [[12]]);
+});
+
+test("GROUP BY and HAVING aggregate per group", () => {
+  const engine = joinEngine();
+
+  // Groups appear in first-seen order; `count(*)` is per group.
+  assert.deepEqual(engine.execute("select a, count(*) from r group by a").rows, [
+    [1, 2],
+    [3, 1],
+    [4, 1],
+  ]);
+  assert.deepEqual(engine.execute("select a, sum(c), avg(c) from r group by a").rows, [
+    [1, 201, 100.5],
+    [3, 300, 300],
+    [4, 400, 400],
+  ]);
+  // A one-based ordinal may stand for a projection expression.
+  assert.deepEqual(engine.execute("select a, count(*) from r group by 1 order by 1 desc").rows, [
+    [4, 1],
+    [3, 1],
+    [1, 2],
+  ]);
+  // HAVING may use an aggregate that the projection omits.
+  assert.deepEqual(engine.execute("select a from r group by a having count(*) > 1").rows, [[1]]);
+  // A group over an empty input produces no row at all.
+  assert.deepEqual(engine.execute("select a, count(*) from r where 0 group by a").rows, []);
+  // Without GROUP BY the aggregate still yields exactly one row.
+  assert.deepEqual(engine.execute("select avg(c), min(c), max(c) from r").rows, [[225.25, 100, 400]]);
+});
+
+test("unsupported joins and non-aggregate HAVING report structured errors", () => {
+  const engine = joinEngine();
+
+  const right = engine.tryExecute("select l.a from l right join r on l.a = r.a");
+  assert.equal(right.ok, false);
+  assert.equal(right.error?.code, "unsupported-clause");
+  assert.equal(right.error?.clause, "JOIN");
+
+  const using = engine.tryExecute("select count(*) from l join r using (a)");
+  assert.equal(using.ok, false);
+  assert.equal(using.error?.code, "unsupported-clause");
+  assert.equal(using.error?.clause, "JOIN");
+
+  const having = engine.tryExecute("select a from l having a > 1");
+  assert.equal(having.ok, false);
+  assert.equal(having.error?.code, "misuse-of-aggregate");
+  assert.equal(having.error?.clause, "HAVING");
+  assert.match(having.error?.message ?? "", /HAVING clause on a non-aggregate query/);
 });

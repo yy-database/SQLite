@@ -38,12 +38,12 @@ class SqlEngineTests(unittest.TestCase):
         self.assertEqual(nulls["rows"], [[1]])
 
     def test_rejections_carry_a_code_and_clause(self):
-        rejected = self.engine.try_execute("select * from people group by id")
+        rejected = self.engine.try_execute("select * from people right join people as p2 on people.id = p2.id")
         self.assertIs(rejected["ok"], False)
         error = rejected["error"]
         self.assertEqual(error["code"], "unsupported-clause")
         self.assertEqual(error["statement"], "select")
-        self.assertEqual(error["clause"], "GROUP")
+        self.assertEqual(error["clause"], "JOIN")
         self.assertEqual(error["position"], 21)
         unknown = self.engine.try_execute("select * from missing")
         self.assertEqual(unknown["error"]["code"], "unknown-table")

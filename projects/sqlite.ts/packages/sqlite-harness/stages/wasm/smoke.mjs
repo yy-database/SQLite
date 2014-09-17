@@ -67,8 +67,8 @@ function checkHostContract() {
   assertSql(/expects 2 values/.test(arity), `arity mismatch is rejected, got ${arity}`);
   const deleted = throws(() => database.exec("delete from probe"));
   assertSql(/unsupported statement/.test(deleted), `delete is rejected, got ${deleted}`);
-  const grouped = throws(() => database.exec("select * from probe group by id"));
-  assertSql(/unsupported `SELECT` clause/.test(grouped), `group by is rejected, got ${grouped}`);
+  const rightJoin = throws(() => database.exec("select * from probe right join probe as other on probe.id = other.id"));
+  assertSql(/right.* joins are not supported/.test(rightJoin), `right join is rejected, got ${rightJoin}`);
 }
 
 // The orthogonal primitives: one statement, a statement list, and the
@@ -90,10 +90,10 @@ function checkPrimitives() {
   const batch = JSON.parse(database.executeBatch(["insert into p (label) values ('b')", "select count(*) from p"]));
   assertSql(batch.length === 2 && JSON.stringify(batch[1].rows) === "[[2]]", "executeBatch runs the list in order");
 
-  const rejected = JSON.parse(database.tryExecute("select * from p group by id"));
+  const rejected = JSON.parse(database.tryExecute("select * from p right join p as other on p.id = other.id"));
   assertSql(rejected.ok === false, "tryExecute reports a rejection without throwing");
   assertSql(
-    rejected.error.code === "unsupported-clause" && rejected.error.statement === "select" && rejected.error.clause === "GROUP",
+    rejected.error.code === "unsupported-clause" && rejected.error.statement === "select" && rejected.error.clause === "JOIN",
     "tryExecute error carries code, statement and clause",
   );
   assertSql(rejected.error.position === 16, "tryExecute error carries the clause offset");

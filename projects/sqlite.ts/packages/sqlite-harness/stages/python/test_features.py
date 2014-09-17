@@ -196,11 +196,11 @@ def sql_engine(directory):
     nulls = engine.execute("select count(*) from people where score is null or name = 'bob'")
     check_sql(nulls["rows"] == [[1]], "is null and equality combined with or")
 
-    rejected = engine.try_execute("select * from people group by id")
+    rejected = engine.try_execute("select * from people right join people as other on people.id = other.id")
     check_sql(rejected["ok"] is False, "unsupported clause is reported, not raised")
     error = rejected["error"]
     check_sql(error["code"] == "unsupported-clause", "rejection code")
-    check_sql(error["statement"] == "select" and error["clause"] == "GROUP", "rejection statement and clause")
+    check_sql(error["statement"] == "select" and error["clause"] == "JOIN", "rejection statement and clause")
     check_sql(error["position"] == 21, "rejection position")
 
     unknown = engine.try_execute("insert into missing values (1)")
