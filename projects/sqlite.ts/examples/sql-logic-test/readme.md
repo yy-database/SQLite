@@ -47,6 +47,9 @@ node scripts/run-fixtures.mjs --only ts           # 只跑 TypeScript
 node scripts/run-fixtures.mjs --files 01-query    # 只跑指定文件
 python scripts/gen-fixtures.py --verify           # 校验期望值与 CPython sqlite3 一致
 python scripts/gen-fixtures.py --write            # 从 CPython sqlite3 重写期望值
+
+node scripts/gen-divergences.mjs --write          # 重跑两侧并写分歧台账
+node scripts/gen-divergences.mjs --verify         # 校验台账未漂移
 ```
 
 每次运行都在系统临时目录完成：`pnpm pack` → 临时目录 `npm install` 两个 tarball → 从 `@yydb/sqlite` 公开入口 import，Python 侧用 `maturin build` + 独立 venv。运行结束打印临时目录路径，目录保留不删除。
@@ -120,6 +123,35 @@ python scripts/gen-fixtures.py --write            # 从 CPython sqlite3 重写�
 | `params` / `expect` | 该形状下的入参与预期说明，不含实现 |
 
 形状词表：`prepared-parameters`、`cursor-iterate`、`transaction`、`exec-multi-statement`、`affected-count`、`error-detail`、`typed-columns`。当前 14 条待填，API 契约冻结后再补具体调用。
+
+## 分歧台账
+
+`divergences/ledger.json` 记录真实 SQLite 与本仓安装态产物的实测差异，`divergences/ledger.md` 是按 `direction` 与 `class` 汇总的人读版本。两者都由脚本生成，`--verify` 会重跑两侧并逐条比对，任何漂移直接失败。
+
+每条记录：`id`、`direction`、`setup`（最小建表与种子语句）、`sql`、`sqlite`（真实 SQLite 的逐字输出或错误）、`ours`（本仓输出或错误码与消息）、`class`、`evidence`（两侧版本与生成方式）、`status`（本轮全部 `open`）。
+
+| direction | 含义 |
+|-----------|------|
+| `ours-accepts-sqlite-rejects` | 本仓接受、SQLite 拒绝 |
+| `sqlite-accepts-ours-rejects` | SQLite 接受、本仓拒绝 |
+| `same-statement-different-result` | 两侧都执行但结果不同 |
+| `none` | 覆盖项复核后两侧一致，用来证明它不构成分歧 |
+
+| class | 含义 |
+|-------|------|
+| `extension` | 本仓独有的扩展行为 |
+| `missing-feature` | 本仓缺少的 SQLite 能力 |
+| `semantic-diff` | 两侧都可达但语义不同 |
+| `none` | 已复核一致 |
+
+本轮实测（CPython 3.12.10 的 `sqlite3` 3.49.1 对安装态 `@yydb/sqlite`）：37 条，`sqlite-accepts-ours-rejects` 31、`none` 6，另外两类为 0。
+
+复核结论与任务背景的差异：
+
+- `INTERSECT ALL` / `EXCEPT ALL`：背景称本引擎能跑，本产物在复合查询处直接拒绝（`syntax`/`unsupported-clause`），两侧都不接受，按 `none` 记录。
+- 复合 `SELECT` 结合顺序：本仓整体拒绝复合查询，结合顺序无法进入比较，`class` 记为 `missing-feature`。
+- SQLite 接受而本仓拒绝的：`INSERT … DEFAULT VALUES`、表级 `PRIMARY KEY (a,b)`/`FOREIGN KEY`/`CHECK`、`WITH RECURSIVE`、无别名派生表、`JOIN … USING`/`RIGHT`/`FULL`/`NATURAL`、窗口函数、`CAST`、`IS TRUE`、`||`、`LIKE`、隐式 `rowid`/`_rowid_`/`oid`、`sqlite_master`/`sqlite_sequence`、`total`/`group_concat`/`hex`/`quote`/`random`、`TEXT PRIMARY KEY`、整数除法与溢出、`LIMIT` 表达式。
+- 已与 SQLite 一致：`ORDER BY` 的 `NULL` 位次（升序最前、降序最后）与 `count(col)`。
 
 ## 基线
 
