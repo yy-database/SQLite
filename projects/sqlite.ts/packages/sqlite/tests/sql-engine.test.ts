@@ -513,3 +513,42 @@ test("index trees track interleaved writes to several indexed tables", () => {
     workspaceHandle.dispose();
   }
 });
+
+// Real SQLite agrees: `LIMIT -2` returns every row, `LIMIT -0` returns none.
+test("a negative limit means no upper bound", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table t (a integer)");
+  engine.execute("insert into t values (1), (2)");
+  assert.deepEqual(engine.execute("select a from t order by a limit -2").rows, [[1], [2]]);
+  assert.deepEqual(engine.execute("select a from t order by a limit -1").rows, [[1], [2]]);
+  assert.deepEqual(engine.execute("select a from t order by a limit -0").rows, []);
+});
+
+// The implicit integer primary key is readable through all three aliases, is
+// hidden from `SELECT *`, and is shadowed by a declared column of that name.
+test("rowid, _rowid_ and oid expose the implicit primary key", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table r (a integer)");
+  engine.execute("insert into r values (10), (20)");
+  assert.deepEqual(engine.execute("select rowid, _rowid_, oid from r").rows, [
+    [1, 1, 1],
+    [2, 2, 2],
+  ]);
+  assert.deepEqual(engine.execute("select * from r").columns, ["a"]);
+  assert.deepEqual(engine.execute("select r.rowid from r order by rowid desc").rows, [[2], [1]]);
+  engine.execute("create table shadow (rowid integer, a integer)");
+  engine.execute("insert into shadow values (7, 1)");
+  assert.deepEqual(engine.execute("select rowid from shadow").rows, [[7]]);
+});
+
+// SQLite gives every set operator the same precedence, so `(A UNION B)
+// INTERSECT C` is `3`; `A UNION (B INTERSECT C)` would return `1, 2, 3`.
+test("compound select folds left to right", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table c (a integer)");
+  engine.execute("insert into c values (1), (2), (3)");
+  const rows = engine.execute(
+    "select a from c where a <= 2 union select a from c where a >= 2 intersect select a from c where a = 3",
+  ).rows;
+  assert.deepEqual(rows, [[3]]);
+});
