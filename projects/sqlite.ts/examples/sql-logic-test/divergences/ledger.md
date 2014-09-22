@@ -12,8 +12,8 @@
 
 | direction | 条数 |
 |-----------|------|
-| `sqlite-accepts-ours-rejects` | 27 |
-| `none` | 10 |
+| `sqlite-accepts-ours-rejects` | 22 |
+| `none` | 15 |
 
 ## 按 class 计数
 
@@ -27,10 +27,10 @@
 
 | direction | class | 条数 |
 |-----------|-------|------|
-| `none` | `missing-feature` | 3 |
+| `none` | `missing-feature` | 8 |
 | `none` | `none` | 6 |
 | `none` | `semantic-diff` | 1 |
-| `sqlite-accepts-ours-rejects` | `missing-feature` | 27 |
+| `sqlite-accepts-ours-rejects` | `missing-feature` | 22 |
 
 ## 明细
 
@@ -60,6 +60,52 @@
 - sql：`SELECT _rowid_ FROM r`
 - SQLite：`[[1],[2]]`
 - 本仓：`[[1],[2]]`
+
+### `semantics.compound-associativity`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT 1 UNION SELECT 2 INTERSECT SELECT 2`
+- SQLite：`[[2]]`
+- 本仓：`[[2]]`
+- 备注：复合查询整体被拒，结合顺序无法进入比较
+
+### `semantics.integer-division`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT 7 / 2`
+- SQLite：`[[3]]`
+- 本仓：`[[3]]`
+
+### `semantics.integer-overflow`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT 9223372036854775807 + 1`
+- SQLite：`[[9223372036854776000]]`
+- 本仓：`[[9223372036854776000]]`
+
+### `syntax.cast`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT CAST('12' AS INTEGER)`
+- SQLite：`[[12]]`
+- 本仓：`[[12]]`
+
+### `syntax.derived-table-without-alias`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT * FROM (SELECT 1)`
+- SQLite：`[[1]]`
+- 本仓：`[[1]]`
 
 ### `semantics.count-column-vs-star`
 
@@ -98,7 +144,7 @@
 - setup：无
 - sql：`SELECT 1 EXCEPT ALL SELECT 1`
 - SQLite：`near "ALL": syntax error`
-- 本仓：`syntax: expected `,` or `FROM` in the projection but found `EXCEPT``
+- 本仓：`syntax: expected `select` but found `ALL``
 - 备注：背景记录称本引擎接受 `EXCEPT ALL`，本产物在复合查询处直接拒绝，两侧均不接受该语句
 
 ### `syntax.ilike`
@@ -118,7 +164,7 @@
 - setup：无
 - sql：`SELECT 1 INTERSECT ALL SELECT 1`
 - SQLite：`near "ALL": syntax error`
-- 本仓：`syntax: expected `,` or `FROM` in the projection but found `INTERSECT``
+- 本仓：`syntax: expected `select` but found `ALL``
 - 备注：背景记录称本引擎接受 `INTERSECT ALL`，本产物在复合查询处直接拒绝，两侧均不接受该语句
 
 ### `semantics.limit-negative`
@@ -194,34 +240,6 @@
 - SQLite：`[[3]]`
 - 本仓：`unsupported-clause: aggregate function `total(...)` is not supported, except `count(*)` over the whole result`
 
-### `semantics.compound-associativity`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：无
-- sql：`SELECT 1 UNION SELECT 2 INTERSECT SELECT 2`
-- SQLite：`[[2]]`
-- 本仓：`syntax: expected `,` or `FROM` in the projection but found `UNION``
-- 备注：复合查询整体被拒，结合顺序无法进入比较
-
-### `semantics.integer-division`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：无
-- sql：`SELECT 7 / 2`
-- SQLite：`[[3]]`
-- 本仓：`syntax: select projection is incomplete`
-
-### `semantics.integer-overflow`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：无
-- sql：`SELECT 9223372036854775807 + 1`
-- SQLite：`[[9223372036854776000]]`
-- 本仓：`syntax: select projection is incomplete`
-
 ### `semantics.limit-expression`
 
 - direction：`sqlite-accepts-ours-rejects`
@@ -241,15 +259,6 @@
 - SQLite：`[["a",1]]`
 - 本仓：`storage: unsupported: sqlite non-INTEGER PRIMARY KEY is not supported`
 
-### `syntax.cast`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：无
-- sql：`SELECT CAST('12' AS INTEGER)`
-- SQLite：`[[12]]`
-- 本仓：`syntax: expected `,` or `)` in the argument list but found `AS``
-
 ### `syntax.concat-operator`
 
 - direction：`sqlite-accepts-ours-rejects`
@@ -258,15 +267,6 @@
 - sql：`SELECT 'a' || 'b'`
 - SQLite：`[["ab"]]`
 - 本仓：`syntax: expected `,` or `FROM` in the projection but found `|``
-
-### `syntax.derived-table-without-alias`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：无
-- sql：`SELECT * FROM (SELECT 1)`
-- SQLite：`[[1]]`
-- 本仓：`syntax: expected `,` or `FROM` in the projection but found `)``
 
 ### `syntax.insert-default-values`
 
@@ -374,4 +374,4 @@
 - setup：无
 - sql：`WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM cnt WHERE x < 5) SELECT x FROM cnt`
 - SQLite：`[[1],[2],[3],[4],[5]]`
-- 本仓：`syntax: expected `,` or `FROM` in the projection but found `UNION``
+- 本仓：`unsupported-clause: `WITH RECURSIVE` is not supported: CTE `cnt` references itself, and this engine evaluates each CTE once`
