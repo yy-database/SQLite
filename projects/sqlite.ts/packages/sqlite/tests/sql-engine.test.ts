@@ -627,3 +627,19 @@ test("derived table without alias projects its row", () => {
   assert.deepEqual(engine.execute("select * from (select 1)").rows, [[1]]);
   assert.deepEqual(engine.execute("select 1 from (select 1)").rows, [[1]]);
 });
+
+// `LIKE` folds ASCII case only, `_` takes exactly one character, and a
+// trailing `%` also matches the empty string.
+test("like follows sqlite wildcard and case rules", () => {
+  const engine = createEngine(4096);
+  assert.deepEqual(engine.execute("select 'abc' like 'A%'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 'Ü' like 'ü'").rows, [[0]]);
+  assert.deepEqual(engine.execute("select 'ab' like 'a_'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 'abc' like 'a_'").rows, [[0]]);
+  assert.deepEqual(engine.execute("select '' like '%'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select null like 'a%'").rows, [[null]]);
+  assert.deepEqual(engine.execute("select 'x' not like 'a%'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 1 like '1'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 'a%b' like 'a\\%b' escape '\\'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 'axb' like 'a\\%b' escape '\\'").rows, [[0]]);
+});
