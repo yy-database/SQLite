@@ -12,8 +12,8 @@
 
 | direction | 条数 |
 |-----------|------|
-| `sqlite-accepts-ours-rejects` | 22 |
-| `none` | 15 |
+| `sqlite-accepts-ours-rejects` | 19 |
+| `none` | 18 |
 
 ## 按 class 计数
 
@@ -27,10 +27,10 @@
 
 | direction | class | 条数 |
 |-----------|-------|------|
-| `none` | `missing-feature` | 8 |
+| `none` | `missing-feature` | 11 |
 | `none` | `none` | 6 |
 | `none` | `semantic-diff` | 1 |
-| `sqlite-accepts-ours-rejects` | `missing-feature` | 22 |
+| `sqlite-accepts-ours-rejects` | `missing-feature` | 19 |
 
 ## 明细
 
@@ -89,6 +89,15 @@
 - SQLite：`[[9223372036854776000]]`
 - 本仓：`[[9223372036854776000]]`
 
+### `semantics.text-primary-key`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：`CREATE TABLE tp(k TEXT PRIMARY KEY, v INTEGER)`，`INSERT INTO tp VALUES ('a', 1)`
+- sql：`SELECT k, v FROM tp`
+- SQLite：`[["a",1]]`
+- 本仓：`[["a",1]]`
+
 ### `syntax.cast`
 
 - direction：`none`
@@ -106,6 +115,24 @@
 - sql：`SELECT * FROM (SELECT 1)`
 - SQLite：`[[1]]`
 - 本仓：`[[1]]`
+
+### `syntax.like`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT 'abc' LIKE 'A%'`
+- SQLite：`[[1]]`
+- 本仓：`[[1]]`
+
+### `syntax.table-primary-key-multi`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`CREATE TABLE pkab(a INTEGER, b INTEGER, PRIMARY KEY (a, b))`
+- SQLite：`[]`
+- 本仓：`[]`
 
 ### `semantics.count-column-vs-star`
 
@@ -250,15 +277,6 @@
 - 本仓：`unsupported-clause: unsupported `SELECT` clause starting at `+`; this engine supports `FROM`, `WHERE`, `ORDER BY`, `LIMIT` and `UNION` / `IN...`
 - 备注：`LIMIT` 表达式被拒绝，数值从未求值
 
-### `semantics.text-primary-key`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：`CREATE TABLE tp(k TEXT PRIMARY KEY, v INTEGER)`，`INSERT INTO tp VALUES ('a', 1)`
-- sql：`SELECT k, v FROM tp`
-- SQLite：`[["a",1]]`
-- 本仓：`storage: unsupported: sqlite non-INTEGER PRIMARY KEY is not supported`
-
 ### `syntax.concat-operator`
 
 - direction：`sqlite-accepts-ours-rejects`
@@ -322,15 +340,6 @@
 - SQLite：`[[1]]`
 - 本仓：`unsupported-clause: `JOIN ... USING` is not supported; write an explicit `ON` predicate`
 
-### `syntax.like`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：无
-- sql：`SELECT 'abc' LIKE 'A%'`
-- SQLite：`[[1]]`
-- 本仓：`syntax: expected `,` or `FROM` in the projection but found `LIKE``
-
 ### `syntax.table-check`
 
 - direction：`sqlite-accepts-ours-rejects`
@@ -348,15 +357,6 @@
 - sql：`CREATE TABLE child(a INTEGER REFERENCES parent(a))`
 - SQLite：`[]`
 - 本仓：`unsupported-column-constraint: unsupported column constraint in `a``
-
-### `syntax.table-primary-key-multi`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：无
-- sql：`CREATE TABLE pkab(a INTEGER, b INTEGER, PRIMARY KEY (a, b))`
-- SQLite：`[]`
-- 本仓：`syntax: expected a numeric type parameter but found `a``
 
 ### `syntax.window-function`
 
