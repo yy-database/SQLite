@@ -53,7 +53,7 @@
     },
     {
       "id": "syntax.insert-default-values",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "same-statement-different-result",
       "setup": [
         "CREATE TABLE dv(a INTEGER DEFAULT 5, b INTEGER)"
       ],
@@ -63,11 +63,12 @@
         "rows": []
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "syntax",
-        "clause": null,
-        "message": "expected `values` but found `DEFAULT`"
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -411,7 +412,7 @@
     },
     {
       "id": "syntax.is-true",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [],
       "sql": "SELECT 1 IS TRUE",
       "sqlite": {
@@ -423,11 +424,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "syntax",
-        "clause": null,
-        "message": "expected `null` but found `TRUE`"
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
