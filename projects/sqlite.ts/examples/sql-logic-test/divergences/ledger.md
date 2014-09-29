@@ -12,8 +12,8 @@
 
 | direction | 条数 |
 |-----------|------|
-| `none` | 19 |
-| `sqlite-accepts-ours-rejects` | 17 |
+| `none` | 20 |
+| `sqlite-accepts-ours-rejects` | 16 |
 | `same-statement-different-result` | 1 |
 
 ## 按 class 计数
@@ -28,11 +28,11 @@
 
 | direction | class | 条数 |
 |-----------|-------|------|
-| `none` | `missing-feature` | 12 |
+| `none` | `missing-feature` | 13 |
 | `none` | `none` | 6 |
 | `none` | `semantic-diff` | 1 |
 | `same-statement-different-result` | `missing-feature` | 1 |
-| `sqlite-accepts-ours-rejects` | `missing-feature` | 17 |
+| `sqlite-accepts-ours-rejects` | `missing-feature` | 16 |
 
 ## 明细
 
@@ -108,6 +108,15 @@
 - sql：`SELECT CAST('12' AS INTEGER)`
 - SQLite：`[[12]]`
 - 本仓：`[[12]]`
+
+### `syntax.concat-operator`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT 'a' || 'b'`
+- SQLite：`[["ab"]]`
+- 本仓：`[["ab"]]`
 
 ### `syntax.derived-table-without-alias`
 
@@ -296,15 +305,6 @@
 - SQLite：`[[1],[2]]`
 - 本仓：`unsupported-clause: unsupported `SELECT` clause starting at `+`; this engine supports `FROM`, `WHERE`, `ORDER BY`, `LIMIT` and `UNION` / `IN...`
 - 备注：`LIMIT` 表达式被拒绝，数值从未求值
-
-### `syntax.concat-operator`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：无
-- sql：`SELECT 'a' || 'b'`
-- SQLite：`[["ab"]]`
-- 本仓：`syntax: expected `,` or `FROM` in the projection but found `|``
 
 ### `syntax.join-full`
 
