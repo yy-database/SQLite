@@ -684,6 +684,9 @@ test("numeric prefix conversion matches sqlite", () => {
   engine.execute("create table v(x)");
   engine.execute("insert into v values ('2abc'), ('10'), (null), (x'31')");
   assert.deepEqual(engine.execute("select sum(x), avg(x), typeof(sum(x)) from v").rows, [[13, 13 / 3, "real"]]);
+  // `total()` keeps the real type and returns 0.0 for an empty input.
+  assert.deepEqual(engine.execute("select total(x), typeof(total(x)) from v").rows, [[13, "real"]]);
+  assert.deepEqual(engine.execute("select total(x), sum(x) from v where 0").rows, [[0, null]]);
 });
 
 // `INSERT ... DEFAULT VALUES` inserts one row built purely from the defaults.

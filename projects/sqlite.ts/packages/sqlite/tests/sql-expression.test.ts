@@ -80,11 +80,8 @@ test("scalar functions cover the supported set and reject bad arity", () => {
   assert.deepEqual(engine.execute("select avg(a) from v").rows, [[0]]);
   assert.deepEqual(engine.execute("select sum(b), min(a), max(b) from v").rows, [[6, -7, 4]]);
 
-  // Aggregates outside the supported set still fail with a structured error.
-  const aggregate = engine.tryExecute("select total(a) from v");
-  assert.equal(aggregate.ok, false);
-  assert.equal(aggregate.error?.code, "unsupported-clause");
-  assert.equal(aggregate.error?.clause, "TOTAL");
+  // `total()` is the real-valued sibling of `sum()` and keeps that type.
+  assert.deepEqual(engine.execute("select total(a), typeof(total(a)), total(b) from v").rows, [[0, "real", 6]]);
 
   assert.deepEqual(engine.execute("select count(*) from v").rows, [[3]]);
 });
