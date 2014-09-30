@@ -12,8 +12,8 @@
 
 | direction | 条数 |
 |-----------|------|
-| `none` | 20 |
-| `sqlite-accepts-ours-rejects` | 16 |
+| `none` | 21 |
+| `sqlite-accepts-ours-rejects` | 15 |
 | `same-statement-different-result` | 1 |
 
 ## 按 class 计数
@@ -28,11 +28,11 @@
 
 | direction | class | 条数 |
 |-----------|-------|------|
-| `none` | `missing-feature` | 13 |
+| `none` | `missing-feature` | 14 |
 | `none` | `none` | 6 |
 | `none` | `semantic-diff` | 1 |
 | `same-statement-different-result` | `missing-feature` | 1 |
-| `sqlite-accepts-ours-rejects` | `missing-feature` | 16 |
+| `sqlite-accepts-ours-rejects` | `missing-feature` | 15 |
 
 ## 明细
 
@@ -53,6 +53,15 @@
 - sql：`SELECT rowid FROM r`
 - SQLite：`[[1],[2]]`
 - 本仓：`[[1],[2]]`
+
+### `implicit.total-function`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：`CREATE TABLE t1(a INTEGER)`，`INSERT INTO t1 VALUES (1), (2)`
+- sql：`SELECT total(a) FROM t1`
+- SQLite：`[[3]]`
+- 本仓：`[[3]]`
 
 ### `implicit.underscore-rowid`
 
@@ -286,15 +295,6 @@
 - SQLite：`[[1]]`
 - 本仓：`syntax: expected `,` or `)` after a column definition but found `AUTOINCREMENT``
 - 备注：本引擎在 setup 的 `AUTOINCREMENT` 处失败，`sqlite_sequence` 未触达
-
-### `implicit.total-function`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：`CREATE TABLE t1(a INTEGER)`，`INSERT INTO t1 VALUES (1), (2)`
-- sql：`SELECT total(a) FROM t1`
-- SQLite：`[[3]]`
-- 本仓：`unsupported-clause: aggregate function `total(...)` is not supported, except `count(*)` over the whole result`
 
 ### `semantics.limit-expression`
 

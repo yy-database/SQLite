@@ -690,7 +690,7 @@
     },
     {
       "id": "implicit.total-function",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [
         "CREATE TABLE t1(a INTEGER)",
         "INSERT INTO t1 VALUES (1), (2)"
@@ -705,11 +705,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "unsupported-clause",
-        "clause": "TOTAL",
-        "message": "aggregate function `total(...)` is not supported, except `count(*)` over the whole result"
+        "kind": "rows",
+        "rows": [
+          [
+            3
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
