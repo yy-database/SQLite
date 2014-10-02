@@ -670,8 +670,6 @@ test("concat operator follows sqlite precedence", () => {
   assert.deepEqual(engine.execute("select 1.5 || 'x', 2.0 || '', 1e-5 || ''").rows, [["1.5x", "2.0", "1.0e-05"]]);
   assert.deepEqual(engine.execute("select null || 'x', 'x' || null").rows, [[null, null]]);
   assert.deepEqual(engine.execute("select x'6162' || 'c'").rows, [["abc"]]);
-  // A lone `|` has no SQLite meaning and stays a syntax error.
-  assert.equal(engine.tryExecute("select 1 | 2").error?.code, "syntax");
 });
 
 // Arithmetic, casts, `IS TRUE` and aggregates share the longest numeric prefix.
@@ -687,6 +685,23 @@ test("numeric prefix conversion matches sqlite", () => {
   // `total()` keeps the real type and returns 0.0 for an empty input.
   assert.deepEqual(engine.execute("select total(x), typeof(total(x)) from v").rows, [[13, "real"]]);
   assert.deepEqual(engine.execute("select total(x), sum(x) from v where 0").rows, [[0, null]]);
+});
+
+// Bitwise operators, `group_concat`, `hex`, `quote`, `random` and `randomblob`.
+test("bitwise and inspection functions follow sqlite", () => {
+  const engine = createEngine(4096);
+  assert.deepEqual(engine.execute("select 5 & 3, 1 | 2, ~1, ~1 || 2").rows, [[1, 3, -2, "-22"]]);
+  assert.deepEqual(engine.execute("select '2abc' & 3, 1.9 & 3, ~null, null & 3").rows, [[2, 1, null, null]]);
+  // `^` is not a SQLite token.
+  assert.equal(engine.tryExecute("select 5 ^ 3").error?.code, "syntax");
+  engine.execute("create table t(x)");
+  engine.execute("insert into t values ('a'), (null), ('b'), (3), (x'63')");
+  assert.deepEqual(engine.execute("select group_concat(x), group_concat(x, '-') from t").rows, [["a,b,3,c", "a-b-3-c"]]);
+  assert.deepEqual(engine.execute("select group_concat(x, null), typeof(group_concat(x)) from t").rows, [["ab3c", "text"]]);
+  assert.deepEqual(engine.execute("select group_concat(x) from t where 0").rows, [[null]]);
+  assert.deepEqual(engine.execute("select hex(255), hex(x'0102'), hex(null)").rows, [["323535", "0102", ""]]);
+  assert.deepEqual(engine.execute("select quote('It''s'), quote(null), quote(x'0102'), quote(1.5)").rows, [["'It''s'", "NULL", "X'0102'", "1.5"]]);
+  assert.deepEqual(engine.execute("select typeof(random()), length(randomblob(4))").rows, [["integer", 4]]);
 });
 
 // `INSERT ... DEFAULT VALUES` inserts one row built purely from the defaults.
