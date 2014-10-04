@@ -6,21 +6,21 @@
 
 - 真实 SQLite：CPython 3.12.10 的 `sqlite3` 3.49.1
 - 本仓产物：@yydb/sqlite createEngine 引擎 3.45.0（Node v24.18.0），安装态运行
-- 用例：37 条，`status` 一律为 `open`
+- 用例：44 条，`status` 一律为 `open`
 
 ## 按 direction 计数
 
 | direction | 条数 |
 |-----------|------|
-| `none` | 21 |
-| `sqlite-accepts-ours-rejects` | 15 |
+| `none` | 32 |
+| `sqlite-accepts-ours-rejects` | 11 |
 | `same-statement-different-result` | 1 |
 
 ## 按 class 计数
 
 | class | 条数 |
 |-------|------|
-| `missing-feature` | 30 |
+| `missing-feature` | 37 |
 | `none` | 6 |
 | `semantic-diff` | 1 |
 
@@ -28,13 +28,49 @@
 
 | direction | class | 条数 |
 |-----------|-------|------|
-| `none` | `missing-feature` | 14 |
+| `none` | `missing-feature` | 25 |
 | `none` | `none` | 6 |
 | `none` | `semantic-diff` | 1 |
 | `same-statement-different-result` | `missing-feature` | 1 |
-| `sqlite-accepts-ours-rejects` | `missing-feature` | 15 |
+| `sqlite-accepts-ours-rejects` | `missing-feature` | 11 |
 
 ## 明细
+
+### `implicit.group-concat`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：`CREATE TABLE t1(a INTEGER)`，`INSERT INTO t1 VALUES (1), (2)`
+- sql：`SELECT group_concat(a) FROM t1`
+- SQLite：`[["1,2"]]`
+- 本仓：`[["1,2"]]`
+
+### `implicit.group-concat-separator`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：`CREATE TABLE t1(a INTEGER)`，`INSERT INTO t1 VALUES (1), (2)`
+- sql：`SELECT group_concat(a, '-') FROM t1`
+- SQLite：`[["1-2"]]`
+- 本仓：`[["1-2"]]`
+
+### `implicit.hex-classes`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT hex(255), hex(x'0102'), hex(NULL)`
+- SQLite：`[["323535","0102",""]]`
+- 本仓：`[["323535","0102",""]]`
+
+### `implicit.hex-function`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT hex('A')`
+- SQLite：`[["41"]]`
+- 本仓：`[["41"]]`
 
 ### `implicit.oid`
 
@@ -44,6 +80,33 @@
 - sql：`SELECT oid FROM r`
 - SQLite：`[[1],[2]]`
 - 本仓：`[[1],[2]]`
+
+### `implicit.quote-classes`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT quote(NULL), quote(x'0102'), quote(1.5)`
+- SQLite：`[["NULL","X'0102'","1.5"]]`
+- 本仓：`[["NULL","X'0102'","1.5"]]`
+
+### `implicit.quote-function`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT quote('a')`
+- SQLite：`[["'a'"]]`
+- 本仓：`[["'a'"]]`
+
+### `implicit.random-function`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT typeof(random())`
+- SQLite：`[["integer"]]`
+- 本仓：`[["integer"]]`
 
 ### `implicit.rowid`
 
@@ -71,6 +134,33 @@
 - sql：`SELECT _rowid_ FROM r`
 - SQLite：`[[1],[2]]`
 - 本仓：`[[1],[2]]`
+
+### `semantics.bitwise-and`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT '2abc' & 3`
+- SQLite：`[[2]]`
+- 本仓：`[[2]]`
+
+### `semantics.bitwise-not`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT ~1 || 2`
+- SQLite：`[["-22"]]`
+- 本仓：`[["-22"]]`
+
+### `semantics.bitwise-or`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT 1 | 2`
+- SQLite：`[[3]]`
+- 本仓：`[[3]]`
 
 ### `semantics.compound-associativity`
 
@@ -108,6 +198,15 @@
 - sql：`SELECT k, v FROM tp`
 - SQLite：`[["a",1]]`
 - 本仓：`[["a",1]]`
+
+### `syntax.bitwise-xor`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT 5 ^ 3`
+- SQLite：`unrecognized token: "^"`
+- 本仓：`syntax: expected `,` or `FROM` in the projection but found `^``
 
 ### `syntax.cast`
 
@@ -240,42 +339,6 @@
 - sql：`INSERT INTO dv DEFAULT VALUES`
 - SQLite：`[]`
 - 本仓：`[[1]]`
-
-### `implicit.group-concat`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：`CREATE TABLE t1(a INTEGER)`，`INSERT INTO t1 VALUES (1), (2)`
-- sql：`SELECT group_concat(a) FROM t1`
-- SQLite：`[["1,2"]]`
-- 本仓：`unsupported-clause: aggregate function `group_concat(...)` is not supported, except `count(*)` over the whole result`
-
-### `implicit.hex-function`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：无
-- sql：`SELECT hex('A')`
-- SQLite：`[["41"]]`
-- 本仓：`unknown-function: no such function: hex`
-
-### `implicit.quote-function`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：无
-- sql：`SELECT quote('a')`
-- SQLite：`[["'a'"]]`
-- 本仓：`unknown-function: no such function: quote`
-
-### `implicit.random-function`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：无
-- sql：`SELECT typeof(random())`
-- SQLite：`[["integer"]]`
-- 本仓：`unknown-function: no such function: random`
 
 ### `implicit.sqlite-master`
 

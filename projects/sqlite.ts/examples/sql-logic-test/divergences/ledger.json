@@ -721,7 +721,7 @@
     },
     {
       "id": "implicit.group-concat",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [
         "CREATE TABLE t1(a INTEGER)",
         "INSERT INTO t1 VALUES (1), (2)"
@@ -736,11 +736,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "unsupported-clause",
-        "clause": "GROUP_CONCAT",
-        "message": "aggregate function `group_concat(...)` is not supported, except `count(*)` over the whole result"
+        "kind": "rows",
+        "rows": [
+          [
+            "1,2"
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -751,7 +752,7 @@
     },
     {
       "id": "implicit.hex-function",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [],
       "sql": "SELECT hex('A')",
       "sqlite": {
@@ -763,11 +764,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "unknown-function",
-        "clause": null,
-        "message": "no such function: hex"
+        "kind": "rows",
+        "rows": [
+          [
+            "41"
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -778,7 +780,7 @@
     },
     {
       "id": "implicit.quote-function",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [],
       "sql": "SELECT quote('a')",
       "sqlite": {
@@ -790,11 +792,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "unknown-function",
-        "clause": null,
-        "message": "no such function: quote"
+        "kind": "rows",
+        "rows": [
+          [
+            "'a'"
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -805,7 +808,7 @@
     },
     {
       "id": "implicit.random-function",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [],
       "sql": "SELECT typeof(random())",
       "sqlite": {
@@ -817,11 +820,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "unknown-function",
-        "clause": null,
-        "message": "no such function: random"
+        "kind": "rows",
+        "rows": [
+          [
+            "integer"
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -1140,6 +1144,209 @@
       },
       "status": "open",
       "note": "`LIMIT` 表达式被拒绝，数值从未求值"
+    },
+    {
+      "id": "semantics.bitwise-and",
+      "direction": "none",
+      "setup": [],
+      "sql": "SELECT '2abc' & 3",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            2
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            2
+          ]
+        ]
+      },
+      "class": "missing-feature",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open"
+    },
+    {
+      "id": "semantics.bitwise-or",
+      "direction": "none",
+      "setup": [],
+      "sql": "SELECT 1 | 2",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            3
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            3
+          ]
+        ]
+      },
+      "class": "missing-feature",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open"
+    },
+    {
+      "id": "semantics.bitwise-not",
+      "direction": "none",
+      "setup": [],
+      "sql": "SELECT ~1 || 2",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            "-22"
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            "-22"
+          ]
+        ]
+      },
+      "class": "missing-feature",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open"
+    },
+    {
+      "id": "syntax.bitwise-xor",
+      "direction": "none",
+      "setup": [],
+      "sql": "SELECT 5 ^ 3",
+      "sqlite": {
+        "kind": "error",
+        "stage": "sql",
+        "message": "unrecognized token: \"^\""
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "syntax",
+        "clause": null,
+        "message": "expected `,` or `FROM` in the projection but found `^`"
+      },
+      "class": "missing-feature",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open"
+    },
+    {
+      "id": "implicit.group-concat-separator",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE t1(a INTEGER)",
+        "INSERT INTO t1 VALUES (1), (2)"
+      ],
+      "sql": "SELECT group_concat(a, '-') FROM t1",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            "1-2"
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            "1-2"
+          ]
+        ]
+      },
+      "class": "missing-feature",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open"
+    },
+    {
+      "id": "implicit.hex-classes",
+      "direction": "none",
+      "setup": [],
+      "sql": "SELECT hex(255), hex(x'0102'), hex(NULL)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            "323535",
+            "0102",
+            ""
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            "323535",
+            "0102",
+            ""
+          ]
+        ]
+      },
+      "class": "missing-feature",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open"
+    },
+    {
+      "id": "implicit.quote-classes",
+      "direction": "none",
+      "setup": [],
+      "sql": "SELECT quote(NULL), quote(x'0102'), quote(1.5)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            "NULL",
+            "X'0102'",
+            "1.5"
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            "NULL",
+            "X'0102'",
+            "1.5"
+          ]
+        ]
+      },
+      "class": "missing-feature",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open"
     }
   ]
 }
