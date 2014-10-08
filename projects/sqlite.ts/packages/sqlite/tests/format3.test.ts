@@ -4,7 +4,7 @@ import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createWriter, openDatabase, writeSlots } from "../src/index.ts";
+import { createWriter, openDatabase, openWriter, writeSlots } from "../src/index.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -442,6 +442,71 @@ test("sqlite_master and index listing match external pragma", () => {
       .map((object) => `${object.kind}:${object.name}`)
       .sort();
     assert.deepEqual(mirrored, externalMaster.map((row) => `${row.type}:${row.name}`).sort());
+  } finally {
+    space.dispose();
+  }
+});
+
+test("autoincrement and sqlite_sequence round trip both directions", () => {
+  const space = workspace("autoinc");
+  try {
+    const writer = createWriter(4096);
+    writer.createTable("c", JSON.stringify([
+      { name: "id", declaredType: "INTEGER", notNull: false, defaultValue: null, primaryKey: true, unique: false, autoincrement: true },
+      { name: "v", declaredType: "TEXT", notNull: false, defaultValue: null, primaryKey: false, unique: false },
+    ]));
+    writer.insert("c", writeSlots([{ $omit: true }, "a"]));
+    writer.insert("c", writeSlots([{ $omit: true }, "b"]));
+    writer.insert("c", writeSlots([100, "explicit"]));
+    writer.delete("c", 1);
+    writer.delete("c", 2);
+    writer.save(space.path);
+
+    // Our file, read and continued by official SQLite.
+    const oracle = new BetterSqlite(space.path);
+    const master = oracle.prepare("select type, name, tbl_name, rootpage, sql from sqlite_master order by rowid").all();
+    assert.deepEqual(master, [
+      {
+        type: "table",
+        name: "c",
+        tbl_name: "c",
+        rootpage: 2,
+        sql: 'CREATE TABLE "c" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "v" TEXT)',
+      },
+      { type: "table", name: "sqlite_sequence", tbl_name: "sqlite_sequence", rootpage: 3, sql: "CREATE TABLE sqlite_sequence(name,seq)" },
+    ]);
+    assert.deepEqual(oracle.prepare("select name, seq from sqlite_sequence").all(), [{ name: "c", seq: 100 }]);
+    const continued = oracle.prepare("insert into c (v) values ('official')").run() as { lastInsertRowid: number };
+    assert.equal(Number(continued.lastInsertRowid), 101);
+    assert.deepEqual(oracle.prepare("select name, seq from sqlite_sequence").all(), [{ name: "c", seq: 101 }]);
+    const integrity = oracle.prepare("pragma integrity_check").get() as { integrity_check: string };
+    oracle.close();
+    assert.equal(integrity.integrity_check, "ok");
+
+    // An official file, read and continued by our writer.
+    const externalPath = join(space.path, "..", "external.sqlite3");
+    const seed = new BetterSqlite(externalPath);
+    seed.pragma("page_size = 4096");
+    seed.exec("create table t (id integer primary key autoincrement, v text)");
+    seed.exec("insert into t (v) values ('a'), ('b'), ('c')");
+    seed.exec("delete from t where id = 3");
+    seed.close();
+
+    const foreign = openWriter(externalPath);
+    const rowid = foreign.insert("t", writeSlots([{ $omit: true }, "ours"]));
+    foreign.save(externalPath);
+    assert.equal(rowid, 4);
+
+    const verify = new BetterSqlite(externalPath);
+    assert.deepEqual(verify.prepare("select id, v from t order by id").all(), [
+      { id: 1, v: "a" },
+      { id: 2, v: "b" },
+      { id: 4, v: "ours" },
+    ]);
+    assert.deepEqual(verify.prepare("select name, seq from sqlite_sequence").all(), [{ name: "t", seq: 4 }]);
+    const reverseIntegrity = verify.prepare("pragma integrity_check").get() as { integrity_check: string };
+    verify.close();
+    assert.equal(reverseIntegrity.integrity_check, "ok");
   } finally {
     space.dispose();
   }

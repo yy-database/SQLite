@@ -207,6 +207,97 @@ test("the snapshot written after SQL execution opens in an external engine", () 
   }
 });
 
+test("sqlite_master lists schema objects in creation order and stays read-only", () => {
+  const engine = createEngine();
+  engine.execute("create table a (x integer, y text)");
+  engine.execute("create index ia on a (x)");
+  engine.execute("create table b (z text primary key, w text unique)");
+
+  const master = engine.execute("select type, name, tbl_name, rootpage, sql from sqlite_master");
+  assert.deepEqual(master.columns, ["type", "name", "tbl_name", "rootpage", "sql"]);
+  assert.deepEqual(
+    master.rows.map((row) => row.slice(0, 4)),
+    [
+      ["table", "a", "a", 2],
+      ["index", "ia", "a", 3],
+      ["table", "b", "b", 4],
+      ["index", "sqlite_autoindex_b_1", "b", 5],
+      ["index", "sqlite_autoindex_b_2", "b", 6],
+    ],
+  );
+  assert.equal(typeof master.rows[0][4], "string");
+  // Automatic constraint indexes carry no SQL text, exactly like SQLite.
+  assert.deepEqual([master.rows[3][4], master.rows[4][4]], [null, null]);
+
+  assert.deepEqual(engine.execute("select name from sqlite_master where type = 'table'").rows, [["a"], ["b"]]);
+  assert.deepEqual(engine.execute("select sql from sqlite_master where name = 'sqlite_autoindex_b_1'").rows, [[null]]);
+  assert.deepEqual(engine.execute("select count(*) from sqlite_schema").rows, [[5]]);
+  assert.deepEqual(engine.execute("select count(*) from sqlite_temp_master").rows, [[0]]);
+
+  const modified = engine.tryExecute("insert into sqlite_master values ('table', 'x', 'x', 0, 'x')");
+  assert.equal(modified.ok, false);
+  assert.equal(modified.error?.code, "readonly-system-table");
+  assert.equal(modified.error?.statement, "insert");
+
+  const reserved = engine.tryExecute("create table sqlite_foo (a integer)");
+  assert.equal(reserved.ok, false);
+  assert.equal(reserved.error?.code, "reserved-name");
+  assert.equal(reserved.error?.message, "object name reserved for internal use: sqlite_foo");
+
+  const unindexable = engine.tryExecute("create index im on sqlite_master (name)");
+  assert.equal(unindexable.ok, false);
+  assert.equal(unindexable.error?.code, "readonly-system-table");
+  assert.equal(unindexable.error?.message, "table sqlite_master may not be indexed");
+
+  // The file itself must report the same rows, with the statements stored
+  // verbatim exactly like SQLite stores them.
+  const workspaceHandle = workspace();
+  try {
+    writeFileSync(workspaceHandle.path, engine.snapshot());
+    const external = new BetterSqlite(workspaceHandle.path);
+    try {
+      assert.equal(external.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+      assert.deepEqual(external.prepare("SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master").all(), [
+        { type: "table", name: "a", tbl_name: "a", rootpage: 2, sql: "create table a (x integer, y text)" },
+        { type: "index", name: "ia", tbl_name: "a", rootpage: 3, sql: "create index ia on a (x)" },
+        { type: "table", name: "b", tbl_name: "b", rootpage: 4, sql: "create table b (z text primary key, w text unique)" },
+        { type: "index", name: "sqlite_autoindex_b_1", tbl_name: "b", rootpage: 5, sql: null },
+        { type: "index", name: "sqlite_autoindex_b_2", tbl_name: "b", rootpage: 6, sql: null },
+      ]);
+    } finally {
+      external.close();
+    }
+  } finally {
+    workspaceHandle.dispose();
+  }
+});
+
+test("autoincrement fills sqlite_sequence and never reuses ids", () => {
+  const engine = createEngine();
+  engine.execute("create table c (id integer primary key autoincrement, v text)");
+  assert.deepEqual(engine.execute("select name, rootpage from sqlite_master").rows, [["c", 2], ["sqlite_sequence", 3]]);
+  const empty = engine.execute("select * from sqlite_sequence");
+  assert.deepEqual(empty.columns, ["name", "seq"]);
+  assert.deepEqual(empty.rows, []);
+
+  engine.executeBatch(["insert into c (v) values ('a')", "insert into c (v) values ('b')"]);
+  assert.deepEqual(engine.execute("select id from c").rows, [[1], [2]]);
+  assert.deepEqual(engine.execute("select name, seq from sqlite_sequence").rows, [["c", 2]]);
+
+  assert.deepEqual(engine.execute("insert into c (id, v) values (100, 'explicit')").rows, [[100]]);
+  assert.deepEqual(engine.execute("select seq from sqlite_sequence").rows, [[100]]);
+  assert.deepEqual(engine.execute("insert into c (v) values ('auto')").rows, [[101]]);
+  assert.deepEqual(engine.execute("insert into c (id, v) values (5, 'low')").rows, [[5]]);
+  assert.deepEqual(engine.execute("select seq from sqlite_sequence").rows, [[101]]);
+  assert.deepEqual(engine.execute("insert into c (id, v) values (null, 'null')").rows, [[102]]);
+
+  // Without an AUTOINCREMENT table the sequence table does not exist.
+  const missing = createEngine().tryExecute("select * from sqlite_sequence");
+  assert.equal(missing.ok, false);
+  assert.equal(missing.error?.code, "unknown-table");
+  assert.equal(missing.error?.message, "no such table: sqlite_sequence");
+});
+
 test("comma-separated tables produce a Cartesian product", () => {
   const engine = createEngine();
   engine.execute("create table lefts (id integer primary key, label text)");
