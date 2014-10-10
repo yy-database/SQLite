@@ -91,10 +91,15 @@ const filtered = engine.execute("select name from people where score >= 9.0 orde
 assertSql(filtered.rows.length === 1 && filtered.rows[0][0] === "ada", "engine filters and orders rows");
 const nulls = engine.execute("select count(*) from people where score is null");
 assertSql(nulls.rows[0][0] === 1, "engine counts null predicates");
-const rejected = engine.tryExecute("select * from people right join people as other on people.id = other.id");
+const rightJoin = engine.tryExecute("select * from people right join people as other on people.id = other.id");
+assertSql(
+  rightJoin.ok === true && rightJoin.result.rows.length === 2 && rightJoin.result.rows[0][0] === 1,
+  "engine executes a right join",
+);
+const rejected = engine.tryExecute("select * from people for update");
 assertSql(rejected.ok === false && rejected.error.code === "unsupported-clause", "engine rejects an unsupported clause");
 assertSql(
-  rejected.error.statement === "select" && rejected.error.clause === "JOIN" && rejected.error.position === 21,
+  rejected.error.statement === "select" && rejected.error.clause === "UPDATE" && rejected.error.position === 25,
   "engine rejection carries statement, clause and offset",
 );
 assertSql(engine.ping() > 0, "engine header ping");
