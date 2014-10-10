@@ -632,7 +632,7 @@
     },
     {
       "id": "implicit.sqlite-master",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [],
       "sql": "SELECT count(*) FROM sqlite_master",
       "sqlite": {
@@ -644,11 +644,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "unknown-table",
-        "clause": null,
-        "message": "unknown table `sqlite_master`"
+        "kind": "rows",
+        "rows": [
+          [
+            0
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -659,7 +660,7 @@
     },
     {
       "id": "implicit.sqlite-sequence",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [
         "CREATE TABLE auto(a INTEGER PRIMARY KEY AUTOINCREMENT)",
         "INSERT INTO auto(a) VALUES (1)"
@@ -674,11 +675,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "setup",
-        "code": "syntax",
-        "clause": null,
-        "message": "expected `,` or `)` after a column definition but found `AUTOINCREMENT`"
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -1347,6 +1349,253 @@
         "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
       },
       "status": "open"
+    },
+    {
+      "id": "implicit.sqlite-master-order",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE a(x INTEGER, y TEXT)",
+        "CREATE INDEX ia ON a(x)",
+        "CREATE TABLE b(id INTEGER PRIMARY KEY, tag TEXT UNIQUE)"
+      ],
+      "sql": "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            "table",
+            "a",
+            "a",
+            2,
+            "CREATE TABLE a(x INTEGER, y TEXT)"
+          ],
+          [
+            "index",
+            "ia",
+            "a",
+            3,
+            "CREATE INDEX ia ON a(x)"
+          ],
+          [
+            "table",
+            "b",
+            "b",
+            4,
+            "CREATE TABLE b(id INTEGER PRIMARY KEY, tag TEXT UNIQUE)"
+          ],
+          [
+            "index",
+            "sqlite_autoindex_b_1",
+            "b",
+            5,
+            null
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            "table",
+            "a",
+            "a",
+            2,
+            "CREATE TABLE a(x INTEGER, y TEXT)"
+          ],
+          [
+            "index",
+            "ia",
+            "a",
+            3,
+            "CREATE INDEX ia ON a(x)"
+          ],
+          [
+            "table",
+            "b",
+            "b",
+            4,
+            "CREATE TABLE b(id INTEGER PRIMARY KEY, tag TEXT UNIQUE)"
+          ],
+          [
+            "index",
+            "sqlite_autoindex_b_1",
+            "b",
+            5,
+            null
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "行序按创建/rootpage 顺序；`sql` 为原始文本；autoindex 的 `sql` 为 NULL"
+    },
+    {
+      "id": "syntax.sqlite-master-read-only",
+      "direction": "none",
+      "setup": [],
+      "sql": "INSERT INTO sqlite_master VALUES('table','x','x',10,'CREATE TABLE x(y)')",
+      "sqlite": {
+        "kind": "error",
+        "stage": "sql",
+        "message": "table sqlite_master may not be modified"
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "readonly-system-table",
+        "clause": null,
+        "message": "table sqlite_master may not be modified"
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "系统表只读；本仓报结构化错误码 `readonly-system-table`"
+    },
+    {
+      "id": "syntax.reserved-object-name",
+      "direction": "none",
+      "setup": [],
+      "sql": "CREATE TABLE sqlite_foo(a INTEGER)",
+      "sqlite": {
+        "kind": "error",
+        "stage": "sql",
+        "message": "object name reserved for internal use: sqlite_foo"
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "reserved-name",
+        "clause": null,
+        "message": "object name reserved for internal use: sqlite_foo"
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`sqlite_` 前缀为保留名；本仓报结构化错误码 `reserved-name`"
+    },
+    {
+      "id": "implicit.autoincrement-sequence",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE c(id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)",
+        "INSERT INTO c(v) VALUES ('x')",
+        "INSERT INTO c(v) VALUES ('y')",
+        "INSERT INTO c(id, v) VALUES (100, 'z')"
+      ],
+      "sql": "SELECT name, seq FROM sqlite_sequence",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            "c",
+            100
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            "c",
+            100
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "显式写入更大值后 watermark 抬到 100"
+    },
+    {
+      "id": "implicit.autoincrement-ids",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE c(id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)",
+        "INSERT INTO c(v) VALUES ('x')",
+        "INSERT INTO c(v) VALUES ('y')",
+        "INSERT INTO c(id, v) VALUES (100, 'z')",
+        "INSERT INTO c(v) VALUES ('w')"
+      ],
+      "sql": "SELECT id FROM c ORDER BY id",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            100
+          ],
+          [
+            101
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            100
+          ],
+          [
+            101
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "显式 100 之后的自动值从 101 起，不复用低位"
+    },
+    {
+      "id": "syntax.autoincrement-non-integer",
+      "direction": "none",
+      "setup": [],
+      "sql": "CREATE TABLE z(a TEXT PRIMARY KEY AUTOINCREMENT)",
+      "sqlite": {
+        "kind": "error",
+        "stage": "sql",
+        "message": "AUTOINCREMENT is only allowed on an INTEGER PRIMARY KEY"
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "autoincrement-integer-primary-key",
+        "clause": null,
+        "message": "AUTOINCREMENT is only allowed on an INTEGER PRIMARY KEY"
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "AUTOINCREMENT 只允许 INTEGER PRIMARY KEY"
     }
   ]
 }

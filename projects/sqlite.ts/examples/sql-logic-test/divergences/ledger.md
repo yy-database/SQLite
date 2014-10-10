@@ -6,14 +6,14 @@
 
 - 真实 SQLite：CPython 3.12.10 的 `sqlite3` 3.49.1
 - 本仓产物：@yydb/sqlite createEngine 引擎 3.45.0（Node v24.18.0），安装态运行
-- 用例：44 条，`status` 一律为 `open`
+- 用例：50 条，`status` 一律为 `open`
 
 ## 按 direction 计数
 
 | direction | 条数 |
 |-----------|------|
-| `none` | 32 |
-| `sqlite-accepts-ours-rejects` | 11 |
+| `none` | 40 |
+| `sqlite-accepts-ours-rejects` | 9 |
 | `same-statement-different-result` | 1 |
 
 ## 按 class 计数
@@ -21,18 +21,18 @@
 | class | 条数 |
 |-------|------|
 | `missing-feature` | 37 |
-| `none` | 6 |
+| `none` | 12 |
 | `semantic-diff` | 1 |
 
 ## 按 direction × class 计数
 
 | direction | class | 条数 |
 |-----------|-------|------|
-| `none` | `missing-feature` | 25 |
-| `none` | `none` | 6 |
+| `none` | `missing-feature` | 27 |
+| `none` | `none` | 12 |
 | `none` | `semantic-diff` | 1 |
 | `same-statement-different-result` | `missing-feature` | 1 |
-| `sqlite-accepts-ours-rejects` | `missing-feature` | 11 |
+| `sqlite-accepts-ours-rejects` | `missing-feature` | 9 |
 
 ## 明细
 
@@ -116,6 +116,25 @@
 - sql：`SELECT rowid FROM r`
 - SQLite：`[[1],[2]]`
 - 本仓：`[[1],[2]]`
+
+### `implicit.sqlite-master`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT count(*) FROM sqlite_master`
+- SQLite：`[[0]]`
+- 本仓：`[[0]]`
+
+### `implicit.sqlite-sequence`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：`CREATE TABLE auto(a INTEGER PRIMARY KEY AUTOINCREMENT)`，`INSERT INTO auto(a) VALUES (1)`
+- sql：`SELECT count(*) FROM sqlite_sequence`
+- SQLite：`[[1]]`
+- 本仓：`[[1]]`
+- 备注：本引擎在 setup 的 `AUTOINCREMENT` 处失败，`sqlite_sequence` 未触达
 
 ### `implicit.total-function`
 
@@ -262,6 +281,36 @@
 - SQLite：`[]`
 - 本仓：`[]`
 
+### `implicit.autoincrement-ids`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE c(id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)`，`INSERT INTO c(v) VALUES ('x')`，`INSERT INTO c(v) VALUES ('y')`，`INSERT INTO c(id, v) VALUES (100, 'z')`，`INSERT INTO c(v) VALUES ('w')`
+- sql：`SELECT id FROM c ORDER BY id`
+- SQLite：`[[1],[2],[100],[101]]`
+- 本仓：`[[1],[2],[100],[101]]`
+- 备注：显式 100 之后的自动值从 101 起，不复用低位
+
+### `implicit.autoincrement-sequence`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE c(id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)`，`INSERT INTO c(v) VALUES ('x')`，`INSERT INTO c(v) VALUES ('y')`，`INSERT INTO c(id, v) VALUES (100, 'z')`
+- sql：`SELECT name, seq FROM sqlite_sequence`
+- SQLite：`[["c",100]]`
+- 本仓：`[["c",100]]`
+- 备注：显式写入更大值后 watermark 抬到 100
+
+### `implicit.sqlite-master-order`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE a(x INTEGER, y TEXT)`，`CREATE INDEX ia ON a(x)`，`CREATE TABLE b(id INTEGER PRIMARY KEY, tag TEXT UNIQUE)`
+- sql：`SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master`
+- SQLite：`[["table","a","a",2,"CREATE TABLE a(x INTEGER, y TEXT)"],["index","ia","a",3,"CREATE INDEX ia ON a(x)"],["table","b","b",4,"CREATE TABLE b(i...`
+- 本仓：`[["table","a","a",2,"CREATE TABLE a(x INTEGER, y TEXT)"],["index","ia","a",3,"CREATE INDEX ia ON a(x)"],["table","b","b",4,"CREATE TABLE b(i...`
+- 备注：行序按创建/rootpage 顺序；`sql` 为原始文本；autoindex 的 `sql` 为 NULL
+
 ### `semantics.count-column-vs-star`
 
 - direction：`none`
@@ -291,6 +340,16 @@
 - SQLite：`[[2],[1],[null]]`
 - 本仓：`[[2],[1],[null]]`
 - 备注：两侧都把 NULL 排在降序最后
+
+### `syntax.autoincrement-non-integer`
+
+- direction：`none`
+- class：`none`
+- setup：无
+- sql：`CREATE TABLE z(a TEXT PRIMARY KEY AUTOINCREMENT)`
+- SQLite：`AUTOINCREMENT is only allowed on an INTEGER PRIMARY KEY`
+- 本仓：`autoincrement-integer-primary-key: AUTOINCREMENT is only allowed on an INTEGER PRIMARY KEY`
+- 备注：AUTOINCREMENT 只允许 INTEGER PRIMARY KEY
 
 ### `syntax.except-all`
 
@@ -322,6 +381,26 @@
 - 本仓：`syntax: expected `select` but found `ALL``
 - 备注：背景记录称本引擎接受 `INTERSECT ALL`，本产物在复合查询处直接拒绝，两侧均不接受该语句
 
+### `syntax.reserved-object-name`
+
+- direction：`none`
+- class：`none`
+- setup：无
+- sql：`CREATE TABLE sqlite_foo(a INTEGER)`
+- SQLite：`object name reserved for internal use: sqlite_foo`
+- 本仓：`reserved-name: object name reserved for internal use: sqlite_foo`
+- 备注：`sqlite_` 前缀为保留名；本仓报结构化错误码 `reserved-name`
+
+### `syntax.sqlite-master-read-only`
+
+- direction：`none`
+- class：`none`
+- setup：无
+- sql：`INSERT INTO sqlite_master VALUES('table','x','x',10,'CREATE TABLE x(y)')`
+- SQLite：`table sqlite_master may not be modified`
+- 本仓：`readonly-system-table: table sqlite_master may not be modified`
+- 备注：系统表只读；本仓报结构化错误码 `readonly-system-table`
+
 ### `semantics.limit-negative`
 
 - direction：`none`
@@ -339,25 +418,6 @@
 - sql：`INSERT INTO dv DEFAULT VALUES`
 - SQLite：`[]`
 - 本仓：`[[1]]`
-
-### `implicit.sqlite-master`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：无
-- sql：`SELECT count(*) FROM sqlite_master`
-- SQLite：`[[0]]`
-- 本仓：`unknown-table: unknown table `sqlite_master``
-
-### `implicit.sqlite-sequence`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：`CREATE TABLE auto(a INTEGER PRIMARY KEY AUTOINCREMENT)`，`INSERT INTO auto(a) VALUES (1)`
-- sql：`SELECT count(*) FROM sqlite_sequence`
-- SQLite：`[[1]]`
-- 本仓：`syntax: expected `,` or `)` after a column definition but found `AUTOINCREMENT``
-- 备注：本引擎在 setup 的 `AUTOINCREMENT` 处失败，`sqlite_sequence` 未触达
 
 ### `semantics.limit-expression`
 
