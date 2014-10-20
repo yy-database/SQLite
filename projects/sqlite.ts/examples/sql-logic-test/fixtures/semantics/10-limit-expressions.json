@@ -1,0 +1,452 @@
+{
+  "category": "limit-expressions",
+  "cases": [
+    {
+      "id": "limit.arithmetic",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT 1 + 1",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "limit.function",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT abs(-3)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "limit.subquery",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT (SELECT 2)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "limit.integer_division",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT 5 / 2",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "limit.text_concat",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT 1 || 1",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            3
+          ],
+          [
+            4
+          ],
+          [
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "limit.real_integral",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT 2.0",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "limit.real_fractional",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT 2.5",
+      "expect": {
+        "kind": "error",
+        "code": "datatype-mismatch",
+        "oracle": "datatype mismatch"
+      }
+    },
+    {
+      "id": "limit.text_with_spaces",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT ' 2 '",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "limit.text_exponent",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT '2e1'",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            3
+          ],
+          [
+            4
+          ],
+          [
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "limit.text_fractional",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT '2.5'",
+      "expect": {
+        "kind": "error",
+        "code": "datatype-mismatch",
+        "oracle": "datatype mismatch"
+      }
+    },
+    {
+      "id": "limit.text_negative",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT '-2'",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            3
+          ],
+          [
+            4
+          ],
+          [
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "limit.negative_with_offset",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT -1 OFFSET 2",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            3
+          ],
+          [
+            4
+          ],
+          [
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "limit.offset_arithmetic",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT 2 OFFSET 1 + 1",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            3
+          ],
+          [
+            4
+          ]
+        ]
+      }
+    },
+    {
+      "id": "limit.comma_form",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT 1, 2",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2
+          ],
+          [
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "limit.offset_negative",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT 2 OFFSET -1",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "limit.column_reference",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT id",
+      "expect": {
+        "kind": "error",
+        "code": "unknown-column",
+        "oracle": "no such column: id"
+      }
+    },
+    {
+      "id": "limit.null",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT NULL",
+      "expect": {
+        "kind": "error",
+        "code": "datatype-mismatch",
+        "oracle": "datatype mismatch"
+      }
+    },
+    {
+      "id": "limit.blob",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT x'02'",
+      "expect": {
+        "kind": "error",
+        "code": "datatype-mismatch",
+        "oracle": "datatype mismatch"
+      }
+    },
+    {
+      "id": "limit.text_overflow",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT '9223372036854775808'",
+      "expect": {
+        "kind": "error",
+        "code": "datatype-mismatch",
+        "oracle": "datatype mismatch"
+      }
+    },
+    {
+      "id": "limit.real_overflow",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT 1e20",
+      "expect": {
+        "kind": "error",
+        "code": "datatype-mismatch",
+        "oracle": "datatype mismatch"
+      }
+    },
+    {
+      "id": "limit.true_literal",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT TRUE",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "limit.zero",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT 1 - 1",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "limit.parameter_rejected",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT ?",
+      "expect": {
+        "kind": "rejected",
+        "code": "unsupported-parameter",
+        "clause": "LIMIT"
+      }
+    },
+    {
+      "id": "offset.parameter_rejected",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t LIMIT 2 OFFSET ?",
+      "expect": {
+        "kind": "rejected",
+        "code": "unsupported-parameter",
+        "clause": "OFFSET"
+      }
+    },
+    {
+      "id": "limit.on_compound_select",
+      "setup": [
+        "CREATE TABLE t(id INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5)"
+      ],
+      "sql": "SELECT id FROM t UNION ALL SELECT id FROM t LIMIT 1 + 2",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            3
+          ]
+        ]
+      }
+    }
+  ]
+}
