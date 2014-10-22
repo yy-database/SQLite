@@ -124,7 +124,7 @@
     },
     {
       "id": "syntax.table-check",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [],
       "sql": "CREATE TABLE chk(a INTEGER CHECK (a > 0))",
       "sqlite": {
@@ -132,18 +132,16 @@
         "rows": []
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "unsupported-column-constraint",
-        "clause": "CHECK",
-        "message": "unsupported column constraint in `a`"
+        "kind": "rows",
+        "rows": []
       },
-      "class": "missing-feature",
+      "class": "none",
       "evidence": {
         "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
         "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
       },
-      "status": "open"
+      "status": "open",
+      "note": "表级、列级与 `CONSTRAINT name CHECK (...)` 三种写法均已支持；插入违反时报结构化 `constraint-failed`，NULL 通过，未知列在建表期报 `unknown-column`"
     },
     {
       "id": "syntax.with-recursive",
@@ -364,7 +362,7 @@
     },
     {
       "id": "syntax.window-function",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [
         "CREATE TABLE wf(a INTEGER)",
         "INSERT INTO wf VALUES (1), (2)"
@@ -382,18 +380,23 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "unknown-function",
-        "clause": null,
-        "message": "no such function: row_number"
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
       },
-      "class": "missing-feature",
+      "class": "none",
       "evidence": {
         "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
         "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
       },
-      "status": "open"
+      "status": "open",
+      "note": "窗口函数已支持（`row_number`/`rank`/`dense_rank`/`ntile`/`percent_rank`/`cume_dist`、聚合默认帧、显式 `ROWS`/`RANGE` 帧、`lag`/`lead`/`first_value`/`last_value`/`nth_value`、命名窗口）；`GROUPS`/`EXCLUDE` 仍明确拒绝，见 `syntax.window-groups`、`syntax.window-exclude`"
     },
     {
       "id": "syntax.cast",
@@ -1128,7 +1131,7 @@
     },
     {
       "id": "semantics.limit-expression",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [
         "CREATE TABLE t1(a INTEGER)",
         "INSERT INTO t1 VALUES (1), (2), (3)"
@@ -1146,19 +1149,23 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "unsupported-clause",
-        "clause": "`+`",
-        "message": "unsupported `SELECT` clause starting at `+`; this engine supports `FROM`, `WHERE`, `ORDER BY`, `LIMIT` and `UNION` / `INTERSECT` / `EXCEPT` only"
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
       },
-      "class": "missing-feature",
+      "class": "none",
       "evidence": {
         "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
         "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
       },
       "status": "open",
-      "note": "`LIMIT` 表达式被拒绝，数值从未求值"
+      "note": "`LIMIT`/`OFFSET` 已按表达式求值（算术、函数、子查询、文本/实数的 SQLite 转换规则）；`?`/`:name` 参数占位符仍报结构化 `unsupported-parameter`"
     },
     {
       "id": "semantics.bitwise-and",
@@ -2977,6 +2984,80 @@
       },
       "status": "open",
       "note": "实测 3.49.1 中 `USING` 名匹配大小写不敏感：`a` 与 `A` 视为同一列"
+    },
+    {
+      "id": "syntax.window-groups",
+      "direction": "sqlite-accepts-ours-rejects",
+      "setup": [
+        "CREATE TABLE wg(a INTEGER)",
+        "INSERT INTO wg VALUES (1), (2), (3)"
+      ],
+      "sql": "SELECT sum(a) OVER (ORDER BY a GROUPS 2 PRECEDING) FROM wg",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            3
+          ],
+          [
+            6
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "unsupported-clause",
+        "clause": "GROUPS",
+        "message": "window frame unit `GROUPS` is not supported"
+      },
+      "class": "missing-feature",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`GROUPS` 帧单位尚未实现，解析期报 `unsupported-clause`（clause `GROUPS`），不静默忽略"
+    },
+    {
+      "id": "syntax.window-exclude",
+      "direction": "sqlite-accepts-ours-rejects",
+      "setup": [
+        "CREATE TABLE we(a INTEGER)",
+        "INSERT INTO we VALUES (1), (2), (3)"
+      ],
+      "sql": "SELECT sum(a) OVER (ORDER BY a ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) FROM we",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            null
+          ],
+          [
+            1
+          ],
+          [
+            3
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "unsupported-clause",
+        "clause": "EXCLUDE",
+        "message": "window frame `EXCLUDE` is not supported; frames always include every row between their edges"
+      },
+      "class": "missing-feature",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`EXCLUDE` 子句尚未实现，解析期报 `unsupported-clause`（clause `EXCLUDE`），不静默忽略"
     }
   ]
 }
