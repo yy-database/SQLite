@@ -1427,6 +1427,34 @@
         "code": "unsupported-clause",
         "clause": "EXCLUDE"
       }
+    },
+    {
+      "id": "peer.mixed_numeric_types",
+      "setup": [
+        "CREATE TABLE m(v)",
+        "INSERT INTO m VALUES (1),(1.0),(2)"
+      ],
+      "sql": "SELECT v, count(*) OVER (ORDER BY v), rank() OVER (ORDER BY v) FROM m",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            1
+          ],
+          [
+            1.0,
+            2,
+            1
+          ],
+          [
+            2,
+            3,
+            3
+          ]
+        ]
+      }
     }
   ]
 }
