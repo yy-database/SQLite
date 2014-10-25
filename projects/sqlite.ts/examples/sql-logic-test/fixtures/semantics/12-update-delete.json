@@ -1,0 +1,594 @@
+{
+  "category": "semantics-update-delete",
+  "cases": [
+    {
+      "id": "ud.simultaneous_swap",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, 2)"
+      ],
+      "sql": "UPDATE t SET a = b, b = a RETURNING a, b",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.simultaneous_rotation",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER, c INTEGER)",
+        "INSERT INTO t VALUES (1, 2, 3)"
+      ],
+      "sql": "UPDATE t SET a = b, b = c, c = a RETURNING a, b, c",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            3,
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.repeated_left_hand_side_last_wins",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, 2)"
+      ],
+      "sql": "UPDATE t SET a = 1, a = a + 1 RETURNING a",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.repeated_left_hand_side_reads_old_value",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, 2)"
+      ],
+      "sql": "UPDATE t SET a = 7, a = b RETURNING a, b",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.where_misses_every_row",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b TEXT)",
+        "INSERT INTO t VALUES (1, 'x'), (2, 'y')"
+      ],
+      "sql": "UPDATE t SET b = 'q' WHERE a = 99 RETURNING a, b",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "ud.where_always_true",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b TEXT)",
+        "INSERT INTO t VALUES (1, 'x'), (2, 'y'), (3, 'z')"
+      ],
+      "sql": "UPDATE t SET b = 'q' WHERE 1 RETURNING a, b",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "q"
+          ],
+          [
+            2,
+            "q"
+          ],
+          [
+            3,
+            "q"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.where_rowid",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b TEXT)",
+        "INSERT INTO t VALUES (1, 'x'), (2, 'y')"
+      ],
+      "sql": "UPDATE t SET b = 'q' WHERE rowid = 2 RETURNING rowid, a, b",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            2,
+            "q"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.check_constraint_blocks_update",
+      "setup": [
+        "CREATE TABLE t(a INTEGER CHECK(a > 0), b TEXT)",
+        "INSERT INTO t VALUES (1, 'x')"
+      ],
+      "sql": "UPDATE t SET a = -1",
+      "expect": {
+        "kind": "error",
+        "code": "constraint-failed",
+        "oracle": "CHECK constraint failed: a > 0"
+      }
+    },
+    {
+      "id": "ud.check_constraint_passes_null",
+      "setup": [
+        "CREATE TABLE t(a INTEGER CHECK(a > 0))",
+        "INSERT INTO t VALUES (5)"
+      ],
+      "sql": "UPDATE t SET a = NULL RETURNING a",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.not_null_blocks_update",
+      "setup": [
+        "CREATE TABLE t(a INTEGER NOT NULL, b TEXT)",
+        "INSERT INTO t VALUES (1, 'x')"
+      ],
+      "sql": "UPDATE t SET a = NULL",
+      "expect": {
+        "kind": "error",
+        "code": "constraint-failed",
+        "oracle": "NOT NULL constraint failed: t.a"
+      }
+    },
+    {
+      "id": "ud.primary_key_collision",
+      "setup": [
+        "CREATE TABLE t(k TEXT PRIMARY KEY, v INTEGER)",
+        "INSERT INTO t VALUES ('a', 1), ('b', 2)"
+      ],
+      "sql": "UPDATE t SET k = 'b' WHERE k = 'a'",
+      "expect": {
+        "kind": "error",
+        "code": "unique-constraint",
+        "oracle": "UNIQUE constraint failed: t.k"
+      }
+    },
+    {
+      "id": "ud.primary_key_update_to_free_value",
+      "setup": [
+        "CREATE TABLE t(k TEXT PRIMARY KEY, v INTEGER)",
+        "INSERT INTO t VALUES ('a', 1), ('b', 2)"
+      ],
+      "sql": "UPDATE t SET k = 'bb' WHERE k = 'b' RETURNING k, v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "bb",
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.composite_primary_key_update",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER, v INTEGER, PRIMARY KEY(a, b))",
+        "INSERT INTO t VALUES (1, 2, 10), (1, 3, 20)"
+      ],
+      "sql": "UPDATE t SET b = 4 WHERE a = 1 AND b = 2 RETURNING a, b, v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            4,
+            10
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.composite_primary_key_collision",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER, PRIMARY KEY(a, b))",
+        "INSERT INTO t VALUES (1, 2), (1, 3)"
+      ],
+      "sql": "UPDATE t SET b = 3 WHERE a = 1 AND b = 2",
+      "expect": {
+        "kind": "error",
+        "code": "unique-constraint",
+        "oracle": "UNIQUE constraint failed: t.a, t.b"
+      }
+    },
+    {
+      "id": "ud.unique_index_rebuilt_by_update",
+      "setup": [
+        "CREATE TABLE t(k TEXT UNIQUE, v INTEGER)",
+        "INSERT INTO t VALUES ('a', 1), ('b', 2), ('c', 3)"
+      ],
+      "sql": "UPDATE t SET k = 'bb' WHERE k = 'b' RETURNING k, v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "bb",
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.rowid_alias_shift_down",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)",
+        "INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')"
+      ],
+      "sql": "UPDATE t SET id = id - 1 RETURNING id, v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            0,
+            "a"
+          ],
+          [
+            1,
+            "b"
+          ],
+          [
+            2,
+            "c"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.rowid_alias_shift_up_collides",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)",
+        "INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')"
+      ],
+      "sql": "UPDATE t SET id = id + 1",
+      "expect": {
+        "kind": "error",
+        "code": "unique-constraint",
+        "oracle": "UNIQUE constraint failed: t.id"
+      }
+    },
+    {
+      "id": "ud.rowid_alias_rejects_null",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)",
+        "INSERT INTO t VALUES (1, 'a')"
+      ],
+      "sql": "UPDATE t SET id = NULL",
+      "expect": {
+        "kind": "error",
+        "code": "datatype-mismatch",
+        "oracle": "datatype mismatch"
+      }
+    },
+    {
+      "id": "ud.qualified_left_hand_side_is_syntax",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, 2)"
+      ],
+      "sql": "UPDATE t SET t.a = 1",
+      "expect": {
+        "kind": "error",
+        "code": "syntax",
+        "oracle": "near \".\": syntax error"
+      }
+    },
+    {
+      "id": "ud.default_assignment_rejected",
+      "setup": [
+        "CREATE TABLE t(a INTEGER DEFAULT 7)",
+        "INSERT INTO t VALUES (1)"
+      ],
+      "sql": "UPDATE t SET a = DEFAULT",
+      "expect": {
+        "kind": "error",
+        "code": "unsupported-clause",
+        "oracle": "near \"DEFAULT\": syntax error"
+      }
+    },
+    {
+      "id": "ud.unknown_column",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "INSERT INTO t VALUES (1)"
+      ],
+      "sql": "UPDATE t SET zz = 1",
+      "expect": {
+        "kind": "error",
+        "code": "unknown-column",
+        "oracle": "no such column: zz"
+      }
+    },
+    {
+      "id": "ud.unknown_table",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)"
+      ],
+      "sql": "UPDATE nope SET a = 1",
+      "expect": {
+        "kind": "error",
+        "code": "unknown-table",
+        "oracle": "no such table: nope"
+      }
+    },
+    {
+      "id": "ud.row_value_assignment_rejected",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, 2)"
+      ],
+      "sql": "UPDATE t SET (a, b) = (3, 4)",
+      "expect": {
+        "kind": "rejected",
+        "code": "unsupported-clause",
+        "clause": "SET",
+        "note": "SQLite accepts row-value SET; this engine assigns one column per item."
+      }
+    },
+    {
+      "id": "ud.or_replace_rejected",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)",
+        "INSERT INTO t VALUES (1, 'a'), (2, 'b')"
+      ],
+      "sql": "UPDATE OR REPLACE t SET id = 2 WHERE id = 1",
+      "expect": {
+        "kind": "rejected",
+        "code": "unsupported-clause",
+        "clause": "OR",
+        "note": "SQLite accepts UPDATE OR REPLACE; this engine implements the default ABORT policy only."
+      }
+    },
+    {
+      "id": "ud.update_is_visible_afterwards",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b TEXT)",
+        "INSERT INTO t VALUES (1, 'x'), (2, 'y')",
+        "UPDATE t SET b = 'q' WHERE a = 2"
+      ],
+      "sql": "SELECT a, b FROM t ORDER BY a",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "x"
+          ],
+          [
+            2,
+            "q"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.rollback_leaves_table_untouched",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, v INTEGER CHECK(v > 0))",
+        "INSERT INTO t VALUES (1, 5), (2, 6), (3, 7)",
+        {
+          "sql": "UPDATE t SET v = v - 10",
+          "expect": "error"
+        }
+      ],
+      "sql": "SELECT id, v FROM t ORDER BY id",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            5
+          ],
+          [
+            2,
+            6
+          ],
+          [
+            3,
+            7
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.delete_where",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b TEXT)",
+        "INSERT INTO t VALUES (1, 'x'), (2, 'y'), (3, 'z')"
+      ],
+      "sql": "DELETE FROM t WHERE a = 2 RETURNING a, b",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "y"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.delete_everything",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "INSERT INTO t VALUES (1), (2), (3)"
+      ],
+      "sql": "DELETE FROM t RETURNING a",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.delete_where_rowid",
+      "setup": [
+        "CREATE TABLE t(a TEXT)",
+        "INSERT INTO t VALUES ('a'), ('b'), ('c')"
+      ],
+      "sql": "DELETE FROM t WHERE rowid = 2 RETURNING rowid, a",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "b"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.delete_then_select_is_empty",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "INSERT INTO t VALUES (1), (2)",
+        "DELETE FROM t"
+      ],
+      "sql": "SELECT count(*) FROM t",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.delete_recycles_largest_rowid",
+      "setup": [
+        "CREATE TABLE t(v TEXT)",
+        "INSERT INTO t VALUES ('a'), ('b'), ('c')",
+        "DELETE FROM t WHERE rowid = 3",
+        "INSERT INTO t VALUES ('d')"
+      ],
+      "sql": "SELECT rowid, v FROM t ORDER BY rowid",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "a"
+          ],
+          [
+            2,
+            "b"
+          ],
+          [
+            3,
+            "d"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.delete_middle_does_not_recycle",
+      "setup": [
+        "CREATE TABLE t(v TEXT)",
+        "INSERT INTO t VALUES ('a'), ('b'), ('c')",
+        "DELETE FROM t WHERE rowid = 2",
+        "INSERT INTO t VALUES ('d')"
+      ],
+      "sql": "SELECT rowid, v FROM t ORDER BY rowid",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "a"
+          ],
+          [
+            3,
+            "c"
+          ],
+          [
+            4,
+            "d"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.delete_all_then_insert_restarts_at_one",
+      "setup": [
+        "CREATE TABLE t(v TEXT)",
+        "INSERT INTO t VALUES ('a'), ('b'), ('c')",
+        "DELETE FROM t WHERE rowid = 1",
+        "DELETE FROM t WHERE rowid = 2",
+        "DELETE FROM t WHERE rowid = 3",
+        "INSERT INTO t VALUES ('z')"
+      ],
+      "sql": "SELECT rowid, v FROM t",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "z"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ud.delete_keeps_autoincrement_sequence",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)",
+        "INSERT INTO t(id, v) VALUES (NULL, 'a'), (NULL, 'b'), (NULL, 'c')",
+        "DELETE FROM t"
+      ],
+      "sql": "SELECT seq FROM sqlite_sequence WHERE name = 't'",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            3
+          ]
+        ]
+      }
+    }
+  ]
+}

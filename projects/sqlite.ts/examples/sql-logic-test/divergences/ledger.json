@@ -3058,6 +3058,260 @@
       },
       "status": "open",
       "note": "`EXCLUDE` 子句尚未实现，解析期报 `unsupported-clause`（clause `EXCLUDE`），不静默忽略"
+    },
+    {
+      "id": "semantics.update-simultaneous-assignment",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, 2)"
+      ],
+      "sql": "UPDATE t SET a = b, b = a RETURNING a, b",
+      "class": "none",
+      "status": "open",
+      "note": "多列赋值对所有右值取语句执行前的旧行再统一落地：`a = b, b = a` 真交换为 `(2, 1)`；重复左列按 SQLite 行为保留最后一次赋值，右值仍读旧行",
+      "direction": "none",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            1
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            1
+          ]
+        ]
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
+    },
+    {
+      "id": "semantics.update-rowid-order",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)",
+        "INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')"
+      ],
+      "sql": "UPDATE t SET id = id - 1 RETURNING id",
+      "class": "none",
+      "status": "open",
+      "note": "改 rowid alias 走按 rowid 升序的逐行应用，`id = id - 1` 成功而 `id = id + 1` 与尚未移动的行冲突；唯一性按实时表校验，冲突时整条语句回滚",
+      "direction": "none",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            0
+          ],
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            0
+          ],
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
+    },
+    {
+      "id": "semantics.delete-rowid-reuse",
+      "setup": [
+        "CREATE TABLE t(v TEXT)",
+        "INSERT INTO t VALUES ('a'), ('b'), ('c')",
+        "DELETE FROM t WHERE rowid = 3"
+      ],
+      "sql": "INSERT INTO t VALUES ('d') RETURNING rowid",
+      "class": "none",
+      "status": "open",
+      "note": "非 AUTOINCREMENT 表的 rowid 取“现存最大 rowid + 1”，所以删掉最大行后新插入复用该值；删空后从 1 重新开始，AUTOINCREMENT 则保留 `sqlite_sequence`",
+      "direction": "none",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            3
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            3
+          ]
+        ]
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
+    },
+    {
+      "id": "syntax.update-set-default",
+      "setup": [
+        "CREATE TABLE t(a INTEGER DEFAULT 7)",
+        "INSERT INTO t VALUES (1)"
+      ],
+      "sql": "UPDATE t SET a = DEFAULT",
+      "class": "none",
+      "status": "open",
+      "note": "SQLite 3.49.1 把 `SET <column> = DEFAULT` 判为语法错误；本引擎同样拒绝，但报结构化 `unsupported-clause` 并点名 `DEFAULT`",
+      "direction": "none",
+      "sqlite": {
+        "kind": "error",
+        "stage": "sql",
+        "message": "near \"DEFAULT\": syntax error"
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "unsupported-clause",
+        "clause": "DEFAULT",
+        "message": "`SET <column> = DEFAULT` is not supported; SQLite has no column default in an `UPDATE`, so state the value explicitly"
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
+    },
+    {
+      "id": "syntax.update-qualified-left-hand-side",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, 2)"
+      ],
+      "sql": "UPDATE t SET t.a = 1",
+      "class": "none",
+      "status": "open",
+      "note": "两侧都拒绝 `SET` 左侧带表限定；SQLite 报 `near \".\": syntax error`，本引擎报 `syntax` 并说明 `SET` 只收裸列名",
+      "direction": "none",
+      "sqlite": {
+        "kind": "error",
+        "stage": "sql",
+        "message": "near \".\": syntax error"
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "syntax",
+        "clause": null,
+        "message": "`UPDATE ... SET` takes a bare column name; a table qualifier is not accepted before `.`"
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
+    },
+    {
+      "id": "syntax.update-row-value-set",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, 2)"
+      ],
+      "sql": "UPDATE t SET (a, b) = (3, 4)",
+      "class": "missing-feature",
+      "status": "open",
+      "note": "SQLite 接受行值赋值 `SET (a, b) = (...)`；本引擎只支持逐列赋值，解析期报 `unsupported-clause`（clause 为 `SET`）",
+      "direction": "sqlite-accepts-ours-rejects",
+      "sqlite": {
+        "kind": "rows",
+        "rows": []
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "unsupported-clause",
+        "clause": "SET",
+        "message": "row-value `SET (a, b) = (...)` assignments are not supported; assign one column per item"
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
+    },
+    {
+      "id": "syntax.update-or-replace",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)",
+        "INSERT INTO t VALUES (1, 'a'), (2, 'b')"
+      ],
+      "sql": "UPDATE OR REPLACE t SET id = 2 WHERE id = 1",
+      "class": "missing-feature",
+      "status": "open",
+      "note": "SQLite 支持 `UPDATE OR REPLACE/IGNORE/...` 冲突策略；本引擎只实现默认 ABORT，解析期报 `unsupported-clause`（clause 为 `OR`）",
+      "direction": "sqlite-accepts-ours-rejects",
+      "sqlite": {
+        "kind": "rows",
+        "rows": []
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "unsupported-clause",
+        "clause": "OR",
+        "message": "`UPDATE OR ...` conflict resolution is not supported; only the default ABORT policy is implemented (found `REPLACE`)"
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
+    },
+    {
+      "id": "syntax.returning-mixed-star",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, 2)"
+      ],
+      "sql": "UPDATE t SET a = 1 RETURNING *, b",
+      "class": "missing-feature",
+      "status": "open",
+      "note": "SQLite 允许 `RETURNING *` 与其它项混用；本引擎要求 `*` 独占或全部列名，解析期报 `unsupported-clause`（clause 为 `RETURNING`）",
+      "direction": "sqlite-accepts-ours-rejects",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            2
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "unsupported-clause",
+        "clause": "RETURNING",
+        "message": "`RETURNING *, ...` mixes `*` with further items; list the columns explicitly instead"
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
     }
   ]
 }

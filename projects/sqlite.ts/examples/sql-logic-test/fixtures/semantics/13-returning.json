@@ -1,0 +1,305 @@
+{
+  "category": "semantics-returning",
+  "cases": [
+    {
+      "id": "rt.update_reports_new_values",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, v INTEGER)",
+        "INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)"
+      ],
+      "sql": "UPDATE t SET v = v + 1 WHERE id >= 2 RETURNING id, v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            21
+          ],
+          [
+            3,
+            31
+          ]
+        ]
+      }
+    },
+    {
+      "id": "rt.update_star_expands_columns_only",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, v INTEGER)",
+        "INSERT INTO t VALUES (1, 10)"
+      ],
+      "sql": "UPDATE t SET v = 11 RETURNING *",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            11
+          ]
+        ]
+      }
+    },
+    {
+      "id": "rt.update_zero_rows",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "INSERT INTO t VALUES (1), (2)"
+      ],
+      "sql": "UPDATE t SET a = 9 WHERE a > 5 RETURNING a",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "rt.update_rows_follow_rowid_order",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, v INTEGER)",
+        "INSERT INTO t VALUES (5, 1), (2, 2), (9, 3)"
+      ],
+      "sql": "UPDATE t SET v = v + 10 RETURNING id, v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            12
+          ],
+          [
+            5,
+            11
+          ],
+          [
+            9,
+            13
+          ]
+        ]
+      }
+    },
+    {
+      "id": "rt.update_expression_and_alias",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, a INTEGER, b TEXT)",
+        "INSERT INTO t VALUES (1, 10, 'x')"
+      ],
+      "sql": "UPDATE t SET a = a * 2 RETURNING a, a + 1, b || '!'",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            20,
+            21,
+            "x!"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "rt.update_returns_new_rowid",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)",
+        "INSERT INTO t VALUES (1, 'a'), (2, 'b')"
+      ],
+      "sql": "UPDATE t SET id = 10 WHERE id = 1 RETURNING rowid, id",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            10,
+            10
+          ]
+        ]
+      }
+    },
+    {
+      "id": "rt.update_returning_rowid_alias_name",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, a INTEGER)",
+        "INSERT INTO t VALUES (1, 10)"
+      ],
+      "sql": "UPDATE t SET a = 11 RETURNING rowid, id, a",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1,
+            11
+          ]
+        ]
+      }
+    },
+    {
+      "id": "rt.update_returning_table_qualified",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b INTEGER)",
+        "INSERT INTO t VALUES (1, 2)"
+      ],
+      "sql": "UPDATE t SET a = 5 RETURNING t.a, b",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            5,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "rt.update_returning_subquery",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "INSERT INTO t VALUES (1)"
+      ],
+      "sql": "UPDATE t SET a = 2 RETURNING (SELECT 5), a",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            5,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "rt.delete_reports_old_values",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, v INTEGER)",
+        "INSERT INTO t VALUES (1, 10), (2, 20)"
+      ],
+      "sql": "DELETE FROM t WHERE id = 2 RETURNING id, v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            20
+          ]
+        ]
+      }
+    },
+    {
+      "id": "rt.delete_star",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)",
+        "INSERT INTO t VALUES (1, 'a'), (2, 'b')"
+      ],
+      "sql": "DELETE FROM t RETURNING *",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "a"
+          ],
+          [
+            2,
+            "b"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "rt.delete_zero_rows",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "INSERT INTO t VALUES (1)"
+      ],
+      "sql": "DELETE FROM t WHERE a = 99 RETURNING a",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "rt.delete_returning_rowid_of_implicit_table",
+      "setup": [
+        "CREATE TABLE t(v TEXT)",
+        "INSERT INTO t VALUES ('a'), ('b'), ('c')"
+      ],
+      "sql": "DELETE FROM t WHERE rowid = 2 RETURNING rowid, v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "b"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "rt.insert_reports_new_row",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, a INTEGER)",
+        "INSERT INTO t VALUES (1, 10)"
+      ],
+      "sql": "INSERT INTO t VALUES (2, 20) RETURNING id, a",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            20
+          ]
+        ]
+      }
+    },
+    {
+      "id": "rt.insert_returning_star_with_default",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY AUTOINCREMENT, a INTEGER DEFAULT 7, b TEXT)"
+      ],
+      "sql": "INSERT INTO t(a, b) VALUES (1, 'x') RETURNING *",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1,
+            "x"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "rt.insert_default_values_returning",
+      "setup": [
+        "CREATE TABLE t(id INTEGER PRIMARY KEY AUTOINCREMENT, a INTEGER DEFAULT 7, b TEXT)"
+      ],
+      "sql": "INSERT INTO t DEFAULT VALUES RETURNING rowid, a, b",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            7,
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "rt.insert_multiple_rows_returning",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b TEXT)"
+      ],
+      "sql": "INSERT INTO t VALUES (1, 'x'), (2, 'y') RETURNING a, b",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "x"
+          ],
+          [
+            2,
+            "y"
+          ]
+        ]
+      }
+    }
+  ]
+}
