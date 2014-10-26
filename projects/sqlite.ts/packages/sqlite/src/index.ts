@@ -53,7 +53,7 @@ export type ExecValue = null | number | string | { $blob: string };
 
 /** Result of one SQL statement. */
 export interface ExecResult {
-  statement: "create-table" | "create-index" | "insert" | "select";
+  statement: "create-table" | "create-index" | "insert" | "update" | "delete" | "select";
   affected: number;
   columns: string[];
   rows: ExecValue[][];

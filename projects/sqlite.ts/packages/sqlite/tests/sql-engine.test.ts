@@ -917,3 +917,142 @@ test("chained and multi-column using joins keep the merged column", () => {
   }
 });
 
+// SQLite evaluates every right-hand side against the row as it was before the
+// statement and only then applies the assignments, so a swap is a real swap.
+test("update evaluates assignments against the pre-statement row", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table t(a integer, b integer, c integer)");
+  engine.execute("insert into t values (1, 2, 3)");
+  const swapped = engine.execute("update t set a = b, b = a");
+  assert.equal(swapped.statement, "update");
+  assert.equal(swapped.affected, 1);
+  assert.deepEqual(engine.execute("select a, b, c from t").rows, [[2, 1, 3]]);
+  // A rotation proves the snapshot is taken once, not per assignment.
+  engine.execute("update t set a = b, b = c, c = a");
+  assert.deepEqual(engine.execute("select a, b, c from t").rows, [[1, 3, 2]]);
+  // A repeated left-hand column keeps the last value, still reading old cells.
+  engine.execute("update t set a = 7, a = b");
+  assert.deepEqual(engine.execute("select a, b from t").rows, [[3, 3]]);
+});
+
+test("update and delete report the exact affected count", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table t(a integer, b text)");
+  engine.execute("insert into t values (1, 'x'), (2, 'y'), (3, 'z')");
+  assert.equal(engine.execute("update t set b = 'q' where a = 99").affected, 0);
+  assert.equal(engine.execute("update t set b = 'q' where a = 2").affected, 1);
+  assert.equal(engine.execute("update t set b = 'q' where 1").affected, 3);
+  assert.equal(engine.execute("update t set b = b").affected, 3);
+  assert.equal(engine.execute("delete from t where a = 99").affected, 0);
+  assert.equal(engine.execute("delete from t").affected, 3);
+  assert.deepEqual(engine.execute("select * from t").rows, []);
+});
+
+// A constraint that fails on the third row must leave the first two untouched.
+test("update rolls back every row when a constraint fails", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table t(id integer primary key, v integer not null check(v > 0), u integer unique)");
+  engine.execute("insert into t values (1, 5, 10), (2, 6, 20), (3, 7, 30)");
+  const before = engine.execute("select id, v, u from t").rows;
+  const check = engine.tryExecute("update t set v = v - 10");
+  assert.equal(check.error?.code, "constraint-failed");
+  assert.equal(check.error?.clause, "CHECK");
+  assert.deepEqual(engine.execute("select id, v, u from t").rows, before);
+  const unique = engine.tryExecute("update t set u = 7");
+  assert.equal(unique.error?.code, "unique-constraint");
+  assert.deepEqual(engine.execute("select id, v, u from t").rows, before);
+  const notNull = engine.tryExecute("update t set v = null");
+  assert.equal(notNull.error?.code, "constraint-failed");
+  assert.deepEqual(engine.execute("select id, v, u from t").rows, before);
+});
+
+// SQLite walks an update in ascending rowid order, so a downward shift succeeds
+// while an upward shift collides with a row it has not moved yet.
+test("update of a rowid alias runs in ascending order", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table t(id integer primary key, v text unique)");
+  engine.execute("insert into t values (1, 'a'), (2, 'b'), (3, 'c')");
+  engine.execute("update t set id = id - 1");
+  assert.deepEqual(engine.execute("select id, v from t").rows, [[0, "a"], [1, "b"], [2, "c"]]);
+  const before = engine.execute("select id, v from t").rows;
+  const error = engine.tryExecute("update t set id = id + 1");
+  assert.equal(error.error?.code, "unique-constraint");
+  assert.deepEqual(engine.execute("select id, v from t").rows, before);
+});
+
+test("delete recycles the largest vacated rowid", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table t(v text)");
+  engine.execute("insert into t values ('a'), ('b'), ('c')");
+  assert.equal(engine.execute("delete from t where rowid = 3").affected, 1);
+  assert.deepEqual(engine.execute("insert into t values ('d')").rows, [[3]]);
+  engine.execute("delete from t");
+  assert.deepEqual(engine.execute("select v from t").rows, []);
+  assert.deepEqual(engine.execute("insert into t values ('e')").rows, [[1]]);
+  assert.deepEqual(engine.execute("select rowid, v from t").rows, [[1, "e"]]);
+});
+
+test("returning reports new values for update and old values for delete", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table t(id integer primary key, v integer)");
+  engine.execute("insert into t values (1, 10), (2, 20), (3, 30)");
+  const updated = engine.execute("update t set v = v + 1 where id >= 2 returning id, v");
+  assert.deepEqual(updated.columns, ["id", "v"]);
+  assert.deepEqual(updated.rows, [[2, 21], [3, 31]]);
+  assert.equal(updated.affected, 2);
+  const starred = engine.execute("update t set v = v where id = 1 returning *");
+  assert.deepEqual(starred.columns, ["id", "v"]);
+  assert.deepEqual(starred.rows, [[1, 10]]);
+  const removed = engine.execute("delete from t returning id as gone");
+  assert.deepEqual(removed.columns, ["gone"]);
+  assert.deepEqual(removed.rows, [[1], [2], [3]]);
+  assert.equal(removed.affected, 3);
+  const empty = engine.execute("update t set v = 1 where id = 99 returning id");
+  assert.deepEqual(empty.rows, []);
+  assert.deepEqual(engine.execute("insert into t values (4, 40) returning id, v").rows, [[4, 40]]);
+});
+
+// The rewritten table and its automatic unique index must still read back
+// correctly through an independent SQLite build.
+test("update and delete leave a reopenable file", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table t(k text primary key, n integer not null check(n > 0))");
+  engine.execute("create index ix on t(n)");
+  engine.execute("insert into t values ('a', 1), ('b', 2), ('c', 3), ('d', 4)");
+  engine.execute("update t set k = 'bb', n = 20 where k = 'b'");
+  engine.execute("delete from t where k = 'c'");
+  engine.execute("insert into t values ('c', 30)");
+  const workspaceHandle = workspace();
+  try {
+    writeFileSync(workspaceHandle.path, engine.snapshot());
+    const external = new BetterSqlite(workspaceHandle.path);
+    try {
+      assert.equal(external.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+      assert.deepEqual(external.prepare("SELECT k, n FROM t ORDER BY n").all(), [
+        { k: "a", n: 1 },
+        { k: "d", n: 4 },
+        { k: "bb", n: 20 },
+        { k: "c", n: 30 },
+      ]);
+      assert.deepEqual(external.prepare("SELECT k FROM t WHERE k = 'bb'").all(), [{ k: "bb" }]);
+    } finally {
+      external.close();
+    }
+  } finally {
+    workspaceHandle.dispose();
+  }
+});
+
+test("update and delete reject the shapes sqlite also rejects", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table t(a integer, b integer)");
+  engine.execute("insert into t values (1, 2)");
+  assert.equal(engine.tryExecute("update t set t.a = 1").error?.code, "syntax");
+  const fallback = engine.tryExecute("update t set a = default");
+  assert.equal(fallback.error?.code, "unsupported-clause");
+  assert.equal(fallback.error?.clause, "DEFAULT");
+  assert.equal(engine.tryExecute("update or replace t set a = 1").error?.code, "unsupported-clause");
+  assert.equal(engine.tryExecute("update t set (a, b) = (3, 4)").error?.code, "unsupported-clause");
+  assert.equal(engine.tryExecute("delete from t order by a").error?.code, "unsupported-clause");
+});
+
