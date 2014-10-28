@@ -3312,6 +3312,185 @@
         "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
         "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
       }
+    },
+    {
+      "id": "ddl.drop-table-schema-qualified",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)"
+      ],
+      "sql": "DROP TABLE main.t",
+      "class": "missing-feature",
+      "status": "open",
+      "note": "SQLite 接受 schema 限定的 `DROP TABLE main.t`；本引擎在解析期以 `unsupported-clause`（clause 为 `schema`）拒绝",
+      "direction": "sqlite-accepts-ours-rejects",
+      "sqlite": {
+        "kind": "rows",
+        "rows": []
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "unsupported-clause",
+        "clause": "schema",
+        "message": "schema-qualified object names are not supported (`main.` was written)"
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
+    },
+    {
+      "id": "ddl.drop-index-schema-qualified",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "CREATE INDEX ix ON t(a)"
+      ],
+      "sql": "DROP INDEX main.ix",
+      "class": "missing-feature",
+      "status": "open",
+      "note": "SQLite 接受 schema 限定的 `DROP INDEX main.ix`；本引擎在解析期以 `unsupported-clause`（clause 为 `schema`）拒绝",
+      "direction": "sqlite-accepts-ours-rejects",
+      "sqlite": {
+        "kind": "rows",
+        "rows": []
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "unsupported-clause",
+        "clause": "schema",
+        "message": "schema-qualified object names are not supported (`main.` was written)"
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
+    },
+    {
+      "id": "ddl.alter-table-drop-column",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b TEXT)",
+        "INSERT INTO t VALUES (1, 'x')"
+      ],
+      "sql": "ALTER TABLE t DROP COLUMN b",
+      "class": "missing-feature",
+      "status": "open",
+      "note": "SQLite 3.49.1 支持 `DROP COLUMN`；本引擎把它作为具名 gap lock，以 `unsupported-clause`（clause 为 `DROP COLUMN`）拒绝，不静默半删",
+      "direction": "sqlite-accepts-ours-rejects",
+      "sqlite": {
+        "kind": "rows",
+        "rows": []
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "unsupported-clause",
+        "clause": "DROP COLUMN",
+        "message": "`ALTER TABLE ... DROP COLUMN` is not supported (`b` would have to be removed from every stored row)"
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
+    },
+    {
+      "id": "ddl.drop-index-autoindex-refused",
+      "setup": [
+        "CREATE TABLE t(a TEXT UNIQUE)"
+      ],
+      "sql": "DROP INDEX sqlite_autoindex_t_1",
+      "class": "none",
+      "status": "open",
+      "note": "两侧都以 `index associated with UNIQUE or PRIMARY KEY constraint cannot be dropped` 拒绝，自动索引属于约束本身",
+      "direction": "none",
+      "sqlite": {
+        "kind": "error",
+        "stage": "sql",
+        "message": "index associated with UNIQUE or PRIMARY KEY constraint cannot be dropped"
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "autoindex-immutable",
+        "clause": null,
+        "message": "index associated with UNIQUE or PRIMARY KEY constraint cannot be dropped"
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
+    },
+    {
+      "id": "ddl.add-column-not-null-empty",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)"
+      ],
+      "sql": "ALTER TABLE t ADD COLUMN b TEXT NOT NULL",
+      "class": "none",
+      "status": "open",
+      "note": "空表没有需要回填的旧行，两侧都接受 `NOT NULL` 且无默认值的 `ADD COLUMN`",
+      "direction": "none",
+      "sqlite": {
+        "kind": "rows",
+        "rows": []
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": []
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
+    },
+    {
+      "id": "ddl.add-column-not-null-nonempty",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "INSERT INTO t VALUES (1)"
+      ],
+      "sql": "ALTER TABLE t ADD COLUMN b TEXT NOT NULL",
+      "class": "none",
+      "status": "open",
+      "note": "表内已有行时两侧都以 `Cannot add a NOT NULL column with default value NULL` 拒绝，拒绝与否取决于表是否为空",
+      "direction": "none",
+      "sqlite": {
+        "kind": "error",
+        "stage": "sql",
+        "message": "Cannot add a NOT NULL column with default value NULL"
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "invalid-alter",
+        "clause": null,
+        "message": "Cannot add a NOT NULL column with default value NULL"
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
+    },
+    {
+      "id": "ddl.drop-table-if-exists-missing",
+      "setup": [],
+      "sql": "DROP TABLE IF EXISTS missing",
+      "class": "none",
+      "status": "open",
+      "note": "两侧对不存在的表都成功返回且不做改动，`IF EXISTS` 是脚本首行的常规写法",
+      "direction": "none",
+      "sqlite": {
+        "kind": "rows",
+        "rows": []
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": []
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
     }
   ]
 }

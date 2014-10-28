@@ -1,0 +1,557 @@
+{
+  "category": "ddl",
+  "cases": [
+    {
+      "id": "ddl.drop_table_removes_table_and_indexes",
+      "setup": [
+        "CREATE TABLE c(id INTEGER PRIMARY KEY AUTOINCREMENT, k TEXT UNIQUE)",
+        "CREATE INDEX ix ON c(k)",
+        "INSERT INTO c(k) VALUES ('x')",
+        "DROP TABLE c"
+      ],
+      "sql": "SELECT (SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'c') AS tables, (SELECT count(*) FROM sqlite_master WHERE type = 'index') AS indexes",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            0,
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.drop_table_clears_sequence_row",
+      "setup": [
+        "CREATE TABLE a(x INTEGER PRIMARY KEY AUTOINCREMENT)",
+        "INSERT INTO a DEFAULT VALUES",
+        "DROP TABLE a"
+      ],
+      "sql": "SELECT * FROM sqlite_sequence",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "ddl.drop_table_reuses_root_page",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "DROP TABLE t",
+        "CREATE TABLE u(a INTEGER)"
+      ],
+      "sql": "SELECT rootpage FROM sqlite_master WHERE name = 'u'",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.drop_table_keeps_other_tables",
+      "setup": [
+        "CREATE TABLE a(x INTEGER)",
+        "CREATE TABLE b(y TEXT)",
+        "INSERT INTO b VALUES ('keep')",
+        "DROP TABLE a"
+      ],
+      "sql": "SELECT * FROM b",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "keep"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.drop_if_exists_missing",
+      "setup": [
+        "DROP TABLE IF EXISTS nope"
+      ],
+      "sql": "SELECT count(*) FROM sqlite_master",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.drop_missing_rejected",
+      "setup": [],
+      "sql": "DROP TABLE nope",
+      "expect": {
+        "kind": "error",
+        "code": "unknown-table",
+        "oracle": "no such table: nope"
+      }
+    },
+    {
+      "id": "ddl.drop_sqlite_master_rejected",
+      "setup": [],
+      "sql": "DROP TABLE sqlite_master",
+      "expect": {
+        "kind": "error",
+        "code": "readonly-system-table",
+        "oracle": "table sqlite_master may not be dropped"
+      }
+    },
+    {
+      "id": "ddl.drop_sqlite_sequence_rejected",
+      "setup": [
+        "CREATE TABLE a(x INTEGER PRIMARY KEY AUTOINCREMENT)"
+      ],
+      "sql": "DROP TABLE sqlite_sequence",
+      "expect": {
+        "kind": "error",
+        "code": "readonly-system-table",
+        "oracle": "table sqlite_sequence may not be dropped"
+      }
+    },
+    {
+      "id": "ddl.drop_index_explicit",
+      "setup": [
+        "CREATE TABLE t(a TEXT, b INTEGER)",
+        "CREATE INDEX ix ON t(b)",
+        "INSERT INTO t VALUES ('a', 1)",
+        "DROP INDEX ix"
+      ],
+      "sql": "SELECT name FROM sqlite_master WHERE type = 'index'",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "ddl.drop_index_keeps_unique",
+      "setup": [
+        "CREATE TABLE t(a TEXT UNIQUE)",
+        "INSERT INTO t VALUES ('a')",
+        "CREATE INDEX ix ON t(a)",
+        "DROP INDEX ix"
+      ],
+      "sql": "INSERT INTO t VALUES ('a')",
+      "expect": {
+        "kind": "error",
+        "oracle": "UNIQUE constraint failed: t.a"
+      }
+    },
+    {
+      "id": "ddl.drop_index_missing_rejected",
+      "setup": [
+        "CREATE TABLE t(a TEXT)"
+      ],
+      "sql": "DROP INDEX nope",
+      "expect": {
+        "kind": "error",
+        "code": "unknown-index",
+        "oracle": "no such index: nope"
+      }
+    },
+    {
+      "id": "ddl.drop_index_if_exists_missing",
+      "setup": [
+        "DROP INDEX IF EXISTS nope"
+      ],
+      "sql": "SELECT count(*) FROM sqlite_master WHERE type = 'index'",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.drop_autoindex_rejected",
+      "setup": [
+        "CREATE TABLE t(a TEXT UNIQUE)"
+      ],
+      "sql": "DROP INDEX sqlite_autoindex_t_1",
+      "expect": {
+        "kind": "error",
+        "code": "autoindex-immutable",
+        "oracle": "index associated with UNIQUE or PRIMARY KEY constraint cannot be dropped"
+      }
+    },
+    {
+      "id": "ddl.rename_table_rewrites_catalog_text",
+      "setup": [
+        "CREATE TABLE t ( a INTEGER , b TEXT UNIQUE )",
+        "CREATE INDEX Ix ON t ( b )",
+        "ALTER TABLE t RENAME TO u"
+      ],
+      "sql": "SELECT name, tbl_name, sql FROM sqlite_master ORDER BY rowid",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "u",
+            "u",
+            "CREATE TABLE \"u\" ( a INTEGER , b TEXT UNIQUE )"
+          ],
+          [
+            "sqlite_autoindex_u_1",
+            "u",
+            null
+          ],
+          [
+            "Ix",
+            "u",
+            "CREATE INDEX Ix ON \"u\" ( b )"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.rename_table_moves_sequence_row",
+      "setup": [
+        "CREATE TABLE a(x INTEGER PRIMARY KEY AUTOINCREMENT)",
+        "INSERT INTO a DEFAULT VALUES",
+        "ALTER TABLE a RENAME TO b"
+      ],
+      "sql": "SELECT name, seq FROM sqlite_sequence",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "b",
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.rename_table_keeps_rows",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b TEXT)",
+        "INSERT INTO t VALUES (1, 'x'), (2, 'y')",
+        "ALTER TABLE t RENAME TO u"
+      ],
+      "sql": "SELECT * FROM u ORDER BY a",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "x"
+          ],
+          [
+            2,
+            "y"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.rename_table_quoted_new_name",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "ALTER TABLE t RENAME TO \"u v\""
+      ],
+      "sql": "SELECT name, sql FROM sqlite_master",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "u v",
+            "CREATE TABLE \"u v\"(a INTEGER)"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.rename_table_conflict_rejected",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "CREATE TABLE u(a INTEGER)"
+      ],
+      "sql": "ALTER TABLE t RENAME TO u",
+      "expect": {
+        "kind": "error",
+        "code": "table-exists",
+        "oracle": "there is already another table or index with this name: u"
+      }
+    },
+    {
+      "id": "ddl.rename_table_missing_rejected",
+      "setup": [],
+      "sql": "ALTER TABLE nope RENAME TO v",
+      "expect": {
+        "kind": "error",
+        "code": "unknown-table",
+        "oracle": "no such table: nope"
+      }
+    },
+    {
+      "id": "ddl.rename_table_reserved_rejected",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)"
+      ],
+      "sql": "ALTER TABLE t RENAME TO sqlite_x",
+      "expect": {
+        "kind": "error",
+        "code": "reserved-name",
+        "oracle": "object name reserved for internal use: sqlite_x"
+      }
+    },
+    {
+      "id": "ddl.rename_column_rewrites_text",
+      "setup": [
+        "CREATE TABLE t(t INTEGER, x TEXT DEFAULT 'a', y TEXT, CHECK (t > 0 AND x <> 't'))",
+        "CREATE INDEX ix ON t(x, t)",
+        "ALTER TABLE t RENAME COLUMN t TO tt"
+      ],
+      "sql": "SELECT name, sql FROM sqlite_master ORDER BY rowid",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "t",
+            "CREATE TABLE t(tt INTEGER, x TEXT DEFAULT 'a', y TEXT, CHECK (tt > 0 AND x <> 't'))"
+          ],
+          [
+            "ix",
+            "CREATE INDEX ix ON t(x, tt)"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.rename_column_keeps_rows",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b TEXT)",
+        "INSERT INTO t VALUES (1, 'x'), (2, 'y')",
+        "ALTER TABLE t RENAME COLUMN a TO c"
+      ],
+      "sql": "SELECT c, b FROM t ORDER BY c",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "x"
+          ],
+          [
+            2,
+            "y"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.rename_column_check_survives",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, CHECK (a > 0))",
+        "ALTER TABLE t RENAME COLUMN a TO c"
+      ],
+      "sql": "INSERT INTO t(c) VALUES (-1)",
+      "expect": {
+        "kind": "error",
+        "code": "constraint-failed",
+        "oracle": "CHECK constraint failed: c > 0"
+      }
+    },
+    {
+      "id": "ddl.rename_column_duplicate_rejected",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b TEXT)"
+      ],
+      "sql": "ALTER TABLE t RENAME COLUMN a TO b",
+      "expect": {
+        "kind": "error",
+        "code": "duplicate-column",
+        "oracle": "error in table t after rename: duplicate column name: b"
+      }
+    },
+    {
+      "id": "ddl.rename_column_table_name_untouched",
+      "setup": [
+        "CREATE TABLE t(t INTEGER, CHECK (t > 0))",
+        "ALTER TABLE t RENAME COLUMN t TO tt"
+      ],
+      "sql": "SELECT sql FROM sqlite_master WHERE name = 't'",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "CREATE TABLE t(tt INTEGER, CHECK (tt > 0))"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.add_column_defaults_existing_rows",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "INSERT INTO t VALUES (1), (2)",
+        "ALTER TABLE t ADD COLUMN c INTEGER NOT NULL DEFAULT 5"
+      ],
+      "sql": "SELECT * FROM t ORDER BY a",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            5
+          ],
+          [
+            2,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.add_column_rewrites_sql_text",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "ALTER TABLE t ADD COLUMN c TEXT"
+      ],
+      "sql": "SELECT sql FROM sqlite_master WHERE name = 't'",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "CREATE TABLE t(a INTEGER, c TEXT)"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.add_column_default_applies_to_insert",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "ALTER TABLE t ADD COLUMN c TEXT DEFAULT 'x'",
+        "INSERT INTO t(a) VALUES (1)"
+      ],
+      "sql": "SELECT c FROM t",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "x"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.add_column_select_order",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b TEXT)",
+        "INSERT INTO t VALUES (1, 'x')",
+        "ALTER TABLE t ADD COLUMN c INTEGER"
+      ],
+      "sql": "SELECT * FROM t",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "x",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.add_column_check_enforced",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "ALTER TABLE t ADD COLUMN g INTEGER CHECK (g > 0)"
+      ],
+      "sql": "INSERT INTO t(g) VALUES (-1)",
+      "expect": {
+        "kind": "error",
+        "code": "constraint-failed",
+        "oracle": "CHECK constraint failed: g > 0"
+      }
+    },
+    {
+      "id": "ddl.add_column_not_null_empty_table",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "ALTER TABLE t ADD COLUMN b TEXT NOT NULL"
+      ],
+      "sql": "SELECT sql FROM sqlite_master WHERE name = 't'",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "CREATE TABLE t(a INTEGER, b TEXT NOT NULL)"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ddl.add_column_not_null_rejected",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)",
+        "INSERT INTO t VALUES (1)"
+      ],
+      "sql": "ALTER TABLE t ADD COLUMN b TEXT NOT NULL",
+      "expect": {
+        "kind": "error",
+        "code": "invalid-alter",
+        "oracle": "Cannot add a NOT NULL column with default value NULL"
+      }
+    },
+    {
+      "id": "ddl.add_column_primary_key_rejected",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)"
+      ],
+      "sql": "ALTER TABLE t ADD COLUMN b INTEGER PRIMARY KEY",
+      "expect": {
+        "kind": "error",
+        "code": "invalid-alter",
+        "oracle": "Cannot add a PRIMARY KEY column"
+      }
+    },
+    {
+      "id": "ddl.add_column_unique_rejected",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)"
+      ],
+      "sql": "ALTER TABLE t ADD COLUMN b TEXT UNIQUE",
+      "expect": {
+        "kind": "error",
+        "code": "invalid-alter",
+        "oracle": "Cannot add a UNIQUE column"
+      }
+    },
+    {
+      "id": "ddl.add_column_duplicate_rejected",
+      "setup": [
+        "CREATE TABLE t(a INTEGER)"
+      ],
+      "sql": "ALTER TABLE t ADD COLUMN a TEXT",
+      "expect": {
+        "kind": "error",
+        "code": "duplicate-column",
+        "oracle": "duplicate column name: a"
+      }
+    },
+    {
+      "id": "ddl.drop_column_rejected",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b TEXT)"
+      ],
+      "sql": "ALTER TABLE t DROP COLUMN b",
+      "expect": {
+        "kind": "rejected",
+        "code": "unsupported-clause",
+        "clause": "DROP COLUMN",
+        "note": "SQLite 3.49 supports DROP COLUMN; this engine would have to rewrite every stored record and refuses by name instead."
+      }
+    }
+  ]
+}
