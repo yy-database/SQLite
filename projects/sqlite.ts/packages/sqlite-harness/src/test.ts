@@ -43,7 +43,7 @@ const FLOORS: Record<LayerName, { ts: number; py: number }> = {
     // The TypeScript suite runs the native engine directly. The Python SQL module
     // runs against the installed wheel built by the `platforms/python` stage, so
     // both hosts are measured on the same statement surface.
-    ts: Number(process.env.TS_SQL_FLOOR ?? 89),
+    ts: Number(process.env.TS_SQL_FLOOR ?? 92),
     py: Number(process.env.PY_SQL_FLOOR ?? 20),
   },
 };
