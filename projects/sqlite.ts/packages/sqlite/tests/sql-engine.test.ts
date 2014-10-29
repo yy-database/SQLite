@@ -1418,3 +1418,93 @@ test("`WITH RECURSIVE` without a self reference keeps UNION and UNION ALL oracle
     }
   });
 });
+
+// `BETWEEN`, the boolean keywords, a hex integer literal and the scalar edge
+// values the engine already evaluates all existed without a gate; the oracle
+// decides every value.
+test("BETWEEN, boolean literals, hex integers and scalar edges match sqlite", () => {
+  const engine = createEngine(4096);
+  const cases = [
+    "select 2 between 1 and 3, 2 not between 1 and 3, null between 1 and 2",
+    "select true, false, true = 1, false = 0",
+    "select 0x1f, 1e3",
+    "select 1 + 2 * 3, 10 - 2 - 3",
+    "select substr('abcdef', 0, 2), substr('abcdef', 2, 99)",
+    "select round(2.5), round(-2.5)",
+  ];
+  withOracle([], (db) => {
+    for (const sql of cases) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+  });
+});
+
+// Comparison without column affinity ranks storage classes: numbers sort before
+// text, and a blob sorts after text. The engine has to keep that rank in
+// `ORDER BY` instead of coercing everything to one class.
+test("comparison across storage classes follows sqlite type order", () => {
+  const steps = ["create table mt (v)", "insert into mt values (1), ('2'), (x'33'), (null)"];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  const cases = ["select typeof(v) from mt order by v", "select '10' < 9, '10' = 10, 1 = 1.0", "select 'abc' < 'abd', null = null"];
+  withOracle(steps, (db) => {
+    for (const sql of cases) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+  });
+});
+
+// The window evaluator implements every ranking and value function, both
+// frame units and aggregate windows; none of those forms had a gate before.
+test("window ranking, value and framed aggregates match better-sqlite3", () => {
+  const steps = ["create table w (g text, a integer)", "insert into w values ('x', 1), ('x', 2), ('y', 2), ('z', 3)"];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  const cases = [
+    "select percent_rank() over (order by a), cume_dist() over (order by a), ntile(2) over (order by a) from w",
+    "select a, lag(a, 1, 99) over (order by a), lead(a, 1, -1) over (order by a) from w",
+    "select first_value(a) over (order by a), last_value(a) over (order by a), nth_value(a, 2) over (order by a) from w",
+    "select sum(a) over (order by a rows between 1 preceding and 1 following) from w",
+    "select sum(a) over (order by a range between 1 preceding and 1 following) from w",
+    "select count(*) over (), sum(a) over () from w",
+    "select group_concat(a, '-') over (order by a) from w",
+  ];
+  withOracle(steps, (db) => {
+    for (const sql of cases) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+  });
+});
+
+// Four implemented shapes without a gate: grouping by an expression, ordering
+// by an output alias, aggregates over an empty table, and a `DELETE` that
+// names its table through an alias.
+test("group by expression, order by alias, empty aggregates and aliased delete match sqlite", () => {
+  const grouped = createEngine(4096);
+  grouped.execute("create table gb (a integer)");
+  grouped.execute("insert into gb values (1), (2), (3), (4)");
+  withOracle(["create table gb (a integer)", "insert into gb values (1), (2), (3), (4)"], (db) => {
+    for (const sql of ["select a + 1 as k, count(*) from gb group by a + 1 order by k", "select a as x from gb order by x desc"]) {
+      assert.deepEqual(grouped.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+  });
+
+  const empty = createEngine(4096);
+  empty.execute("create table empty (v integer)");
+  withOracle(["create table empty (v integer)"], (db) => {
+    const sql = "select avg(v), min(v), max(v), count(v) from empty";
+    assert.deepEqual(empty.execute(sql).rows, oracleRows(db, sql), sql);
+  });
+
+  const aliased = createEngine(4096);
+  aliased.execute("create table da (a integer)");
+  aliased.execute("insert into da values (1), (2)");
+  assert.deepEqual(aliased.execute("delete from da as x where x.a = 2 returning a").rows, [[2]]);
+
+  const inserted = createEngine(4096);
+  inserted.execute("create table mr (id integer primary key, v text)");
+  assert.deepEqual(inserted.execute("insert into mr (v) values ('a'), ('b') returning id, v").rows, [
+    [1, "a"],
+    [2, "b"],
+  ]);
+});
