@@ -1365,3 +1365,56 @@ test("insert default values stores the row better-sqlite3 stores", () => {
     assert.deepEqual(stored, oracleRows(db, "select a, b, c from dv"));
   });
 });
+
+// A non-recursive `WITH` body is a full `SELECT`, so renamed columns, aggregates,
+// chaining and table shadowing are all compared against better-sqlite3.
+test("non-recursive CTEs match better-sqlite3 for multi-column bodies and chaining", () => {
+  const steps = ["create table t (a integer, b integer)", "insert into t values (1, 10), (2, 20), (3, 30)"];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  const cases = [
+    "with c(x, y) as (select a, b + 10 from t) select x, y from c order by x",
+    "with c(x, y) as (select a, a * b from t) select count(*), sum(y) from c",
+    "with c(x, y) as (select a, b from t), d as (select x, y + 1 as z from c) select x, z from d order by x",
+    "with t(a, b) as (select 9, 90) select a, b from t",
+  ];
+  withOracle(steps, (db) => {
+    for (const sql of cases) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+  });
+});
+
+// The `WITH` scope has to survive into correlated subqueries, `IN (SELECT ...)`
+// and derived tables, with the same rows better-sqlite3 returns.
+test("CTEs stay visible in subqueries and derived tables like better-sqlite3", () => {
+  const steps = ["create table t (a integer, b integer)", "insert into t values (1, 10), (2, 20), (3, 30)"];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  const cases = [
+    "with c(x) as (select a from t) select (select count(*) from c) as n from t where a = 1",
+    "with c(x) as (select a from t where a > 1) select a from t where a in (select x from c) order by a",
+    "select * from (with c(x) as (select a from t where a = 2) select x from c) d",
+  ];
+  withOracle(steps, (db) => {
+    for (const sql of cases) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+  });
+});
+
+// `UNION` de-duplicates the rows a `WITH` body produces while `UNION ALL` keeps
+// them, matching better-sqlite3. Real self-reference stays a reported gap.
+test("`WITH RECURSIVE` without a self reference keeps UNION and UNION ALL oracle results", () => {
+  const steps: string[] = [];
+  const engine = createEngine(4096);
+  const cases = [
+    "with recursive c(x) as (select 1 union all select 1) select x from c",
+    "with recursive c(x) as (select 1 union select 1) select x from c",
+  ];
+  withOracle(steps, (db) => {
+    for (const sql of cases) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+  });
+});
