@@ -517,22 +517,6 @@ test("CTEs evaluate once and shadow base tables with the same name", () => {
   assert.equal(duplicate.error?.clause, "WITH");
 });
 
-test("recursive CTEs are rejected and WITH RECURSIVE without a self reference works", () => {
-  const engine = derivedEngine();
-
-  // The keyword alone is accepted when nothing refers back to the CTE.
-  assert.deepEqual(engine.execute("with recursive c as (select a from t) select * from c").rows, [[1], [2], [3]]);
-
-  // An actual self reference is reported instead of looping or half-evaluating.
-  const recursive = engine.tryExecute(
-    "with recursive c(a) as (select a from t where a = 1 union all select a + 1 from c where a < 3) select * from c",
-  );
-  assert.equal(recursive.ok, false);
-  assert.equal(recursive.error?.code, "unsupported-clause");
-  assert.equal(recursive.error?.clause, "WITH");
-  assert.match(recursive.error?.message ?? "", /recursive/i);
-});
-
 test("right joins and USING execute while non-aggregate HAVING reports a structured error", () => {
   const engine = joinEngine();
 
