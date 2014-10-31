@@ -13,7 +13,8 @@
         "bench": "node bin/cli.mjs bench",
         "conformance": "node bin/cli.mjs conformance",
         "fixtures": "node bin/cli.mjs fixtures",
-        "oracle": "node bin/cli.mjs oracle"
+        "oracle": "node bin/cli.mjs oracle",
+        "corpus": "node bin/cli.mjs corpus"
     },
     "devDependencies": {
         "@yydb/sqlite": "workspace:*",

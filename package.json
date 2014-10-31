@@ -12,7 +12,8 @@
         "test:py": "python -m unittest discover -s projects/sqlite.py/packages/sqlite/tests -t projects/sqlite.py/packages/sqlite/tests",
         "examples:ts": "node --experimental-strip-types projects/sqlite.ts/examples/roundtrip.ts",
         "examples:py": "python projects/sqlite.py/examples/roundtrip.py",
-        "test:gate": "node scripts/check-test-floor.mjs"
+        "test:gate": "node scripts/check-test-floor.mjs",
+        "corpus": "node projects/sqlite.ts/packages/sqlite-harness/bin/cli.mjs corpus"
     },
     "packageManager": "pnpm@10.18.3",
     "engines": {

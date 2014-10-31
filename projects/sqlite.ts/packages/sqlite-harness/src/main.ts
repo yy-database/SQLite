@@ -13,6 +13,10 @@ Commands
   conformance  parse externally produced fixtures and compare with an external engine
   fixtures     regenerate the fixture assets from external engines and print sha256
   oracle       report external engines and verify two of them agree on the probes
+  corpus       run a seeded differential corpus against both external oracles
+
+Corpus parameters are explicit:
+  --seed <n>   --count <n>   --json
 
 Bench parameters are environment variables, not config files:
   BENCH_ROWS  BENCH_TXN  BENCH_POINT  BENCH_RANGE  BENCH_PAGE  BENCH_ROUNDS
@@ -23,6 +27,17 @@ export async function main(argv: string[]): Promise<number> {
   if (command === undefined || command === "--help" || command === "-h") {
     process.stdout.write(USAGE);
     return command === undefined ? 1 : 0;
+  }
+
+  if (command === "corpus") {
+    process.env.SQLITE_NATIVE = nativeModulePath();
+    try {
+      const { commandCorpus, parseCorpusOptions } = await import("./corpus.ts");
+      return commandCorpus(parseCorpusOptions(rest));
+    } catch (error) {
+      process.stderr.write(`${(error as Error).message}\n`);
+      return 1;
+    }
   }
 
   let options;
