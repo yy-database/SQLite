@@ -9,8 +9,20 @@
 //
 // `--seed` and `--count` fully determine the run. No wall clock, no locale and
 // no unseeded randomness takes part.
+//
+// Every case replays the fixture on a fresh engine and every oracle call opens
+// a fresh in-memory database, so no case shares state with another case or
+// with the hand-written gates. Running cases in any order or in parallel
+// produces the same result.
+//
+// `--check` is the regression gate. It first verifies that the generated
+// corpus still matches the baseline digest, then requires every observed
+// difference to match one baseline entry exactly. `--update-baseline` rewrites
+// the baseline from the current run and drops entries that no longer differ.
 
 import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { createEngine, type ExecValue } from "../../sqlite/src/index.ts";
 import { openEngine, type Cell, type Engine, type StepOutcome } from "./oracle.ts";
@@ -502,9 +514,283 @@ function signature(item: CorpusCase): string {
   return `${item.cluster} ${item.sql.replace(/-?\d+(?:\.\d+)?/g, "#")}`;
 }
 
+// ---------------------------------------------------------------------------
+// Baseline
+//
+// The baseline is the only allowed set of differences. Each entry names one
+// case, why it is expected to differ and the exact signal observed when the
+// baseline was generated. `--check` refuses to run when the corpus digest
+// moved, and refuses to pass when an observed difference is unlisted, when a
+// listed signal changed, or when a listed case stopped differing.
+
+const DEFAULT_SEED = 20261106;
+const DEFAULT_COUNT = 200;
+
+const BASELINE_VERSION = 1;
+const BASELINE_PATH = fileURLToPath(new URL("../corpus/sql-differential-baseline.json", import.meta.url));
+
+type DifferenceKind = "mismatch" | "discarded";
+type BaselineReason = "structured-rejection" | "not-implemented" | "known-drift" | "oracle-disagreement";
+
+interface BaselineEntry {
+  readonly id: number;
+  readonly cluster: Cluster;
+  readonly sql: string;
+  readonly check: string | null;
+  readonly kind: DifferenceKind;
+  readonly reason: BaselineReason;
+  readonly detail: string;
+  readonly coordinates: string;
+  readonly signal: readonly string[];
+}
+
+interface BaselineFile {
+  readonly version: number;
+  readonly seed: number;
+  readonly count: number;
+  readonly digest: string;
+  readonly engines: Record<string, string>;
+  readonly entries: readonly BaselineEntry[];
+}
+
+interface Discarded {
+  readonly id: number;
+  readonly cluster: Cluster;
+  readonly sql: string;
+  readonly better: Side;
+  readonly python: Side;
+}
+
+interface Mismatch {
+  readonly item: CorpusCase;
+  readonly ours: Side;
+  readonly better: Side;
+  readonly python: Side;
+}
+
+interface ObservedDifference {
+  readonly id: number;
+  readonly cluster: Cluster;
+  readonly sql: string;
+  readonly check: string | null;
+  readonly kind: DifferenceKind;
+  readonly entry: BaselineEntry;
+  readonly ours?: Side;
+  readonly better: Side;
+  readonly python: Side;
+}
+
+function entryKey(entry: BaselineEntry): string {
+  return `${entry.kind}|${entry.id}|${entry.sql}`;
+}
+
+function rowDiffText(left: Side, right: Side): string {
+  for (const field of ["rows", "checkRows"] as const) {
+    const mine = left[field];
+    const theirs = right[field];
+    if (!mine || !theirs) continue;
+    if (mine.length !== theirs.length) return `${field}: ${mine.length} rows vs ${theirs.length}`;
+    for (let row = 0; row < mine.length; row += 1) {
+      const width = Math.max(mine[row].length, theirs[row].length);
+      for (let column = 0; column < width; column += 1) {
+        const a = mine[row][column] ?? "<missing>";
+        const b = theirs[row][column] ?? "<missing>";
+        if (a !== b) return `${field} row ${row + 1} column ${column + 1}: ${a} vs ${b}`;
+      }
+    }
+  }
+  return "result shape differs";
+}
+
+function mismatchEntry(item: CorpusCase, ours: Side, better: Side, python: Side): BaselineEntry {
+  const signal = [`ours ${rowsText(ours)}`, `better ${rowsText(better)}`, `python ${rowsText(python)}`];
+  if (ours.error) {
+    const code = ours.error.split(/\s+/)[0] ?? "";
+    // Explicitly unimplemented clauses and statements carry an `unsupported-*`
+    // code. Parse rejections and argument refusals are still structured but
+    // are classified as plain structured rejections.
+    const reason: BaselineReason = code.startsWith("unsupported") ? "not-implemented" : "structured-rejection";
+    return {
+      id: item.id,
+      cluster: item.cluster,
+      sql: item.sql,
+      check: item.check ?? null,
+      kind: "mismatch",
+      reason,
+      detail: `this repository rejects the statement: ${ours.error}`,
+      coordinates: coordinates(item),
+      signal,
+    };
+  }
+  return {
+    id: item.id,
+    cluster: item.cluster,
+    sql: item.sql,
+    check: item.check ?? null,
+    kind: "mismatch",
+    reason: "known-drift",
+    detail: `same result shape, different value: ${rowDiffText(ours, better)}`,
+    coordinates: coordinates(item),
+    signal,
+  };
+}
+
+function discardedEntry(entry: Discarded): BaselineEntry {
+  const detail =
+    entry.cluster === "transaction"
+      ? "CPython sqlite3 keeps the fixture inserts inside an implicit transaction while better-sqlite3 autocommits, so the transaction state differs"
+      : "the two external oracles disagree with each other";
+  return {
+    id: entry.id,
+    cluster: entry.cluster,
+    sql: entry.sql,
+    check: null,
+    kind: "discarded",
+    reason: "oracle-disagreement",
+    detail,
+    coordinates: "n/a (oracle self-disagreement)",
+    signal: [`better ${rowsText(entry.better)}`, `python ${rowsText(entry.python)}`],
+  };
+}
+
+function observedDifferences(discarded: Discarded[], mismatches: Mismatch[]): ObservedDifference[] {
+  const observed: ObservedDifference[] = [];
+  for (const entry of discarded) {
+    observed.push({
+      id: entry.id,
+      cluster: entry.cluster,
+      sql: entry.sql,
+      check: null,
+      kind: "discarded",
+      entry: discardedEntry(entry),
+      better: entry.better,
+      python: entry.python,
+    });
+  }
+  for (const entry of mismatches) {
+    observed.push({
+      id: entry.item.id,
+      cluster: entry.item.cluster,
+      sql: entry.item.sql,
+      check: entry.item.check ?? null,
+      kind: "mismatch",
+      entry: mismatchEntry(entry.item, entry.ours, entry.better, entry.python),
+      ours: entry.ours,
+      better: entry.better,
+      python: entry.python,
+    });
+  }
+  return observed;
+}
+
+function baselineFrom(
+  seed: number,
+  count: number,
+  digest: string,
+  engines: Record<string, string>,
+  entries: BaselineEntry[],
+): BaselineFile {
+  const ordered = [...entries].sort((left, right) => left.id - right.id || left.kind.localeCompare(right.kind));
+  return { version: BASELINE_VERSION, seed, count, digest, engines, entries: ordered };
+}
+
+function loadBaseline(): BaselineFile {
+  let parsed: BaselineFile;
+  try {
+    parsed = JSON.parse(readFileSync(BASELINE_PATH, "utf8")) as BaselineFile;
+  } catch (error) {
+    throw new Error(`cannot read the differential baseline at ${BASELINE_PATH}: ${(error as Error).message}`);
+  }
+  if (parsed.version !== BASELINE_VERSION) {
+    throw new Error(`baseline version ${parsed.version} is not supported, expected ${BASELINE_VERSION}`);
+  }
+  return parsed;
+}
+
+function identityProblems(baseline: BaselineFile, options: CorpusOptions, digest: string): string[] {
+  const problems: string[] = [];
+  if (baseline.seed !== options.seed) problems.push(`seed: baseline ${baseline.seed}, current ${options.seed}`);
+  if (baseline.count !== options.count) problems.push(`count: baseline ${baseline.count}, current ${options.count}`);
+  if (baseline.digest !== digest) problems.push(`corpus digest: baseline ${baseline.digest}, current ${digest}`);
+  return problems;
+}
+
+function describeOutput(diff: ObservedDifference): string[] {
+  const lines = [`#${diff.id} [${diff.cluster}] ${diff.sql}`];
+  if (diff.check) lines.push(`  check:  ${diff.check}`);
+  if (diff.ours) lines.push(`  ours:   ${rowsText(diff.ours)}`);
+  lines.push(`  better: ${rowsText(diff.better)}`);
+  lines.push(`  python: ${rowsText(diff.python)}`);
+  return lines;
+}
+
+function checkBaseline(baseline: BaselineFile, observed: ObservedDifference[]): { problems: string[]; matched: number } {
+  const listed = new Map(baseline.entries.map((entry) => [entryKey(entry), entry]));
+  const seen = new Set<string>();
+  const problems: string[] = [];
+  let matched = 0;
+  for (const diff of observed) {
+    const key = entryKey(diff.entry);
+    seen.add(key);
+    const expected = listed.get(key);
+    if (!expected) {
+      problems.push(
+        [
+          "unexpected difference that the known-difference baseline does not explain",
+          ...describeOutput(diff),
+          `  coordinates: ${diff.entry.coordinates}`,
+        ].join("\n"),
+      );
+      continue;
+    }
+    if (JSON.stringify(expected.signal) !== JSON.stringify(diff.entry.signal)) {
+      problems.push(
+        [
+          `known difference changed shape: #${diff.id} [${diff.cluster}] ${diff.sql}`,
+          ...describeOutput(diff).slice(1),
+          `  baseline signal: ${expected.signal.join(" | ")}`,
+          `  current signal:  ${diff.entry.signal.join(" | ")}`,
+          `  coordinates: ${diff.entry.coordinates}`,
+        ].join("\n"),
+      );
+      continue;
+    }
+    matched += 1;
+  }
+  for (const entry of baseline.entries) {
+    if (seen.has(entryKey(entry))) continue;
+    problems.push(
+      [
+        `baseline entry no longer differs: #${entry.id} [${entry.cluster}] ${entry.sql}`,
+        `  the case now matches both oracles, drop it with: pnpm corpus -- --update-baseline`,
+      ].join("\n"),
+    );
+  }
+  return { problems, matched };
+}
+
+function reasonCounts(entries: readonly BaselineEntry[]): Record<BaselineReason, number> {
+  const counts: Record<BaselineReason, number> = {
+    "structured-rejection": 0,
+    "not-implemented": 0,
+    "known-drift": 0,
+    "oracle-disagreement": 0,
+  };
+  for (const entry of entries) counts[entry.reason] += 1;
+  return counts;
+}
+
+function oracleText(current: Record<string, string>, recorded: Record<string, string>): string {
+  const now = `better-sqlite3 ${current.better}, python sqlite3 ${current.python}`;
+  if (current.better === recorded.better && current.python === recorded.python) return now;
+  return `${now} (baseline recorded better-sqlite3 ${recorded.better}, python sqlite3 ${recorded.python})`;
+}
+
 export interface CorpusOptions extends CliOptions {
   readonly seed: number;
   readonly count: number;
+  readonly check: boolean;
+  readonly updateBaseline: boolean;
 }
 
 function optionValue(argv: string[], name: string): string | undefined {
@@ -518,20 +804,26 @@ function optionValue(argv: string[], name: string): string | undefined {
 }
 
 export function parseCorpusOptions(argv: string[]): CorpusOptions {
-  const seedText = optionValue(argv, "--seed") ?? "20261106";
-  const countText = optionValue(argv, "--count") ?? "200";
+  const seedText = optionValue(argv, "--seed") ?? String(DEFAULT_SEED);
+  const countText = optionValue(argv, "--count") ?? String(DEFAULT_COUNT);
   const seed = Number(seedText);
   const count = Number(countText);
   if (!Number.isInteger(seed) || seed < 0) throw new Error(`--seed must be a non-negative integer, got ${seedText}`);
   if (!Number.isInteger(count) || count <= 0) throw new Error(`--count must be a positive integer, got ${countText}`);
-  const allowed = new Set(["--seed", "--count", "--json"]);
-  const unknown = argv.filter((value, index) => {
-    if (allowed.has(value)) return false;
-    const previous = argv[index - 1];
-    return previous !== "--seed" && previous !== "--count";
-  });
-  if (unknown.length > 0) throw new Error(`unknown option: ${unknown.join(" ")}`);
-  return { seed, count, json: argv.includes("--json") };
+  const flags = new Set(["--json", "--check", "--update-baseline"]);
+  const values = new Set(["--seed", "--count"]);
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (values.has(value)) {
+      index += 1;
+      continue;
+    }
+    if (!flags.has(value)) throw new Error(`unknown option: ${value}`);
+  }
+  const check = argv.includes("--check");
+  const updateBaseline = argv.includes("--update-baseline");
+  if (check && updateBaseline) throw new Error("--check and --update-baseline cannot be combined");
+  return { seed, count, json: argv.includes("--json"), check, updateBaseline };
 }
 
 export async function commandCorpus(options: CorpusOptions): Promise<number> {
@@ -540,11 +832,31 @@ export async function commandCorpus(options: CorpusOptions): Promise<number> {
     .update(JSON.stringify(cases.map((item) => [item.cluster, item.sql, item.check ?? null])))
     .digest("hex");
 
+  // The digest is checked before any engine starts. A silently edited corpus
+  // fails here instead of quietly relaxing the gate.
+  const baseline = options.check ? loadBaseline() : undefined;
+  if (baseline) {
+    const problems = identityProblems(baseline, options, digest);
+    if (problems.length > 0) {
+      process.stderr.write(
+        [
+          "corpus gate failed: the generated corpus no longer matches the baseline digest",
+          ...problems.map((problem) => `  ${problem}`),
+          "",
+          "The corpus changed without regenerating the baseline. Review the change and run:",
+          `  pnpm corpus -- --seed ${options.seed} --count ${options.count} --update-baseline`,
+          "",
+        ].join("\n"),
+      );
+      return 1;
+    }
+  }
+
   const better = await openEngine("better-sqlite3");
   const python = await openEngine("python");
 
-  const discarded: Array<{ id: number; cluster: Cluster; sql: string; better: Side; python: Side }> = [];
-  const mismatches: Array<{ item: CorpusCase; ours: Side; better: Side; python: Side }> = [];
+  const discarded: Discarded[] = [];
+  const mismatches: Mismatch[] = [];
   const passed: number[] = [];
 
   for (const item of cases) {
@@ -575,13 +887,91 @@ export async function commandCorpus(options: CorpusOptions): Promise<number> {
   }
 
   const gateable = mismatches.filter((mismatch) => !mismatch.ours.error && !mismatch.better.error && !mismatch.python.error);
+  const observed = observedDifferences(discarded, mismatches);
+  const currentEngines = { better: better.version, python: python.version };
+
+  if (options.updateBaseline) {
+    const baselineFile = baselineFrom(
+      options.seed,
+      options.count,
+      digest,
+      currentEngines,
+      observed.map((diff) => diff.entry),
+    );
+    writeFileSync(BASELINE_PATH, `${JSON.stringify(baselineFile, null, 2)}\n`, "utf8");
+    const counts = reasonCounts(baselineFile.entries);
+    const payload = {
+      command: "corpus",
+      mode: "update-baseline",
+      path: BASELINE_PATH,
+      seed: options.seed,
+      count: options.count,
+      digest,
+      engines: currentEngines,
+      passed: passed.length,
+      mismatched: mismatches.length,
+      discarded: discarded.length,
+      entries: baselineFile.entries.length,
+      reasons: counts,
+    };
+    const text = () =>
+      [
+        `baseline written: ${BASELINE_PATH}`,
+        `seed=${options.seed} count=${options.count} digest=${digest}`,
+        `engines: ${oracleText(currentEngines, baselineFile.engines)}`,
+        `${passed.length} passed / ${mismatches.length} mismatched / ${discarded.length} discarded`,
+        `entries: ${baselineFile.entries.length} (${Object.entries(counts).map(([reason, value]) => `${reason} ${value}`).join(", ")})`,
+      ].join("\n");
+    emit(options, payload as unknown as Record<string, unknown>, text);
+    return 0;
+  }
+
+  if (options.check && baseline) {
+    const result = checkBaseline(baseline, observed);
+    const ok = result.problems.length === 0;
+    const payload = {
+      command: "corpus",
+      mode: "check",
+      seed: options.seed,
+      count: options.count,
+      digest,
+      engines: currentEngines,
+      passed: passed.length,
+      mismatched: mismatches.length,
+      discarded: discarded.length,
+      known: result.matched,
+      gate: ok,
+      problems: result.problems,
+    };
+    const summary = ok
+      ? [
+          `corpus gate ok: seed ${options.seed} count ${options.count} digest ${digest}`,
+          `${cases.length} cases: ${passed.length} passed / ${mismatches.length} mismatched / ${discarded.length} discarded`,
+          `known differences: ${result.matched} matched the baseline`,
+          `oracles: ${oracleText(currentEngines, baseline.engines)}`,
+        ]
+      : [
+          `corpus gate failed: ${result.problems.length} problem(s), ${result.matched} known differences matched`,
+          `seed ${options.seed} count ${options.count} digest ${digest}`,
+          `oracles: ${currentEngines.better} / ${currentEngines.python}`,
+          "",
+          result.problems.join("\n\n"),
+        ];
+    const rendered = summary.join("\n");
+    if (!ok && !options.json) {
+      process.stderr.write(`${rendered}\n`);
+      return 1;
+    }
+    emit(options, payload as unknown as Record<string, unknown>, () => rendered);
+    return ok ? 0 : 1;
+  }
 
   const payload = {
     command: "corpus",
     seed: options.seed,
     count: options.count,
     digest,
-    engines: { better: better.version, python: python.version },
+    engines: currentEngines,
     distribution,
     discarded,
     mismatches: mismatches.map((entry) => ({
