@@ -62,7 +62,14 @@ export interface ExecResult {
     | "insert"
     | "update"
     | "delete"
-    | "select";
+    | "select"
+    | "pragma"
+    | "begin"
+    | "commit"
+    | "rollback"
+    | "savepoint"
+    | "release"
+    | "rollback-to";
   affected: number;
   columns: string[];
   rows: ExecValue[][];
@@ -87,8 +94,12 @@ export interface ExecOutcome {
 export interface NativeEngine {
   exec(sql: string): ExecResult[];
   execute(statement: string): ExecResult;
+  /** Runs a script with positional `?` parameters bound in order. */
+  executeWithParameters(statement: string, parameters: unknown[]): ExecResult[];
   executeBatch(statements: string[]): ExecResult[];
   tryExecute(statement: string): ExecOutcome;
+  /** `sqlite3_last_insert_rowid()` for this connection. */
+  lastInsertRowid(): number;
   snapshot(): Buffer;
   pageSize(): number;
   sqliteVersion(): string;
@@ -97,6 +108,8 @@ export interface NativeEngine {
 
 export interface NativeEngineConstructor {
   create(pageSize?: number): NativeEngine;
+  /** Reopens a main-file image and rebuilds its schema catalog. */
+  fromSnapshot(bytes: Buffer): NativeEngine;
 }
 
 export interface NativeWriter {
@@ -255,6 +268,11 @@ export function openSnapshot(bytes: Buffer, maxSnapshotBytes?: number): NativeSn
 /** Creates an in-memory SQL engine over the pure-Rust format-3 writer. */
 export function createEngine(pageSize?: number): NativeEngine {
   return bindings.SqliteEngine.create(pageSize);
+}
+
+/** Reopens a main-file image and rebuilds its schema catalog. */
+export function createEngineFromSnapshot(bytes: Buffer): NativeEngine {
+  return bindings.SqliteEngine.fromSnapshot(bytes);
 }
 
 /**

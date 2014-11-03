@@ -467,6 +467,54 @@ fn json_to_write_value(json: &serde_json::Value) -> napi::Result<sqlite::WriteVa
     })
 }
 
+/// Converts one JSON value into a bound parameter cell. `$blob` and `$i64`
+/// carry values JSON numbers cannot represent exactly.
+fn json_to_cell(json: &serde_json::Value) -> napi::Result<sqlite::Cell> {
+    Ok(match json {
+        serde_json::Value::Null => sqlite::Cell::Null,
+        serde_json::Value::Bool(flag) => sqlite::Cell::Integer(i64::from(*flag)),
+        serde_json::Value::Number(number) => {
+            if let Some(integer) = number.as_i64() {
+                sqlite::Cell::Integer(integer)
+            }
+            else if let Some(real) = number.as_f64() {
+                sqlite::Cell::Real(real)
+            }
+            else {
+                return Err(napi::Error::from_reason("sqlite parameter number out of range"));
+            }
+        }
+        serde_json::Value::String(text) => sqlite::Cell::Text(text.clone()),
+        serde_json::Value::Object(object) => {
+            if let Some(hex) = object.get("$blob").and_then(serde_json::Value::as_str) {
+                if hex.len() % 2 != 0 {
+                    return Err(napi::Error::from_reason("sqlite blob hex must have even length"));
+                }
+                let mut bytes = Vec::with_capacity(hex.len() / 2);
+                for index in 0..hex.len() / 2 {
+                    let byte = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16)
+                        .map_err(|_| napi::Error::from_reason("sqlite blob hex is not valid"))?;
+                    bytes.push(byte);
+                }
+                sqlite::Cell::Blob(bytes)
+            }
+            else if let Some(integer) = object.get("$i64").and_then(serde_json::Value::as_str) {
+                let value = integer
+                    .parse::<i64>()
+                    .map_err(|_| napi::Error::from_reason("sqlite $i64 value must be a decimal string"))?;
+                sqlite::Cell::Integer(value)
+            }
+            else {
+                return Err(napi::Error::from_reason("sqlite parameter object must carry `$blob` or `$i64`"));
+            }
+        }
+        serde_json::Value::Array(_) => {
+            return Err(napi::Error::from_reason("sqlite parameter must not be an array"));
+        }
+    })
+}
+
+
 /// Writes SQLite format-3 database files that upstream SQLite implementations
 /// open directly. The writer keeps the image in memory until [`save`](SqliteWriter::save).
 #[napi]
@@ -687,6 +735,27 @@ impl SqliteEngine {
     pub fn executeBatch(&mut self, statements: Vec<String>) -> napi::Result<serde_json::Value> {
         let results = self.engine.execute_batch(&statements).map_err(engine_error)?;
         engine_json(sqlite::results_json(&results))
+    }
+
+    /// Reopens an existing main-file image and rebuilds its schema catalog.
+    #[napi(factory)]
+    pub fn fromSnapshot(bytes: Buffer) -> napi::Result<Self> {
+        let writer = sqlite::SqliteWriter::from_pages(bytes.to_vec()).map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        sqlite::Engine::from_writer(writer).map(|engine| Self { engine }).map_err(engine_error)
+    }
+
+    /// Executes one statement with positional `?` parameters bound in order.
+    #[napi]
+    pub fn executeWithParameters(&mut self, statement: String, parameters: Vec<serde_json::Value>) -> napi::Result<serde_json::Value> {
+        let cells = parameters.iter().map(json_to_cell).collect::<napi::Result<Vec<_>>>()?;
+        let results = self.engine.execute_with_parameters(&statement, &cells).map_err(engine_error)?;
+        engine_json(sqlite::results_json(&results))
+    }
+
+    /// `sqlite3_last_insert_rowid()` for this connection.
+    #[napi]
+    pub fn lastInsertRowid(&self) -> i64 {
+        self.engine.last_insert_rowid()
     }
 
     /// Executes one statement without throwing, returning `{ok, result}` or `{ok, error}`.
