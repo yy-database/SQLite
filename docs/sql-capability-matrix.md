@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (107 feature rows): **61 gated / 0 uncovered / 46 missing** at the pin.
+Cluster totals (107 feature rows): **62 gated / 0 uncovered / 45 missing** at the pin.
 
 ## DDL
 
@@ -30,7 +30,7 @@ Cluster totals (107 feature rows): **61 gated / 0 uncovered / 46 missing** at th
 | `ALTER TABLE ... ADD COLUMN` | `alter table ac add column b integer not null default 5` | gated | rows equal both oracles |
 | `DROP TABLE` / `DROP INDEX` | `drop table t` | gated | covered by the engine gate |
 | `CREATE TABLE ... WITHOUT ROWID` | `create table wr (a text primary key, b integer) without rowid` | missing | `unsupported-statement` at `without` |
-| `CREATE TABLE ... STRICT` | `create table st (a integer) strict` | missing | `unsupported-statement` at `strict` |
+| `CREATE TABLE ... STRICT` | `create table st (a integer) strict` | gated | affinity runs first, then a value whose storage class differs from the declared type fails with `constraint-datatype`; invalid declared types fail with `unknown-datatype`; `strict tables enforce declared storage classes like better-sqlite3` |
 | `CREATE TEMP TABLE` | `create temp table tp (a integer)` | missing | `syntax`: expected `table` but found `temp` |
 | `CREATE TABLE ... AS SELECT` | `create table dst as select a from src where a > 1` | missing | `syntax`: expected `(` but found `as` |
 | Partial index (`... WHERE`) | `create index pix on pi (a) where a > 1` | missing | `unsupported-clause` `WHERE`; the gate pins this rejection |
@@ -208,6 +208,7 @@ Next tier, lower blast radius but still visible: `COLLATE` and `GLOB` (`sql.rs:3
 | Positional `?` placeholders in `INSERT ... VALUES` and `WHERE` | `engine.rs:520-545` (`execute_with_parameters`), `sql.rs:3554-3591` (`insert_value`) | `bound parameters fill placeholders on insert and select` |
 | `Engine::from_writer` plus `SqliteWriter::from_pages` for byte images | `engine.rs:355`, `database.storage/src/sqlite/writer.rs:186-215` | `fromSnapshot reopens an image with its catalog and rejects a broken header` |
 | `last_insert_rowid` tracked per connection and untouched by rollback | `engine.rs:598`, `engine.rs:620` | transaction and bound-parameter gates |
+| `STRICT` table option: declared types limited to `INT` / `INTEGER` / `REAL` / `TEXT` / `BLOB` / `ANY`, affinity applied before the storage-class check, `constraint-datatype` on violation | `sql.rs:3146-3157` (table options), `engine.rs:500-521` (`catalog_table`), `engine.rs:749-760` (insert guard), `engine.rs:956-964` (update guard), `engine.rs:6134` (`strict_value_violation`) | `strict tables enforce declared storage classes like better-sqlite3` |
 | Foreign keys (column/table `REFERENCES`, `PRAGMA foreign_keys`, orphan/delete/update checks, composite keys, statement rollback) | `sql.rs:2939`, `sql.rs:3098-3110`, `engine.rs:403` | `foreign keys enforce orphan, delete and update checks per session pragma`, `composite foreign keys and statement rollback match better-sqlite3` |
 | Self-referencing recursive CTE (keyword optional, `UNION ALL` duplicates, `UNION` fixed-point de-duplication, outer `LIMIT` truncation) | `engine.rs:2229` | `recursive CTEs match better-sqlite3 without and with the keyword` |
 
@@ -222,17 +223,17 @@ through this engine and both live oracles. Seed and count fully determine the re
 `e3d6c1d1baf823086965286e4725e7921b79e6406ec29e72a96d03b08c1456b1`, unchanged because the generators did
 not change.
 
-Distribution: DDL 40, DML 40, expressions 40, aggregates 30, windows 30, transactions 20. Result: 150 passed,
-40 mismatched, 10 discarded because `better-sqlite3` and CPython `sqlite3` disagreed with each other. The
-baseline holds 50 entries: 40 mismatches (23 structured rejections and 17 not-implemented rejections)
+Distribution: DDL 40, DML 40, expressions 40, aggregates 30, windows 30, transactions 20. Result: 151 passed,
+39 mismatched, 10 discarded because `better-sqlite3` and CPython `sqlite3` disagreed with each other. The
+baseline holds 49 entries: 39 mismatches (23 structured rejections and 16 not-implemented rejections)
 and 10 discarded oracle disagreements.
 
-All 40 mismatches are structured rejections against two successful oracles, all already listed in the cluster
+All 39 mismatches are structured rejections against two successful oracles, all already listed in the cluster
 tables:
 
 | Cluster | Cases | Shapes |
 |---------|-------|--------|
-| DDL | 16 | expression index 4, trigger 3, temp table 2, partial index 2, `WITHOUT ROWID` 2, `DROP COLUMN` 1, view 1, `STRICT` 1 |
+| DDL | 15 | expression index 4, trigger 3, temp table 2, partial index 2, `WITHOUT ROWID` 2, `DROP COLUMN` 1, view 1 |
 | DML | 10 | `INSERT OR REPLACE` 3, `INSERT ... SELECT` 3, UPSERT 2, `REPLACE INTO` 2 |
 | Expressions | 4 | `IS DISTINCT FROM` 2, `GLOB` 1, `NULLS FIRST` 1 |
 | Aggregates | 4 | `group_concat` with `ORDER BY` 1, `FILTER` 1, `count(DISTINCT)` 1, multi-argument `min`/`max` 1 |

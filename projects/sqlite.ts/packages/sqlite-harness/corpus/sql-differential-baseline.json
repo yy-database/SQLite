@@ -159,21 +159,6 @@
       ]
     },
     {
-      "id": 27,
-      "cluster": "ddl",
-      "sql": "create table probe (a integer) strict",
-      "check": "select count(*) from probe",
-      "kind": "mismatch",
-      "reason": "not-implemented",
-      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `strict`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
-      "coordinates": "sql.rs:2980-3420 (create_table)",
-      "signal": [
-        "ours error unsupported-statement unsupported statement starting at `strict`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
-        "better check [[\"n:0\"]]",
-        "python check [[\"n:0\"]]"
-      ]
-    },
-    {
       "id": 32,
       "cluster": "ddl",
       "sql": "create table probe (a text primary key) without rowid",

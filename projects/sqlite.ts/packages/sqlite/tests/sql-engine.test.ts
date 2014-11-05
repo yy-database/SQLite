@@ -1643,6 +1643,40 @@ test("rounding matches both oracles at ties and negative precision", () => {
   });
 });
 
+test("strict tables enforce declared storage classes like better-sqlite3", () => {
+  const engine = createEngine();
+  const steps = [
+    "create table s (a integer, b text, c real, d blob, e any) strict",
+    "insert into s values ('12', 5, 2, X'00', 'free')",
+  ];
+  withOracle(steps, (db) => {
+    for (const step of steps) engine.execute(step);
+    for (const sql of [
+      "select a, b, c, e from s",
+      "select typeof(a), typeof(b), typeof(c), typeof(d), typeof(e) from s",
+    ]) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+  });
+  assert.equal(engine.lastInsertRowid(), 1);
+
+  const real = engine.tryExecute("insert into s(a) values (1.5)");
+  assert.equal(real.ok, false);
+  assert.equal(real.error?.code, "constraint-datatype");
+  assert.equal(real.error?.message, "cannot store REAL value in INTEGER column s.a");
+  const blob = engine.tryExecute("insert into s(d) values ('z')");
+  assert.equal(blob.ok, false);
+  assert.equal(blob.error?.message, "cannot store TEXT value in BLOB column s.d");
+  const datatype = engine.tryExecute("create table bad (a varchar(10)) strict");
+  assert.equal(datatype.ok, false);
+  assert.equal(datatype.error?.code, "unknown-datatype");
+  assert.equal(datatype.error?.message, 'unknown datatype for bad.a: "varchar(10)"');
+
+  engine.execute("create table keyed (a integer primary key, b text) strict");
+  engine.execute("insert into keyed (b) values ('a null key becomes the rowid')");
+  assert.equal(engine.lastInsertRowid(), 1);
+});
+
 test("explicit transactions roll back rows and schema exactly as better-sqlite3", () => {
   const engine = createEngine();
   const external = new BetterSqlite(":memory:");
