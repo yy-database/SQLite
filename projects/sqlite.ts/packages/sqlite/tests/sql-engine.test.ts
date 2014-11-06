@@ -1677,6 +1677,53 @@ test("strict tables enforce declared storage classes like better-sqlite3", () =>
   assert.equal(engine.lastInsertRowid(), 1);
 });
 
+test("views re-run their query and keep catalog rows like better-sqlite3", () => {
+  const engine = createEngine();
+  const steps = [
+    "create table users (id integer primary key, name text, age integer)",
+    "insert into users values (1, 'ada', 36), (2, 'bob', 28), (3, 'cy', 45)",
+    "create view active as select id, name from users where age > 30",
+    "create view active_names(caller) as select name from active",
+  ];
+  withOracle(steps, (db) => {
+    for (const step of steps) engine.execute(step);
+    for (const sql of ["select id, name from active order by id", "select caller from active_names order by caller"]) {
+      const actual = engine.execute(sql);
+      assert.deepEqual(actual.columns, db.prepare(sql).columns().map((column) => column.name), sql);
+      assert.deepEqual(actual.rows, oracleRows(db, sql), sql);
+    }
+    // A later insert reaches the view without the definition being rewritten.
+    const later = "insert into users values (4, 'dan', 19), (5, 'eve', 52)";
+    engine.execute(later);
+    db.exec(later);
+    const after = "select id from active order by id";
+    assert.deepEqual(engine.execute(after).rows, oracleRows(db, after));
+    const master = "select type, name, tbl_name, rootpage, sql from sqlite_master where name in ('active', 'active_names') order by name";
+    assert.deepEqual(engine.execute(master).rows, oracleRows(db, master));
+    // Both engines refuse to write through a view and to index one.
+    assert.throws(() => db.exec("insert into active values (9, 'zed')"));
+    assert.throws(() => db.exec("create index active_idx on active(id)"));
+  });
+
+  const write = engine.tryExecute("insert into active values (9, 'zed')");
+  assert.equal(write.ok, false);
+  assert.equal(write.error?.code, "readonly-view");
+  const index = engine.tryExecute("create index active_idx on active(id)");
+  assert.equal(index.ok, false);
+  assert.equal(index.error?.code, "readonly-view");
+
+  // The catalog row re-reads the definition on reopen without touching the image.
+  const image = Buffer.from(engine.snapshot());
+  const reopened = createEngineFromSnapshot(image);
+  assert.deepEqual(reopened.execute("select id from active order by id").rows, [[1], [3], [5]]);
+  assert.equal(Buffer.compare(reopened.snapshot(), image), 0);
+
+  engine.execute("drop view active_names");
+  assert.equal(engine.tryExecute("drop table active").error?.code, "wrong-object");
+  engine.execute("drop view active");
+  assert.equal(engine.tryExecute("select * from active").error?.code, "unknown-table");
+});
+
 test("explicit transactions roll back rows and schema exactly as better-sqlite3", () => {
   const engine = createEngine();
   const external = new BetterSqlite(":memory:");

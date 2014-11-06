@@ -129,21 +129,6 @@
       ]
     },
     {
-      "id": 24,
-      "cluster": "ddl",
-      "sql": "create view probe as select id from users where age > 30",
-      "check": "select id from probe order by id",
-      "kind": "mismatch",
-      "reason": "structured-rejection",
-      "detail": "this repository rejects the statement: syntax expected `table` but found `view`",
-      "coordinates": "sql.rs:2769-2858 (statement dispatch)",
-      "signal": [
-        "ours error syntax expected `table` but found `view`",
-        "better check [[\"n:1\"],[\"n:3\"],[\"n:5\"],[\"n:6\"]]",
-        "python check [[\"n:1\"],[\"n:3\"],[\"n:5\"],[\"n:6\"]]"
-      ]
-    },
-    {
       "id": 25,
       "cluster": "ddl",
       "sql": "create temp table probe (a integer)",

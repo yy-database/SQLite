@@ -1,6 +1,6 @@
 # SQL capability matrix
 
-Measured against the pinned `database.rs` facade rev `68101e7` (`68101e791882166eaf7707b537d9ee889ee88318`,
+Measured against the pinned `database.rs` facade rev `ac55db0` (`ac55db0969f2cd08d2bad35a4a275c47ea9feeef`,
 `projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
 through both live oracles; the oracle value, not an internal expectation, decides whether a row is correct.
 
@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (107 feature rows): **62 gated / 0 uncovered / 45 missing** at the pin.
+Cluster totals (107 feature rows): **63 gated / 0 uncovered / 44 missing** at the pin.
 
 ## DDL
 
@@ -36,7 +36,7 @@ Cluster totals (107 feature rows): **62 gated / 0 uncovered / 45 missing** at th
 | Partial index (`... WHERE`) | `create index pix on pi (a) where a > 1` | missing | `unsupported-clause` `WHERE`; the gate pins this rejection |
 | Expression index | `create index eix on ei (a + 1)` | missing | `syntax`: index column list stops at `+` |
 | Index `COLLATE` | `create index cix on ci (s collate nocase)` | missing | `syntax`: index column list stops at `collate` |
-| `CREATE VIEW` | `create view vv as select a from vt where a > 1` | missing | `syntax`: expected `table` but found `view` |
+| `CREATE VIEW` | `create view vv as select a from vt where a > 1` | gated | re-runs the stored query on every read, keeps `CREATE VIEW <name>` plus the verbatim rest in `sqlite_master.sql`, rejects writes and indexes with `readonly-view`, and survives a reopen; `views re-run their query and keep catalog rows like better-sqlite3` |
 | `CREATE TRIGGER` | `create trigger trg after insert on tg begin insert into tlog values (new.a); end` | missing | `syntax`: expected `table` but found `trigger` |
 | Foreign key, column level `REFERENCES` | `create table fk2 (id integer primary key, pid integer references fk1 (id))` | gated | orphan insert, parent delete and parent update all fail with `SQLITE_CONSTRAINT_FOREIGNKEY` |
 | Foreign key, table level `FOREIGN KEY` with an implicit parent primary key | `create table fk4 (..., foreign key (pid) references fk3 (id))` | gated | composite orphan and composite rollback covered by `composite foreign keys and statement rollback match better-sqlite3` |
