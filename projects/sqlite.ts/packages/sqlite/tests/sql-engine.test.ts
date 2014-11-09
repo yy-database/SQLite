@@ -252,8 +252,9 @@ test("sqlite_master lists schema objects in creation order and stays read-only",
   assert.equal(unindexable.error?.code, "readonly-system-table");
   assert.equal(unindexable.error?.message, "table sqlite_master may not be indexed");
 
-  // The file itself must report the same rows, with the statements stored
-  // verbatim exactly like SQLite stores them.
+  // The file itself must report the same rows, with the leading `CREATE TABLE`
+  // / `CREATE INDEX` keywords canonicalized and the rest stored verbatim,
+  // exactly like SQLite stores them.
   const workspaceHandle = workspace();
   try {
     writeFileSync(workspaceHandle.path, engine.snapshot());
@@ -261,9 +262,9 @@ test("sqlite_master lists schema objects in creation order and stays read-only",
     try {
       assert.equal(external.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
       assert.deepEqual(external.prepare("SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master").all(), [
-        { type: "table", name: "a", tbl_name: "a", rootpage: 2, sql: "create table a (x integer, y text)" },
-        { type: "index", name: "ia", tbl_name: "a", rootpage: 3, sql: "create index ia on a (x)" },
-        { type: "table", name: "b", tbl_name: "b", rootpage: 4, sql: "create table b (z text primary key, w text unique)" },
+        { type: "table", name: "a", tbl_name: "a", rootpage: 2, sql: "CREATE TABLE a (x integer, y text)" },
+        { type: "index", name: "ia", tbl_name: "a", rootpage: 3, sql: "CREATE INDEX ia on a (x)" },
+        { type: "table", name: "b", tbl_name: "b", rootpage: 4, sql: "CREATE TABLE b (z text primary key, w text unique)" },
         { type: "index", name: "sqlite_autoindex_b_1", tbl_name: "b", rootpage: 5, sql: null },
         { type: "index", name: "sqlite_autoindex_b_2", tbl_name: "b", rootpage: 6, sql: null },
       ]);
@@ -1270,6 +1271,33 @@ test("add column default values reach existing rows and extend select order", ()
   assert.equal(dropColumn.error?.statement, "alter-table");
 });
 
+test("add column with REFERENCES enforces the parent like better-sqlite3", () => {
+  const engine = createEngine();
+  const steps = [
+    "create table parent (id integer primary key)",
+    "create table plain (a integer)",
+    "insert into plain values (5)",
+    "pragma foreign_keys = on",
+    "alter table plain add column pid integer references parent (id)",
+    "insert into parent values (7)",
+    "insert into plain values (8, 7)",
+  ];
+  withOracle(steps, (db) => {
+    for (const step of steps) engine.execute(step);
+    for (const sql of ["select a, pid from plain order by a", "select sql from sqlite_master where name = 'plain'"]) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+    assert.throws(() => db.exec("insert into plain values (9, 99)"));
+    assert.throws(() => db.exec("alter table plain add column bad integer default 1 references parent (id)"));
+  });
+  const orphan = engine.tryExecute("insert into plain values (9, 99)");
+  assert.equal(orphan.ok, false);
+  assert.equal(orphan.error?.code, "SQLITE_CONSTRAINT_FOREIGNKEY");
+  const nonNull = engine.tryExecute("alter table plain add column bad integer default 1 references parent (id)");
+  assert.equal(nonNull.ok, false);
+  assert.equal(nonNull.error?.message, "Cannot add a REFERENCES column with non-NULL default value");
+});
+
 interface OracleDatabase {
   exec(sql: string): void;
   prepare(sql: string): { columns(): Array<{ name: string }>; all(): Array<Record<string, unknown>> };
@@ -1615,7 +1643,6 @@ test("unsupported foreign key shapes keep structured rejections", () => {
     ["create table c3 (id integer primary key, pid integer references parent (id) on update set null)", "unsupported-foreign-key-action", "SET NULL"],
     ["create table c4 (id integer primary key, pid integer references parent (id) on update set default)", "unsupported-foreign-key-action", "SET DEFAULT"],
     ["create table c5 (id integer primary key, pid integer references parent (id) deferrable initially deferred)", "unsupported-deferred-foreign-key", "DEFERRABLE"],
-    ["alter table plain add column pid integer references parent (id)", "unsupported-column-constraint", "REFERENCES"],
   ];
   for (const [sql, code, clause] of cases) {
     const result = engine.tryExecute(sql);

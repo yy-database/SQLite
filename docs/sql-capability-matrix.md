@@ -1,6 +1,6 @@
 # SQL capability matrix
 
-Measured against the pinned `database.rs` facade rev `ac55db0` (`ac55db0969f2cd08d2bad35a4a275c47ea9feeef`,
+Measured against the pinned `database.rs` facade rev `f66ab24` (`f66ab241dcb5439ea931b8901383067d259e432f`,
 `projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
 through both live oracles; the oracle value, not an internal expectation, decides whether a row is correct.
 
@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (107 feature rows): **63 gated / 0 uncovered / 44 missing** at the pin.
+Cluster totals (107 feature rows): **64 gated / 0 uncovered / 43 missing** at the pin.
 
 ## DDL
 
@@ -43,7 +43,7 @@ Cluster totals (107 feature rows): **63 gated / 0 uncovered / 44 missing** at th
 | `ON DELETE CASCADE` / `ON UPDATE CASCADE` | `create table c1 (pid integer references parent (id) on delete cascade)` | missing | `unsupported-foreign-key-action` with clause `CASCADE`; separately asserted |
 | `ON UPDATE SET NULL` / `ON UPDATE SET DEFAULT` | `create table c2 (pid integer references parent (id) on update set null)` | missing | `unsupported-foreign-key-action` with clause `SET NULL` / `SET DEFAULT`; separately asserted |
 | `DEFERRABLE INITIALLY DEFERRED` | `create table c3 (pid integer references parent (id) deferrable initially deferred)` | missing | `unsupported-deferred-foreign-key` with clause `DEFERRABLE`; separately asserted |
-| `ALTER TABLE ... ADD COLUMN ... REFERENCES` | `alter table plain add column pid integer references parent (id)` | missing | `unsupported-column-constraint` with clause `REFERENCES`; separately asserted |
+| `ALTER TABLE ... ADD COLUMN ... REFERENCES` | `alter table plain add column pid integer references parent (id)` | gated | appends the definition verbatim, refuses a non-NULL default, keeps existing rows at NULL, and checks the parent on later inserts; `add column with REFERENCES enforces the parent like better-sqlite3` |
 | `ALTER TABLE ... DROP COLUMN` | `alter table dc drop column b` | missing | `unsupported-clause` `DROP COLUMN`; the gate pins this rejection |
 
 ## DML
@@ -210,11 +210,13 @@ Next tier, lower blast radius but still visible: `COLLATE` and `GLOB` (`sql.rs:3
 | `last_insert_rowid` tracked per connection and untouched by rollback | `engine.rs:598`, `engine.rs:620` | transaction and bound-parameter gates |
 | `STRICT` table option: declared types limited to `INT` / `INTEGER` / `REAL` / `TEXT` / `BLOB` / `ANY`, affinity applied before the storage-class check, `constraint-datatype` on violation | `sql.rs:3146-3157` (table options), `engine.rs:500-521` (`catalog_table`), `engine.rs:749-760` (insert guard), `engine.rs:956-964` (update guard), `engine.rs:6134` (`strict_value_violation`) | `strict tables enforce declared storage classes like better-sqlite3` |
 | Foreign keys (column/table `REFERENCES`, `PRAGMA foreign_keys`, orphan/delete/update checks, composite keys, statement rollback) | `sql.rs:2939`, `sql.rs:3098-3110`, `engine.rs:403` | `foreign keys enforce orphan, delete and update checks per session pragma`, `composite foreign keys and statement rollback match better-sqlite3` |
+| `ALTER TABLE ... ADD COLUMN ... REFERENCES`: non-NULL defaults refused, existing rows stay NULL, later inserts check the parent | `sql.rs:1473` (`AlterAction::AddColumn`), `engine.rs:1370-1411` | `add column with REFERENCES enforces the parent like better-sqlite3` |
+| Canonical `CREATE TABLE` / `CREATE INDEX` / `CREATE VIEW` prefix in `sqlite_master.sql` (verbatim tail, `IF NOT EXISTS` dropped) | `sql.rs:3279-3291` (`canonical_create_sql`) | `sqlite_master lists schema objects in creation order and stays read-only`, view gate |
 | Self-referencing recursive CTE (keyword optional, `UNION ALL` duplicates, `UNION` fixed-point de-duplication, outer `LIMIT` truncation) | `engine.rs:2229` | `recursive CTEs match better-sqlite3 without and with the keyword` |
 
-The four foreign key shapes still missing at this pin (`ON DELETE CASCADE`, `ON UPDATE SET NULL` / `SET DEFAULT`,
-`DEFERRABLE INITIALLY DEFERRED`, `ALTER TABLE ... ADD COLUMN ... REFERENCES`) are listed in the DDL table and
-asserted as structured rejections by `unsupported foreign key shapes keep structured rejections`.
+The three foreign key shapes still missing at this pin (`ON DELETE CASCADE`, `ON UPDATE SET NULL` / `SET DEFAULT`,
+`DEFERRABLE INITIALLY DEFERRED`) are listed in the DDL table and asserted as structured rejections by
+`unsupported foreign key shapes keep structured rejections`.
 
 ## Differential corpus
 
