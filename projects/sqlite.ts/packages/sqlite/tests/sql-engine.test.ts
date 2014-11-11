@@ -1751,6 +1751,42 @@ test("views re-run their query and keep catalog rows like better-sqlite3", () =>
   assert.equal(engine.tryExecute("select * from active").error?.code, "unknown-table");
 });
 
+test("triggers fire once without recursion and keep catalog rows like better-sqlite3", () => {
+  const engine = createEngine();
+  const steps = [
+    "create table scratch (id integer, label text)",
+    "create table audit (id integer)",
+    "create trigger probe after insert on scratch begin insert into audit values (1); end",
+    "create trigger probe_self after insert on scratch begin insert into scratch values (9, 'self'); end",
+    "insert into scratch values (1, 'x')",
+  ];
+  withOracle(steps, (db) => {
+    for (const step of steps) engine.execute(step);
+    for (const sql of [
+      "select count(*) from scratch",
+      "select count(*) from audit",
+      "select type, name, tbl_name, rootpage, sql from sqlite_master where type = 'trigger' order by name",
+    ]) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+    // A trigger cannot be attached to a table that does not exist.
+    assert.throws(() => db.exec("create trigger missing after insert on absent begin select 1; end"));
+    for (const sql of ["drop trigger probe", "insert into scratch values (2, 'y')"]) {
+      db.exec(sql);
+      engine.execute(sql);
+    }
+    const afterDrop = "select count(*) from audit";
+    assert.deepEqual(engine.execute(afterDrop).rows, oracleRows(db, afterDrop));
+    db.exec("drop table scratch");
+    engine.execute("drop table scratch");
+    const master = "select count(*) from sqlite_master where type = 'trigger'";
+    assert.deepEqual(engine.execute(master).rows, oracleRows(db, master));
+  });
+  assert.equal(engine.tryExecute("create trigger missing after insert on absent begin select 1; end").error?.code, "unknown-table");
+  assert.equal(engine.execute("select count(*) from audit").rows[0][0], 2);
+  assert.equal(engine.execute("select count(*) from sqlite_master where type = 'trigger'").rows[0][0], 0);
+});
+
 test("explicit transactions roll back rows and schema exactly as better-sqlite3", () => {
   const engine = createEngine();
   const external = new BetterSqlite(":memory:");

@@ -1,6 +1,6 @@
 # SQL capability matrix
 
-Measured against the pinned `database.rs` facade rev `f66ab24` (`f66ab241dcb5439ea931b8901383067d259e432f`,
+Measured against the pinned `database.rs` facade rev `d5a0e13` (`d5a0e13fad714d4be679215864cd710fa27457b6`,
 `projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
 through both live oracles; the oracle value, not an internal expectation, decides whether a row is correct.
 
@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (107 feature rows): **64 gated / 0 uncovered / 43 missing** at the pin.
+Cluster totals (107 feature rows): **65 gated / 0 uncovered / 42 missing** at the pin.
 
 ## DDL
 
@@ -37,7 +37,7 @@ Cluster totals (107 feature rows): **64 gated / 0 uncovered / 43 missing** at th
 | Expression index | `create index eix on ei (a + 1)` | missing | `syntax`: index column list stops at `+` |
 | Index `COLLATE` | `create index cix on ci (s collate nocase)` | missing | `syntax`: index column list stops at `collate` |
 | `CREATE VIEW` | `create view vv as select a from vt where a > 1` | gated | re-runs the stored query on every read, keeps `CREATE VIEW <name>` plus the verbatim rest in `sqlite_master.sql`, rejects writes and indexes with `readonly-view`, and survives a reopen; `views re-run their query and keep catalog rows like better-sqlite3` |
-| `CREATE TRIGGER` | `create trigger trg after insert on tg begin insert into tlog values (new.a); end` | missing | `syntax`: expected `table` but found `trigger` |
+| `CREATE TRIGGER` / `DROP TRIGGER` | `create trigger trg after insert on tg begin insert into tlog values (new.a); end` | gated | runs `BEFORE` / `AFTER` bodies in order, a body statement fires the other triggers but never the trigger that is running (`recursive_triggers = OFF`), stores `CREATE TRIGGER <name>` plus the verbatim rest, and `DROP TABLE` / `DROP TRIGGER` remove the catalog rows; `triggers fire once without recursion and keep catalog rows like better-sqlite3` |
 | Foreign key, column level `REFERENCES` | `create table fk2 (id integer primary key, pid integer references fk1 (id))` | gated | orphan insert, parent delete and parent update all fail with `SQLITE_CONSTRAINT_FOREIGNKEY` |
 | Foreign key, table level `FOREIGN KEY` with an implicit parent primary key | `create table fk4 (..., foreign key (pid) references fk3 (id))` | gated | composite orphan and composite rollback covered by `composite foreign keys and statement rollback match better-sqlite3` |
 | `ON DELETE CASCADE` / `ON UPDATE CASCADE` | `create table c1 (pid integer references parent (id) on delete cascade)` | missing | `unsupported-foreign-key-action` with clause `CASCADE`; separately asserted |

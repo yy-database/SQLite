@@ -39,21 +39,6 @@
       ]
     },
     {
-      "id": 10,
-      "cluster": "ddl",
-      "sql": "create trigger probe after insert on scratch begin insert into scratch values (1, 'x'); end",
-      "check": "select count(*) from scratch",
-      "kind": "mismatch",
-      "reason": "structured-rejection",
-      "detail": "this repository rejects the statement: syntax expected `table` but found `trigger`",
-      "coordinates": "sql.rs:2769-2858 (statement dispatch)",
-      "signal": [
-        "ours error syntax expected `table` but found `trigger`",
-        "better check [[\"n:0\"]]",
-        "python check [[\"n:0\"]]"
-      ]
-    },
-    {
       "id": 12,
       "cluster": "ddl",
       "sql": "create temp table probe (a integer)",
@@ -154,36 +139,6 @@
       "coordinates": "sql.rs:2980-3420 (create_table)",
       "signal": [
         "ours error unsupported-statement unsupported statement starting at `without`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
-        "better check [[\"n:0\"]]",
-        "python check [[\"n:0\"]]"
-      ]
-    },
-    {
-      "id": 35,
-      "cluster": "ddl",
-      "sql": "create trigger probe after insert on scratch begin insert into scratch values (1, 'x'); end",
-      "check": "select count(*) from scratch",
-      "kind": "mismatch",
-      "reason": "structured-rejection",
-      "detail": "this repository rejects the statement: syntax expected `table` but found `trigger`",
-      "coordinates": "sql.rs:2769-2858 (statement dispatch)",
-      "signal": [
-        "ours error syntax expected `table` but found `trigger`",
-        "better check [[\"n:0\"]]",
-        "python check [[\"n:0\"]]"
-      ]
-    },
-    {
-      "id": 37,
-      "cluster": "ddl",
-      "sql": "create trigger probe after insert on scratch begin insert into scratch values (1, 'x'); end",
-      "check": "select count(*) from scratch",
-      "kind": "mismatch",
-      "reason": "structured-rejection",
-      "detail": "this repository rejects the statement: syntax expected `table` but found `trigger`",
-      "coordinates": "sql.rs:2769-2858 (statement dispatch)",
-      "signal": [
-        "ours error syntax expected `table` but found `trigger`",
         "better check [[\"n:0\"]]",
         "python check [[\"n:0\"]]"
       ]
