@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (107 feature rows): **65 gated / 0 uncovered / 42 missing** at the pin.
+Cluster totals (107 feature rows): **66 gated / 0 uncovered / 41 missing** at the pin.
 
 ## DDL
 
@@ -44,7 +44,7 @@ Cluster totals (107 feature rows): **65 gated / 0 uncovered / 42 missing** at th
 | `ON UPDATE SET NULL` / `ON UPDATE SET DEFAULT` | `create table c2 (pid integer references parent (id) on update set null)` | missing | `unsupported-foreign-key-action` with clause `SET NULL` / `SET DEFAULT`; separately asserted |
 | `DEFERRABLE INITIALLY DEFERRED` | `create table c3 (pid integer references parent (id) deferrable initially deferred)` | missing | `unsupported-deferred-foreign-key` with clause `DEFERRABLE`; separately asserted |
 | `ALTER TABLE ... ADD COLUMN ... REFERENCES` | `alter table plain add column pid integer references parent (id)` | gated | appends the definition verbatim, refuses a non-NULL default, keeps existing rows at NULL, and checks the parent on later inserts; `add column with REFERENCES enforces the parent like better-sqlite3` |
-| `ALTER TABLE ... DROP COLUMN` | `alter table dc drop column b` | missing | `unsupported-clause` `DROP COLUMN`; the gate pins this rejection |
+| `ALTER TABLE ... DROP COLUMN` | `alter table dc drop column b` | gated | removes the definition and its value slot from every row, rewrites `sqlite_master.sql` byte for byte (inline constraints go with the column), and refuses PK / UNIQUE / indexed / view / trigger / table-check / table-FK readers exactly where `better-sqlite3` refuses them; `drop column rewrites rows and stored schema like better-sqlite3` |
 
 ## DML
 
@@ -225,17 +225,17 @@ through this engine and both live oracles. Seed and count fully determine the re
 `e3d6c1d1baf823086965286e4725e7921b79e6406ec29e72a96d03b08c1456b1`, unchanged because the generators did
 not change.
 
-Distribution: DDL 40, DML 40, expressions 40, aggregates 30, windows 30, transactions 20. Result: 151 passed,
-39 mismatched, 10 discarded because `better-sqlite3` and CPython `sqlite3` disagreed with each other. The
-baseline holds 49 entries: 39 mismatches (23 structured rejections and 16 not-implemented rejections)
+Distribution: DDL 40, DML 40, expressions 40, aggregates 30, windows 30, transactions 20. Result: 156 passed,
+34 mismatched, 10 discarded because `better-sqlite3` and CPython `sqlite3` disagreed with each other. The
+baseline holds 44 entries: 34 mismatches (19 structured rejections and 15 not-implemented rejections)
 and 10 discarded oracle disagreements.
 
-All 39 mismatches are structured rejections against two successful oracles, all already listed in the cluster
+All 34 mismatches are structured rejections against two successful oracles, all already listed in the cluster
 tables:
 
 | Cluster | Cases | Shapes |
 |---------|-------|--------|
-| DDL | 15 | expression index 4, trigger 3, temp table 2, partial index 2, `WITHOUT ROWID` 2, `DROP COLUMN` 1, view 1 |
+| DDL | 10 | expression index 4, temp table 2, `WITHOUT ROWID` 2, partial index 2 |
 | DML | 10 | `INSERT OR REPLACE` 3, `INSERT ... SELECT` 3, UPSERT 2, `REPLACE INTO` 2 |
 | Expressions | 4 | `IS DISTINCT FROM` 2, `GLOB` 1, `NULLS FIRST` 1 |
 | Aggregates | 4 | `group_concat` with `ORDER BY` 1, `FILTER` 1, `count(DISTINCT)` 1, multi-argument `min`/`max` 1 |

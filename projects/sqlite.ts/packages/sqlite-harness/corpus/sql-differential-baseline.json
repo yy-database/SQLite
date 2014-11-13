@@ -69,21 +69,6 @@
       ]
     },
     {
-      "id": 19,
-      "cluster": "ddl",
-      "sql": "alter table users drop column note",
-      "check": "select id from users order by id",
-      "kind": "mismatch",
-      "reason": "not-implemented",
-      "detail": "this repository rejects the statement: unsupported-clause [DROP COLUMN] `ALTER TABLE ... DROP COLUMN` is not supported (`note` would have to be removed from every stored row)",
-      "coordinates": "sql.rs:2897-2979 (alter_table)",
-      "signal": [
-        "ours error unsupported-clause [DROP COLUMN] `ALTER TABLE ... DROP COLUMN` is not supported (`note` would have to be removed from every stored row)",
-        "better check [[\"n:1\"],[\"n:2\"],[\"n:3\"],[\"n:4\"],[\"n:5\"],[\"n:6\"]]",
-        "python check [[\"n:1\"],[\"n:2\"],[\"n:3\"],[\"n:4\"],[\"n:5\"],[\"n:6\"]]"
-      ]
-    },
-    {
       "id": 20,
       "cluster": "ddl",
       "sql": "create index probe on users (age) where age > 30",

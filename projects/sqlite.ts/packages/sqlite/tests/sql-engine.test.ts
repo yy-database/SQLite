@@ -1263,12 +1263,55 @@ test("add column default values reach existing rows and extend select order", ()
   // On an empty table the identical definition is accepted.
   engine.exec("CREATE TABLE empty(a INTEGER); ALTER TABLE empty ADD COLUMN b TEXT NOT NULL");
   assert.deepEqual(engine.execute("select sql from sqlite_master where name = 'empty'").rows, [["CREATE TABLE empty(a INTEGER, b TEXT NOT NULL)"]]);
+});
 
-  // DROP COLUMN stays a named gap lock rather than a silent half-removal.
-  const dropColumn = engine.tryExecute("alter table t drop column b");
-  assert.equal(dropColumn.error?.code, "unsupported-clause");
-  assert.equal(dropColumn.error?.clause, "DROP COLUMN");
-  assert.equal(dropColumn.error?.statement, "alter-table");
+test("drop column rewrites rows and stored schema like better-sqlite3", () => {
+  const engine = createEngine();
+  const steps = [
+    "create table t (id integer primary key, a text, b integer, note text)",
+    "insert into t (a, b, note) values ('x', 1, 'n')",
+    "insert into t (a, b, note) values ('y', 2, null)",
+    "alter table t drop column b",
+    "insert into t (a, note) values ('z', 'm')",
+    "update t set note = 'q' where id = 1",
+    "create table kept (a text, b text, check (b <> ''))",
+    "alter table kept drop column a",
+    "create table inline (a text check (a <> ''), b text)",
+    "alter table inline drop column a",
+  ];
+  withOracle(steps, (db) => {
+    for (const step of steps) engine.execute(step);
+    for (const sql of [
+      "select id, a, note from t order by id",
+      "select sql from sqlite_master where name = 't'",
+      "select sql from sqlite_master where name in ('kept', 'inline') order by name",
+    ]) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+  });
+
+  // Every definition that still reads the column is refused on both sides.
+  const refused: Array<{ setup: string; drop: string; code: string }> = [
+    { setup: "create table k1 (id integer primary key, a text)", drop: "alter table k1 drop column id", code: "invalid-alter" },
+    { setup: "create table k2 (id integer primary key, a text)", drop: "alter table k2 drop column nope", code: "unknown-column" },
+    { setup: "create table u (a text unique, b text)", drop: "alter table u drop column a", code: "invalid-alter" },
+    { setup: "create table v (a text)", drop: "alter table v drop column a", code: "invalid-alter" },
+    { setup: "create table w (a text, b text); create index wx on w (a)", drop: "alter table w drop column a", code: "invalid-alter" },
+    { setup: "create table x (a text, b text, check (a <> ''))", drop: "alter table x drop column a", code: "invalid-alter" },
+    { setup: "create table vt (a text, b text); create view vv as select a from vt", drop: "alter table vt drop column a", code: "invalid-alter" },
+    {
+      setup: "create table tg (a text, b text); create table lt (x text); create trigger tr after insert on tg begin update lt set x = new.a; end",
+      drop: "alter table tg drop column a",
+      code: "invalid-alter",
+    },
+  ];
+  for (const { setup, drop, code } of refused) {
+    withOracle([setup], (db) => {
+      engine.exec(setup);
+      assert.throws(() => db.exec(drop), drop);
+      assert.equal(engine.tryExecute(drop).error?.code, code, drop);
+    });
+  }
 });
 
 test("add column with REFERENCES enforces the parent like better-sqlite3", () => {
