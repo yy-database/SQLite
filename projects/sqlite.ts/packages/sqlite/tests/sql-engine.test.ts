@@ -1314,6 +1314,38 @@ test("drop column rewrites rows and stored schema like better-sqlite3", () => {
   }
 });
 
+test("temp tables shadow main and vanish with the connection like better-sqlite3", () => {
+  const engine = createEngine();
+  const steps = [
+    "create temp table t (a integer primary key, b text)",
+    "create table t (a integer)",
+    "insert into t values (9, 'temp')",
+    "update t set b = 'changed'",
+    "delete from t where a = 9",
+    "insert into t values (9, 'again')",
+    "drop table t",
+    "insert into t values (1)",
+    "create temp table t (x integer)",
+    "insert into t values (5)",
+  ];
+  withOracle(steps, (db) => {
+    for (const step of steps) engine.execute(step);
+    for (const sql of [
+      "select type, name, tbl_name, rootpage, sql from sqlite_temp_master",
+      "select name, sql from sqlite_master",
+      "select x from t",
+    ]) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+    // `DROP TABLE` removed the temp object first, so the main table survived
+    // and later writes reached it until the temp table was created again.
+    assert.deepEqual(engine.execute("select name from sqlite_temp_master").rows, oracleRows(db, "select name from sqlite_temp_master"));
+  });
+  // A temp schema belongs to one connection, so a fresh engine starts empty.
+  const other = createEngine();
+  assert.deepEqual(other.execute("select name from sqlite_temp_master").rows, []);
+});
+
 test("add column with REFERENCES enforces the parent like better-sqlite3", () => {
   const engine = createEngine();
   const steps = [

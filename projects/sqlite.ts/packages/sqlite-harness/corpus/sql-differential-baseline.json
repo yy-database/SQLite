@@ -39,21 +39,6 @@
       ]
     },
     {
-      "id": 12,
-      "cluster": "ddl",
-      "sql": "create temp table probe (a integer)",
-      "check": "select count(*) from probe",
-      "kind": "mismatch",
-      "reason": "structured-rejection",
-      "detail": "this repository rejects the statement: syntax expected `table` but found `temp`",
-      "coordinates": "sql.rs:2769-2858 (statement dispatch)",
-      "signal": [
-        "ours error syntax expected `table` but found `temp`",
-        "better check [[\"n:0\"]]",
-        "python check [[\"n:0\"]]"
-      ]
-    },
-    {
       "id": 14,
       "cluster": "ddl",
       "sql": "create index probe on users (age) where age > 30",
@@ -96,21 +81,6 @@
         "ours error syntax expected `,` or `)` in the index column list but found `+`",
         "better check [[\"n:1\"]]",
         "python check [[\"n:1\"]]"
-      ]
-    },
-    {
-      "id": 25,
-      "cluster": "ddl",
-      "sql": "create temp table probe (a integer)",
-      "check": "select count(*) from probe",
-      "kind": "mismatch",
-      "reason": "structured-rejection",
-      "detail": "this repository rejects the statement: syntax expected `table` but found `temp`",
-      "coordinates": "sql.rs:2769-2858 (statement dispatch)",
-      "signal": [
-        "ours error syntax expected `table` but found `temp`",
-        "better check [[\"n:0\"]]",
-        "python check [[\"n:0\"]]"
       ]
     },
     {
