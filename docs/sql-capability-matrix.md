@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (107 feature rows): **67 gated / 0 uncovered / 40 missing** at the pin.
+Cluster totals (108 feature rows): **70 gated / 0 uncovered / 38 missing** at the pin.
 
 ## DDL
 
@@ -157,6 +157,7 @@ Cluster totals (107 feature rows): **67 gated / 0 uncovered / 40 missing** at th
 | Feature | Probe | Status | Evidence |
 |---------|-------|--------|----------|
 | `PRAGMA foreign_keys` read-back and session toggle | `pragma foreign_keys` / `pragma foreign_keys = off` | gated | defaults to `1`, reads back `0` after `off`; enforcement behaviour asserted |
+| `PRAGMA database_list` | `pragma database_list` | gated | reports `seq/name/file` for `main`, `temp` once it exists, then each attached schema in attach order with its absolute file path; `attach, qualified names and detach follow better-sqlite3` |
 | `PRAGMA table_info(t)` | `pragma table_info(pt)` | missing | `unsupported-pragma` at `PRAGMA` |
 | `PRAGMA user_version` | `pragma user_version` | missing | `unsupported-pragma` at `PRAGMA` |
 | `PRAGMA integrity_check` | `pragma integrity_check` | missing | `unsupported-pragma` at `PRAGMA` (the gate only calls it on external files) |
@@ -173,8 +174,8 @@ Cluster totals (107 feature rows): **67 gated / 0 uncovered / 40 missing** at th
 | Feature | Probe | Status | Evidence |
 |---------|-------|--------|----------|
 | `snapshot()` byte export | `engine.snapshot()` | gated | storage and platform suites |
-| `ATTACH DATABASE` | `attach database ':memory:' as aux` | missing | `unsupported-statement` at `attach` |
-| `DETACH DATABASE` | `detach database aux` | missing | `unsupported-statement` at `detach` |
+| `ATTACH DATABASE` | `attach database ':memory:' as aux` | gated | accepts `:memory:` / `''` and file paths, creates a missing file empty and materializes it on the first write, opens an existing image with its catalog, caps at ten attached databases, and resolves `aux.tbl`, `main.tbl`, `temp.tbl`, cross-schema joins, unqualified fall-through and triggers through the owning schema; `attach, qualified names and detach follow better-sqlite3` plus `attached_databases_resolve_qualified_names_and_list_themselves`, `main_and_temp_qualifiers_pin_the_schema`, `attached_files_are_created_and_keep_their_rows_across_reattach` |
+| `DETACH DATABASE` | `detach database aux` | gated | flushes the attached image, removes the schema, refuses `main` / `temp` with `cannot detach database <name>` and an unknown name with `no such database: <name>`; same gates |
 | `VACUUM` / `VACUUM INTO` | `vacuum` | missing | `unsupported-statement` at `vacuum` |
 
 ## Unimplemented: top 5 by impact

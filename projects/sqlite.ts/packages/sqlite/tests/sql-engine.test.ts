@@ -1314,6 +1314,55 @@ test("drop column rewrites rows and stored schema like better-sqlite3", () => {
   }
 });
 
+test("attach, qualified names and detach follow better-sqlite3", () => {
+  const steps = [
+    "attach database ':memory:' as aux",
+    "create temp table shadow (v text)",
+    "create table shadow (v text)",
+    "insert into temp.shadow values ('temp')",
+    "insert into main.shadow values ('main')",
+    "create table aux.shadow (v text)",
+    "insert into aux.shadow values ('aux')",
+    "create table aux.remote (v text)",
+    "insert into remote values ('fallback')",
+  ];
+  const engine = createEngine();
+  withOracle(steps, (db) => {
+    for (const step of steps) engine.execute(step);
+    for (const sql of [
+      "pragma database_list",
+      "select v from shadow",
+      "select v from main.shadow",
+      "select v from temp.shadow",
+      "select v from aux.shadow",
+      "select v from remote",
+      "select type, name from aux.sqlite_master order by name",
+      "select m.v as mv, a.v as av from main.shadow as m join aux.shadow as a on m.rowid = a.rowid",
+      "select name from main.sqlite_master order by name",
+      "select name from temp.sqlite_temp_master order by name",
+    ]) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+  });
+  engine.execute("detach database aux");
+  const detached = engine.tryExecute("select v from aux.shadow");
+  assert.equal(detached.ok, false);
+  assert.equal(detached.error?.message, "no such table: aux.shadow");
+  const cases: Array<[string, string]> = [
+    ["detach database main", "cannot detach database main"],
+    ["detach database temp", "cannot detach database temp"],
+    ["detach database nope", "no such database: nope"],
+  ];
+  for (const [sql, message] of cases) {
+    const oracle = new BetterSqlite(":memory:");
+    assert.throws(() => oracle.exec(sql));
+    oracle.close();
+    const result = engine.tryExecute(sql);
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.message, message, sql);
+  }
+});
+
 test("temp tables shadow main and vanish with the connection like better-sqlite3", () => {
   const engine = createEngine();
   const steps = [
