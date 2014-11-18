@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { NATIVE_ARTIFACTS } from "./native-artifacts.mjs";
@@ -24,7 +24,10 @@ if (build.status !== 0) {
   process.exit(build.status ?? 1);
 }
 
-const src = join(root, "projects", "sqlite.rs", "target", "release", artifact.cargoRelease);
+const targetRoot = process.env.CARGO_TARGET_DIR
+  ? (isAbsolute(process.env.CARGO_TARGET_DIR) ? process.env.CARGO_TARGET_DIR : join(root, process.env.CARGO_TARGET_DIR))
+  : join(root, "projects", "sqlite.rs", "target");
+const src = join(targetRoot, "release", artifact.cargoRelease);
 if (!existsSync(src)) {
   throw new Error(`missing cargo artifact: ${src}`);
 }
