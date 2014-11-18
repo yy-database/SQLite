@@ -1444,6 +1444,161 @@ function withOracle(steps: string[], run: (db: OracleDatabase) => void): void {
   }
 }
 
+function oracleMessage(db: OracleDatabase, sql: string): string {
+  try {
+    db.exec(sql);
+    return "";
+  } catch (error) {
+    return (error as Error).message;
+  }
+}
+
+// Timing, `WHEN`, `NEW` / `OLD`, the newest-first firing order of same-event
+// triggers and the per-row rollback of a failing body all come from the live
+// oracle.
+test("trigger timings, WHEN clauses, order and rollback follow better-sqlite3", () => {
+  const steps = [
+    "create table t (id integer primary key, a, b)",
+    "create table log (v)",
+    "create trigger o1 after insert on t begin insert into log values (1); end",
+    "create trigger o2 after insert on t begin insert into log values (2); end",
+    "create trigger bi before insert on t begin insert into log values (new.a); end",
+    "create trigger ai after insert on t begin insert into log values (new.rowid); end",
+    "create trigger au after update on t when old.a > 5 begin insert into log values (new.a); end",
+    "create trigger bd before delete on t begin insert into log values (old.id); end",
+    "insert into t values (1, 6, 'x'), (2, 3, 'y')",
+    "update t set a = 9 where id = 1",
+    "delete from t where id = 2",
+    "insert into t values (3, 1, 'z')",
+  ];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  withOracle(steps, (db) => {
+    assert.deepEqual(engine.execute("select v from log order by rowid").rows, oracleRows(db, "select v from log order by rowid"));
+    assert.deepEqual(engine.execute("select id, a, b from t order by id").rows, oracleRows(db, "select id, a, b from t order by id"));
+  });
+});
+
+test("trigger creation, drop and runtime diagnostics match better-sqlite3", () => {
+  const setup = ["create table t (id integer primary key, a)", "create view vv as select id, a from t"];
+  const cases = [
+    "create trigger tv after insert on vv begin select 1; end",
+    "create trigger tv2 before insert on vv begin select 1; end",
+    "create trigger tt instead of insert on t begin select 1; end",
+    "create trigger m before insert on missing begin select 1; end",
+    "drop trigger t",
+    "drop trigger nope",
+    "create trigger nt on t begin select 1; end",
+  ];
+  for (const sql of cases) {
+    const engine = createEngine(4096);
+    for (const step of setup) engine.execute(step);
+    const outcome = engine.tryExecute(sql);
+    assert.equal(outcome.ok, false, sql);
+    const expected = withOracleMessage(setup, sql);
+    assert.equal(outcome.error?.message, expected, sql);
+  }
+
+  const duplicate = createEngine(4096);
+  for (const step of setup) duplicate.execute(step);
+  const firstTrigger = "create trigger d after insert on t begin select 1; end";
+  duplicate.execute(firstTrigger);
+  const repeated = duplicate.tryExecute(firstTrigger);
+  assert.equal(repeated.error?.message, withOracleMessage([...setup, firstTrigger], firstTrigger));
+
+  const failingSteps = [
+    "create table f (id integer primary key, a)",
+    "create table flog (v)",
+    "create trigger bad after insert on f begin insert into flog values (new.zzz); end",
+  ];
+  const failing = createEngine(4096);
+  for (const step of failingSteps) failing.execute(step);
+  const wrongColumn = failing.tryExecute("insert into f values (1, 1), (2, 2)");
+  assert.equal(wrongColumn.ok, false);
+  assert.equal(wrongColumn.error?.message, withOracleMessage(failingSteps, "insert into f values (1, 1), (2, 2)"));
+  assert.equal(failing.execute("select count(*) from f").rows[0][0], 0);
+});
+
+function withOracleMessage(steps: string[], sql: string): string {
+  let message = "";
+  withOracle(steps, (db) => {
+    message = oracleMessage(db, sql);
+  });
+  return message;
+}
+
+test("INSTEAD OF triggers on views follow better-sqlite3", () => {
+  const steps = [
+    "create table base (id integer primary key, a, b)",
+    "create view v as select id, a from base",
+    "create trigger vi instead of insert on v begin insert into base (id, a) values (new.id, new.a); end",
+    "create trigger vu instead of update on v begin update base set a = new.a where id = old.id; end",
+    "create trigger vd instead of delete on v begin delete from base where id = old.id; end",
+    "insert into v values (7, 8), (9, 10)",
+    "update v set a = 20 where id = 7",
+    "delete from v where id = 9",
+  ];
+  const engine = createEngine(4096);
+  engine.execute("create table base (id integer primary key, a, b)");
+  engine.execute("create view v as select id, a from base");
+  const plain = engine.tryExecute("insert into v values (1, 2)");
+  assert.equal(plain.ok, false);
+  assert.equal(plain.error?.message, "cannot modify v because it is a view");
+  for (const step of steps.slice(2)) engine.execute(step);
+  withOracle(steps, (db) => {
+    assert.deepEqual(engine.execute("select id, a from base order by id").rows, oracleRows(db, "select id, a from base order by id"));
+    assert.deepEqual(engine.execute("select id, a from v order by id").rows, oracleRows(db, "select id, a from v order by id"));
+  });
+});
+
+test("recursive_triggers pragma switches re-entry like better-sqlite3", () => {
+  const steps = [
+    "create table u (id integer primary key, a)",
+    "create table b (id integer primary key, a)",
+    "create trigger ta after insert on u begin insert into b values (new.id, new.a); end",
+    "create trigger tb after insert on b begin insert into u values (new.id + 100, 1); end",
+    "create table s (id integer primary key, a)",
+    "create trigger loop after insert on s begin insert into s values (new.id + 1000, new.a); end",
+    "insert into u values (1, 1)",
+    "insert into s values (1, 1)",
+  ];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  withOracle(steps, (db) => {
+    assert.deepEqual(engine.execute("select id from u order by id").rows, oracleRows(db, "select id from u order by id"));
+    assert.deepEqual(engine.execute("select id from s order by id").rows, oracleRows(db, "select id from s order by id"));
+  });
+  assert.deepEqual(engine.execute("pragma recursive_triggers").rows, [[0]]);
+  engine.execute("pragma recursive_triggers = on");
+  assert.deepEqual(engine.execute("pragma recursive_triggers").rows, [[1]]);
+  const runaway = engine.tryExecute("insert into s values (2, 2)");
+  assert.equal(runaway.ok, false);
+  assert.equal(runaway.error?.message, "too many levels of trigger recursion");
+  assert.deepEqual(engine.execute("select id from s order by id").rows, [[1], [1001]]);
+});
+
+test("temp triggers appear in sqlite_temp_master and fire like better-sqlite3", () => {
+  const steps = [
+    "create table m (id integer primary key, a)",
+    "create temp table tt (id integer primary key, a)",
+    "create trigger temp.xt after insert on tt begin insert into m values (new.id, new.a); end",
+    "insert into tt values (1, 2)",
+  ];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  withOracle(steps, (db) => {
+    assert.deepEqual(
+      engine.execute("select type, name, tbl_name from sqlite_temp_master").rows,
+      oracleRows(db, "select type, name, tbl_name from sqlite_temp_master"),
+    );
+    assert.deepEqual(engine.execute("select id, a from m").rows, oracleRows(db, "select id, a from m"));
+    assert.deepEqual(
+      engine.execute("select name from sqlite_master where type = 'trigger'").rows,
+      oracleRows(db, "select name from sqlite_master where type = 'trigger'"),
+    );
+  });
+});
+
 // Every expected row below is read from better-sqlite3 at run time; no value
 // is copied from this engine.
 test("limit expressions, offsets and out-of-range values match better-sqlite3", () => {

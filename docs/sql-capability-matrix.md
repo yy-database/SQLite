@@ -1,6 +1,6 @@
 # SQL capability matrix
 
-Measured against the pinned `database.rs` facade rev `d5a0e13` (`d5a0e13fad714d4be679215864cd710fa27457b6`,
+Measured against the pinned `database.rs` facade rev `35459e6` (`35459e65024a5787890ad34167d0c22b19e00e88`,
 `projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
 through both live oracles; the oracle value, not an internal expectation, decides whether a row is correct.
 
@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (108 feature rows): **70 gated / 0 uncovered / 38 missing** at the pin.
+Cluster totals (113 feature rows): **75 gated / 0 uncovered / 38 missing** at the pin.
 
 ## DDL
 
@@ -37,7 +37,11 @@ Cluster totals (108 feature rows): **70 gated / 0 uncovered / 38 missing** at th
 | Expression index | `create index eix on ei (a + 1)` | missing | `syntax`: index column list stops at `+` |
 | Index `COLLATE` | `create index cix on ci (s collate nocase)` | missing | `syntax`: index column list stops at `collate` |
 | `CREATE VIEW` | `create view vv as select a from vt where a > 1` | gated | re-runs the stored query on every read, keeps `CREATE VIEW <name>` plus the verbatim rest in `sqlite_master.sql`, rejects writes and indexes with `readonly-view`, and survives a reopen; `views re-run their query and keep catalog rows like better-sqlite3` |
-| `CREATE TRIGGER` / `DROP TRIGGER` | `create trigger trg after insert on tg begin insert into tlog values (new.a); end` | gated | runs `BEFORE` / `AFTER` bodies in order, a body statement fires the other triggers but never the trigger that is running (`recursive_triggers = OFF`), stores `CREATE TRIGGER <name>` plus the verbatim rest, and `DROP TABLE` / `DROP TRIGGER` remove the catalog rows; `triggers fire once without recursion and keep catalog rows like better-sqlite3` |
+| `CREATE TRIGGER` `BEFORE` / `AFTER` timings | `create trigger bi before insert on t begin insert into log values (new.a); end` | gated | each row queues a `BEFORE` and an `AFTER` event so the observable order is `B1 A1 B2 A2`, same-event triggers fire newest first, `BEFORE` sees the defaulted row with `rowid = -1`, `AFTER` sees the stored rowid, and `UPDATE OF <cols>` only fires for the assigned columns; `trigger timings, WHEN clauses, order and rollback follow better-sqlite3` |
+| `WHEN` clause and `NEW` / `OLD` references | `create trigger au after update on t when old.a > 5 begin insert into log values (new.a); end` | gated | `WHEN` filters per row, `new.x` / `old.x` resolve with and without a qualifier, a missing side reports `no such column: old.a` / `new.a`, and an unknown column reports `no such column: new.zzz`; same gate plus `trigger_when_clause_filters_rows` |
+| `INSTEAD OF` triggers on views | `create trigger vi instead of insert on v begin insert into base (id, a) values (new.id, new.a); end` | gated | body runs on view DML, the outer statement reports `affected = 0` and `changes = 0`, `last_insert_rowid` is restored, the view still reads the base table, and plain view DML stays `cannot modify v because it is a view`; `INSTEAD OF triggers on views follow better-sqlite3` |
+| Trigger failure rollback and creation diagnostics | `create trigger bad after insert on f begin insert into flog values (new.zzz); end` | gated | a failing body rolls back the entire statement including earlier rows, duplicate names report `trigger d already exists`, a missing target reports `no such table: main.missing`, `AFTER` / `BEFORE` on a view and `INSTEAD OF` on a table report the matching `cannot create ... trigger on ...` message, and a bare timing reports `near "on": syntax error`; `trigger creation, drop and runtime diagnostics match better-sqlite3` |
+| Temp triggers and `DROP TRIGGER` | `create trigger temp.xt after insert on tp begin select 1; end` | gated | a temp or temp-table trigger lands in `sqlite_temp_master` with the text minus the `temp.` prefix, `DROP TABLE` removes its triggers, `DROP TRIGGER` searches triggers only (`no such trigger: t` for a table name), and `IF EXISTS` is a no-op; `temp triggers appear in sqlite_temp_master and fire like better-sqlite3` |
 | Foreign key, column level `REFERENCES` | `create table fk2 (id integer primary key, pid integer references fk1 (id))` | gated | orphan insert, parent delete and parent update all fail with `SQLITE_CONSTRAINT_FOREIGNKEY` |
 | Foreign key, table level `FOREIGN KEY` with an implicit parent primary key | `create table fk4 (..., foreign key (pid) references fk3 (id))` | gated | composite orphan and composite rollback covered by `composite foreign keys and statement rollback match better-sqlite3` |
 | `ON DELETE CASCADE` / `ON UPDATE CASCADE` | `create table c1 (pid integer references parent (id) on delete cascade)` | missing | `unsupported-foreign-key-action` with clause `CASCADE`; separately asserted |
@@ -157,6 +161,7 @@ Cluster totals (108 feature rows): **70 gated / 0 uncovered / 38 missing** at th
 | Feature | Probe | Status | Evidence |
 |---------|-------|--------|----------|
 | `PRAGMA foreign_keys` read-back and session toggle | `pragma foreign_keys` / `pragma foreign_keys = off` | gated | defaults to `1`, reads back `0` after `off`; enforcement behaviour asserted |
+| `PRAGMA recursive_triggers` re-entry switch | `pragma recursive_triggers` / `pragma recursive_triggers = on` | gated | defaults to `0` and reads back the session value, a running trigger is skipped while other tables still fire, and a loop with the pragma on stops at `too many levels of trigger recursion` and rolls the statement back; `recursive_triggers_pragma_allows_loops_until_the_depth_limit` plus `recursive_triggers pragma switches re-entry like better-sqlite3` |
 | `PRAGMA database_list` | `pragma database_list` | gated | reports `seq/name/file` for `main`, `temp` once it exists, then each attached schema in attach order with its absolute file path; `attach, qualified names and detach follow better-sqlite3` |
 | `PRAGMA table_info(t)` | `pragma table_info(pt)` | missing | `unsupported-pragma` at `PRAGMA` |
 | `PRAGMA user_version` | `pragma user_version` | missing | `unsupported-pragma` at `PRAGMA` |
