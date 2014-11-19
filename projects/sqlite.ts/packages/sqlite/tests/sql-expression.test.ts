@@ -19,8 +19,9 @@ test("projection arithmetic follows SQLite integer and overflow rules", () => {
   const arithmetic = engine.execute("select a+b, a-b, a*b, a/b from v where id = 1");
   assert.deepEqual(arithmetic.columns, ["a+b", "a-b", "a*b", "a/b"]);
 
-  // Qualifiers resolve references but never leak into the result header.
-  assert.deepEqual(engine.execute("select v.a, v.a + 1 from v where id = 1").columns, ["a", "a+1"]);
+  // Qualifiers resolve references but never leak into a bare column header;
+  // an expression keeps the exact source span as its label.
+  assert.deepEqual(engine.execute("select v.a, v.a + 1 from v where id = 1").columns, ["a", "v.a + 1"]);
   assert.deepEqual(arithmetic.rows, [[9, 5, 14, 3]]);
 
   // Integer division truncates toward zero instead of producing a real.
@@ -93,8 +94,9 @@ test("CASE supports searched, simple and missing-ELSE forms", () => {
     "select case when a > 0 then 'pos' when a < 0 then 'neg' else 'unknown' end from v order by id",
   );
   assert.deepEqual(searched.rows, [["pos"], ["neg"], ["unknown"]]);
+  // The label is the written span, not a normalised rendering.
   assert.deepEqual(searched.columns, [
-    "CASE WHEN a>0 THEN 'pos' WHEN a<0 THEN 'neg' ELSE 'unknown' END",
+    "case when a > 0 then 'pos' when a < 0 then 'neg' else 'unknown' end",
   ]);
 
   // The simple form compares the operand with each WHEN value.

@@ -2144,3 +2144,160 @@ test("fromSnapshot reopens an image with its catalog and rejects a broken header
   assert.deepEqual(reopened.execute("select count(*) from sqlite_master").rows, [[1]]);
   assert.throws(() => createEngineFromSnapshot(Buffer.from("not a database")));
 });
+
+function oracleColumns(db: OracleDatabase, sql: string): string[] {
+  return db.prepare(sql).columns().map((column) => column.name);
+}
+
+function viewQueryPart(text: string): string {
+  const at = text.toLowerCase().indexOf(" as ");
+  return at < 0 ? text : text.slice(at + 4);
+}
+
+// Unaliased projections are named after the exact source text (`a + 1`,
+// `1.50`, `cast(a as text)`) and a view de-duplicates repeated output names
+// with `:1`, `:2`, ... exactly like better-sqlite3.
+test("view output names follow better-sqlite3 for spans, aliases and duplicates", () => {
+  const steps = [
+    "create table t (a integer, b text)",
+    "insert into t values (1, 'x')",
+    "create view e as select a + 1, a from t",
+    "create view d as select a, a from t",
+    "create view c as select b as x, a as x from t",
+    "create view s as select 1.50, null, cast(a as text) from t",
+    "create view q(k) as select a from t",
+  ];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  const cases = [
+    "select * from e",
+    "select * from d",
+    "select * from c",
+    "select * from s",
+    "select * from q",
+    "select * from (select a as q, b as q from t) d",
+  ];
+  withOracle(steps, (db) => {
+    for (const sql of cases) {
+      const result = engine.execute(sql);
+      assert.deepEqual(result.columns, oracleColumns(db, sql), sql);
+      assert.deepEqual(result.rows, oracleRows(db, sql), sql);
+    }
+  });
+});
+
+// A declared column list is checked when the view is read, not when it is
+// created, and repeated declared names are de-duplicated like inferred ones.
+test("declared view column lists report oracle arity diagnostics", () => {
+  const steps = [
+    "create table t (a integer, b text)",
+    "insert into t values (1, 'x')",
+    "create view short(x) as select a, b from t",
+    "create view long(x, y) as select a from t",
+    "create view dup(x, x) as select a, a from t",
+  ];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  const rejected = ["select * from short", "select * from long", "select x from short"];
+  withOracle(steps, (db) => {
+    for (const sql of rejected) {
+      const result = engine.tryExecute(sql);
+      assert.equal(result.ok, false, sql);
+      assert.equal(result.error?.message, oracleMessage(db, sql), sql);
+    }
+    for (const sql of ["select * from dup", "select x from dup"]) {
+      const result = engine.execute(sql);
+      assert.deepEqual(result.columns, oracleColumns(db, sql), sql);
+      assert.deepEqual(result.rows, oracleRows(db, sql), sql);
+    }
+  });
+});
+
+// Views share the object namespace with tables and indexes, and `DROP VIEW`
+// searches the temp schema first and reports the wrong object kind the way
+// better-sqlite3 does.
+test("view namespace conflicts and DROP VIEW diagnostics follow better-sqlite3", () => {
+  const steps = ["create table t (a integer)", "create index ix on t (a)", "create view v as select a from t"];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  const cases = [
+    "create view ix as select 1",
+    "create view if not exists ix as select 1",
+    "create view t as select 1",
+    "create view v as select 1",
+    "create view if not exists v as select 2",
+    "drop table v",
+    "drop table if exists v",
+    "drop view t",
+    "drop view ix",
+    "drop view nope",
+    "drop view if exists ix",
+    "drop view if exists nope",
+  ];
+  withOracleMessage(steps, "");
+  for (const sql of cases) {
+    const expected = withOracleMessage(steps, sql);
+    const result = engine.tryExecute(sql);
+    assert.equal(result.ok, expected === "", sql);
+    assert.equal(result.error?.message ?? "", expected, sql);
+  }
+});
+
+// `ALTER TABLE RENAME` rewrites every view that names the table or column,
+// quoting the renamed table and leaving aliases alone, exactly like the oracle.
+test("ALTER TABLE renames rewrite stored view definitions like better-sqlite3", () => {
+  const steps = [
+    "create table t (a integer, b text)",
+    "insert into t values (1, 'x')",
+    "create view vq as select t.a from t",
+    "create view va as select x.a from t as x",
+    "alter table t rename to t2",
+  ];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  withOracle(steps, (db) => {
+    for (const name of ["vq", "va"]) {
+      const stored = `select sql from sqlite_master where name = '${name}'`;
+      const actual = engine.execute(stored).rows[0][0] as string;
+      const expected = oracleRows(db, stored)[0][0] as string;
+      assert.equal(viewQueryPart(actual), viewQueryPart(expected), name);
+    }
+    assert.deepEqual(engine.execute("select * from vq").rows, oracleRows(db, "select * from vq"));
+    assert.deepEqual(engine.execute("select * from va").rows, oracleRows(db, "select * from va"));
+  });
+
+  const columnSteps = [
+    "create table u (a integer, b text)",
+    "insert into u values (1, 'x')",
+    "create view w as select a from u where a > 1 and b <> 'a'",
+    "create view wa as select b as a from u",
+    "alter table u rename column a to z",
+  ];
+  const columns = createEngine(4096);
+  for (const step of columnSteps) columns.execute(step);
+  withOracle(columnSteps, (db) => {
+    for (const name of ["w", "wa"]) {
+      const stored = `select sql from sqlite_master where name = '${name}'`;
+      const actual = columns.execute(stored).rows[0][0] as string;
+      const expected = oracleRows(db, stored)[0][0] as string;
+      assert.equal(viewQueryPart(actual), viewQueryPart(expected), name);
+    }
+    assert.deepEqual(columns.execute("select * from w").rows, oracleRows(db, "select * from w"));
+  });
+});
+
+// A temp view shadows a main view, appears in `sqlite_temp_master` with
+// rootpage zero, and the unqualified `DROP VIEW` removes it first.
+test("temp views shadow main views and vanish with the engine like better-sqlite3", () => {
+  const steps = ["create view v as select 1 as a", "create temp view v as select 2 as a"];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  const tempMaster = "select type, name, tbl_name, rootpage from sqlite_temp_master where type = 'view'";
+  withOracle(steps, (db) => {
+    assert.deepEqual(engine.execute("select * from v").rows, oracleRows(db, "select * from v"));
+    assert.deepEqual(engine.execute(tempMaster).rows, oracleRows(db, tempMaster));
+  });
+  engine.execute("drop view v");
+  assert.deepEqual(engine.execute("select * from v").rows, [[1]]);
+  assert.deepEqual(engine.execute(tempMaster).rows, []);
+});
