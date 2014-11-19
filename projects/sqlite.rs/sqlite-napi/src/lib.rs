@@ -417,6 +417,8 @@ struct WriterColumnJson {
     #[serde(default)]
     default_value: Option<serde_json::Value>,
     #[serde(default)]
+    default_text: Option<String>,
+    #[serde(default)]
     primary_key: Option<bool>,
     #[serde(default)]
     unique: Option<bool>,
@@ -556,6 +558,7 @@ impl SqliteWriter {
                     Some(json) => Some(json_to_write_value(&json)?),
                     None => None,
                 },
+                default_text: column.default_text,
                 primary_key: column.primary_key.unwrap_or(false),
                 unique: column.unique.unwrap_or(false),
                 autoincrement: column.autoincrement.unwrap_or(false),

@@ -2301,3 +2301,65 @@ test("temp views shadow main views and vanish with the engine like better-sqlite
   assert.deepEqual(engine.execute("select * from v").rows, [[1]]);
   assert.deepEqual(engine.execute(tempMaster).rows, []);
 });
+
+// `PRAGMA table_info` / `index_list` / `index_info` / `foreign_key_list` echo
+// the oracle, including automatic constraint indexes, the written `DEFAULT`
+// text and SQLite's newest-first object order.
+test("table, index and foreign key pragmas follow better-sqlite3", () => {
+  const steps = [
+    "create table p1 (x integer primary key)",
+    "create table p2 (u integer, v integer, primary key (u, v))",
+    "create table a (x integer, y text, z real, u text unique, v text unique)",
+    "create index a_y on a (y)",
+    "create index a_z on a (z)",
+    "create table fk (a integer references p1, b text, c integer, foreign key (b, c) references p2 (u, v))",
+    "create table dfl (a integer default 5, b text default 'x', c real default 1.50, d text not null default 'y')",
+    "create table mixed (k integer primary key autoincrement, s text unique)",
+    "create table cas (a varCHAR(20), b DOUBLE precision, c blob, d none)",
+    "create temp table tt (a integer primary key, b text unique)",
+  ];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  const cases = [
+    "pragma table_info(a)",
+    "pragma table_xinfo(a)",
+    "pragma table_info(p2)",
+    "pragma table_info(dfl)",
+    "pragma table_info(mixed)",
+    "pragma table_info(cas)",
+    "pragma table_info(tt)",
+    "pragma table_info(nosuch)",
+    "pragma index_list(a)",
+    "pragma index_list(p2)",
+    "pragma index_list(mixed)",
+    "pragma index_list(tt)",
+    "pragma index_list(nosuch)",
+    "pragma index_info(a_y)",
+    "pragma index_info(a_z)",
+    "pragma index_info(sqlite_autoindex_a_2)",
+    "pragma index_info(sqlite_autoindex_p2_1)",
+    "pragma index_info(nosuch)",
+    "pragma foreign_key_list(fk)",
+    "pragma foreign_key_list(nosuch)",
+  ];
+  withOracle(steps, (db) => {
+    for (const sql of cases) {
+      const result = engine.execute(sql);
+      assert.deepEqual(result.columns, oracleColumns(db, sql), sql);
+      assert.deepEqual(result.rows, oracleRows(db, sql), sql);
+    }
+  });
+});
+
+test("user_version and application_id round-trip through the header", () => {
+  const engine = createEngine(4096);
+  assert.deepEqual(engine.execute("pragma user_version").rows, [[0]]);
+  assert.deepEqual(engine.execute("pragma application_id").rows, [[0]]);
+  engine.execute("pragma user_version = 7");
+  engine.execute("pragma application_id = 42");
+  assert.deepEqual(engine.execute("pragma user_version").rows, [[7]]);
+  assert.deepEqual(engine.execute("pragma application_id").rows, [[42]]);
+  const reopened = createEngineFromSnapshot(engine.snapshot());
+  assert.deepEqual(reopened.execute("pragma user_version").rows, [[7]]);
+  assert.deepEqual(reopened.execute("pragma application_id").rows, [[42]]);
+});

@@ -1,6 +1,6 @@
 # SQL capability matrix
 
-Measured against the pinned `database.rs` facade rev `35459e6` (`35459e65024a5787890ad34167d0c22b19e00e88`,
+Measured against the pinned `database.rs` facade rev `c72b2a7` (`c72b2a7927ee7bec3a242fa7c7e88e682723f470`,
 `projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
 through both live oracles; the oracle value, not an internal expectation, decides whether a row is correct.
 
@@ -9,7 +9,7 @@ through both live oracles; the oracle value, not an internal expectation, decide
 | Engine under test | `sqlite.node` built from the pin, `createEngine()` |
 | Oracle A | `better-sqlite3` 12.11.1 (SQLite 3.53.2) |
 | Oracle B | CPython `sqlite3` (SQLite 3.49.1) |
-| Probes | 120 statements/cases, one or more per cluster |
+| Probes | 140 statements/cases, one or more per cluster |
 | Local facade override | None; Cargo resolved the pin directly |
 
 Status legend:
@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (113 feature rows): **75 gated / 0 uncovered / 38 missing** at the pin.
+Cluster totals (120 feature rows): **84 gated / 0 uncovered / 36 missing** at the pin.
 
 ## DDL
 
@@ -168,8 +168,10 @@ Cluster totals (113 feature rows): **75 gated / 0 uncovered / 38 missing** at th
 | `PRAGMA foreign_keys` read-back and session toggle | `pragma foreign_keys` / `pragma foreign_keys = off` | gated | defaults to `1`, reads back `0` after `off`; enforcement behaviour asserted |
 | `PRAGMA recursive_triggers` re-entry switch | `pragma recursive_triggers` / `pragma recursive_triggers = on` | gated | defaults to `0` and reads back the session value, a running trigger is skipped while other tables still fire, and a loop with the pragma on stops at `too many levels of trigger recursion` and rolls the statement back; `recursive_triggers_pragma_allows_loops_until_the_depth_limit` plus `recursive_triggers pragma switches re-entry like better-sqlite3` |
 | `PRAGMA database_list` | `pragma database_list` | gated | reports `seq/name/file` for `main`, `temp` once it exists, then each attached schema in attach order with its absolute file path; `attach, qualified names and detach follow better-sqlite3` |
-| `PRAGMA table_info(t)` | `pragma table_info(pt)` | missing | `unsupported-pragma` at `PRAGMA` |
-| `PRAGMA user_version` | `pragma user_version` | missing | `unsupported-pragma` at `PRAGMA` |
+| `PRAGMA table_info` / `table_xinfo` | `pragma table_info(a)` | gated | `cid/name/type/notnull/dflt_value/pk` plus `hidden` for `table_xinfo`, the four storage-class type names upper-cased and every other declared type echoed as written, composite keys numbered `1..n`, the written `DEFAULT` text (`1.50` stays `1.50`), temp tables included and unknown names returning an empty row set; `table, index and foreign key pragmas follow better-sqlite3` |
+| `PRAGMA index_list` / `index_info` | `pragma index_list(a)` / `pragma index_info(sqlite_autoindex_p2_1)` | gated | explicit indexes newest first then each automatic constraint index in reverse numbering order, `origin` set to `c` / `pk` / `u`, `partial` always `0`, and `index_info` reporting `seqno/cid/name` in key order; `table, index and foreign key pragmas follow better-sqlite3` |
+| `PRAGMA foreign_key_list` | `pragma foreign_key_list(fk)` | gated | `id/seq/table/from/to/on_update/on_delete/match`, newest key first (`foreign key (b, c)` before the earlier column `REFERENCES`), an implicit parent key reported as `NULL` in `to`, and actions spelled `NO ACTION` / `RESTRICT`; `table, index and foreign key pragmas follow better-sqlite3` |
+| `PRAGMA user_version` / `application_id` | `pragma user_version = 7` | gated | both read back as a single integer row defaulting to `0`, write header bytes 60 and 68, and survive a reopen of the snapshot; `user_version and application_id round-trip through the header` |
 | `PRAGMA integrity_check` | `pragma integrity_check` | missing | `unsupported-pragma` at `PRAGMA` (the gate only calls it on external files) |
 
 ## EXPLAIN

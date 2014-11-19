@@ -170,7 +170,20 @@ fn column_specs(columns: &Bound<'_, PyAny>) -> PyResult<Vec<ColumnSpec>> {
             Some(value) if !value.is_none() => Some(write_value(&value)?),
             _ => None,
         };
-        specs.push(ColumnSpec { name, declared_type, not_null, default_value, primary_key, unique, autoincrement });
+        let default_text = match column.get_item("defaultText")? {
+            Some(value) if !value.is_none() => Some(value.extract()?),
+            _ => None,
+        };
+        specs.push(ColumnSpec {
+            name,
+            declared_type,
+            not_null,
+            default_value,
+            default_text,
+            primary_key,
+            unique,
+            autoincrement,
+        });
     }
     Ok(specs)
 }
