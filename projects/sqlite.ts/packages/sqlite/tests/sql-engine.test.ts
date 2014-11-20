@@ -210,6 +210,77 @@ test("the snapshot written after SQL execution opens in an external engine", () 
   }
 });
 
+test("without rowid tables are their own primary key b-tree", () => {
+  const engine = createEngine(4096);
+  assert.throws(() => engine.execute("create table missing_key (a text) without rowid"), /PRIMARY KEY missing on table missing_key/);
+  assert.throws(() => engine.execute("create table two_keys (a text primary key, b integer, primary key (b)) without rowid"), /more than one primary key/);
+  engine.exec(
+    "create table wr (a text not null, b integer, primary key (a)) without rowid; \
+     insert into wr values ('x', 1), ('y', 2);",
+  );
+  assert.deepEqual(engine.execute("select * from wr").columns, ["a", "b"]);
+  assert.deepEqual(engine.execute("select * from wr").rows, [
+    ["x", 1],
+    ["y", 2],
+  ]);
+  // `rowid` is not a column of a WITHOUT ROWID table.
+  assert.equal(engine.tryExecute("select rowid from wr").ok, false);
+
+  engine.execute("update wr set b = b + 10 where a = 'x'");
+  engine.execute("delete from wr where a = 'y'");
+  assert.deepEqual(engine.execute("select * from wr").rows, [["x", 11]]);
+
+  // A key declared after other columns still leads the stored record, like
+  // SQLite; the remaining columns follow in declaration order.
+  engine.execute("create table wp (v text, k integer primary key) without rowid");
+  engine.execute("insert into wp values ('a', 1), ('b', 2)");
+  assert.deepEqual(engine.execute("select * from wp order by k").rows, [
+    ["a", 1],
+    ["b", 2],
+  ]);
+
+  const workspaceHandle = workspace();
+  try {
+    writeFileSync(workspaceHandle.path, engine.snapshot());
+    const external = new BetterSqlite(workspaceHandle.path);
+    try {
+      assert.equal(external.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+      assert.deepEqual(external.prepare("SELECT a, b FROM wr").all(), [{ a: "x", b: 11 }]);
+      assert.deepEqual(external.prepare("SELECT v, k FROM wp ORDER BY k").all(), [
+        { v: "a", k: 1 },
+        { v: "b", k: 2 },
+      ]);
+      // SQLite inserting into our page tree proves the key order is valid.
+      external.prepare("INSERT INTO wr VALUES ('z', 3)").run();
+      external.prepare("INSERT INTO wp VALUES ('c', 3)").run();
+      assert.deepEqual(external.prepare("SELECT a, b FROM wr").all(), [
+        { a: "x", b: 11 },
+        { a: "z", b: 3 },
+      ]);
+      assert.deepEqual(external.prepare("SELECT k, v FROM wp").all(), [
+        { k: 1, v: "a" },
+        { k: 2, v: "b" },
+        { k: 3, v: "c" },
+      ]);
+      const master = external.prepare("SELECT type, name, rootpage, sql FROM sqlite_master ORDER BY rowid").all();
+      assert.deepEqual(master, [
+        { type: "table", name: "wr", rootpage: 2, sql: "CREATE TABLE wr (a text not null, b integer, primary key (a)) without rowid" },
+        { type: "table", name: "wp", rootpage: 3, sql: "CREATE TABLE wp (v text, k integer primary key) without rowid" },
+      ]);
+    } finally {
+      external.close();
+    }
+    const reopened = createEngineFromSnapshot(engine.snapshot(), 4096);
+    assert.deepEqual(reopened.execute("select * from wr").rows, [["x", 11]]);
+    assert.deepEqual(reopened.execute("select * from wp order by k").rows, [
+      ["a", 1],
+      ["b", 2],
+    ]);
+  } finally {
+    workspaceHandle.dispose();
+  }
+});
+
 test("sqlite_master lists schema objects in creation order and stays read-only", () => {
   const engine = createEngine();
   engine.execute("create table a (x integer, y text)");

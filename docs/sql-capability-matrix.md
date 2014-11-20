@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (120 feature rows): **84 gated / 0 uncovered / 36 missing** at the pin.
+Cluster totals (120 feature rows): **85 gated / 0 uncovered / 35 missing** at the pin.
 
 ## DDL
 
@@ -29,7 +29,7 @@ Cluster totals (120 feature rows): **84 gated / 0 uncovered / 36 missing** at th
 | `ALTER TABLE ... RENAME TO` / `RENAME COLUMN` | `alter table r1 rename to r2` | gated | rows equal both oracles |
 | `ALTER TABLE ... ADD COLUMN` | `alter table ac add column b integer not null default 5` | gated | rows equal both oracles |
 | `DROP TABLE` / `DROP INDEX` | `drop table t` | gated | covered by the engine gate |
-| `CREATE TABLE ... WITHOUT ROWID` | `create table wr (a text primary key, b integer) without rowid` | missing | `unsupported-statement` at `without` |
+| `CREATE TABLE ... WITHOUT ROWID` | `create table wr (a text primary key, b integer) without rowid` | gated | rows live in the primary-key index b-tree rooted at the schema `rootpage` (page types 10/2), key columns lead every stored record even when declared later, and no hidden `rowid` exists; a missing or duplicated key is rejected; better-sqlite3 opens the file, reports `integrity_check = ok` and inserts further rows into the tree; `without rowid tables are their own primary key b-tree` |
 | `CREATE TABLE ... STRICT` | `create table st (a integer) strict` | gated | affinity runs first, then a value whose storage class differs from the declared type fails with `constraint-datatype`; invalid declared types fail with `unknown-datatype`; `strict tables enforce declared storage classes like better-sqlite3` |
 | `CREATE TEMP TABLE` / `sqlite_temp_master` | `create temp table tp (a integer)` | gated | lives in its own schema that shadows an equally named main table, reports `type/name/tbl_name/rootpage/sql` from `sqlite_temp_master`, reuses freed root pages, removes the temp object first on `DROP TABLE`, and disappears with the connection; `temp tables shadow main and vanish with the connection like better-sqlite3` |
 | `CREATE TABLE ... AS SELECT` | `create table dst as select a from src where a > 1` | missing | `syntax`: expected `(` but found `as` |
