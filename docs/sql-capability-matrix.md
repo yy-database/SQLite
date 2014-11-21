@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (120 feature rows): **85 gated / 0 uncovered / 35 missing** at the pin.
+Cluster totals (120 feature rows): **87 gated / 0 uncovered / 33 missing** at the pin.
 
 ## DDL
 
@@ -33,9 +33,9 @@ Cluster totals (120 feature rows): **85 gated / 0 uncovered / 35 missing** at th
 | `CREATE TABLE ... STRICT` | `create table st (a integer) strict` | gated | affinity runs first, then a value whose storage class differs from the declared type fails with `constraint-datatype`; invalid declared types fail with `unknown-datatype`; `strict tables enforce declared storage classes like better-sqlite3` |
 | `CREATE TEMP TABLE` / `sqlite_temp_master` | `create temp table tp (a integer)` | gated | lives in its own schema that shadows an equally named main table, reports `type/name/tbl_name/rootpage/sql` from `sqlite_temp_master`, reuses freed root pages, removes the temp object first on `DROP TABLE`, and disappears with the connection; `temp tables shadow main and vanish with the connection like better-sqlite3` |
 | `CREATE TABLE ... AS SELECT` | `create table dst as select a from src where a > 1` | missing | `syntax`: expected `(` but found `as` |
-| Partial index (`... WHERE`) | `create index pix on pi (a) where a > 1` | missing | `unsupported-clause` `WHERE`; the gate pins this rejection |
-| Expression index | `create index eix on ei (a + 1)` | missing | `syntax`: index column list stops at `+` |
-| Index `COLLATE` | `create index cix on ci (s collate nocase)` | missing | `syntax`: index column list stops at `collate` |
+| Partial index (`... WHERE`) | `create index pix on pi (a) where a > 1` | gated | only rows satisfying the predicate enter the index b-tree, the membership is recomputed on every write so an update that fails the predicate removes the entry, a `UNIQUE ... WHERE` still rejects duplicates among covered rows, and better-sqlite3 opens the file with `integrity_check = ok`, answers a query through the partial index and keeps it consistent after its own insert; `expression and partial indexes maintain their own keys` |
+| Expression index | `create index eix on ei (a + 1)` or `lower(name)` | gated | the engine evaluates each key term per row and hands the exact key/rowid pairs to the writer, a plain index keeps its column-derived keys, updates change the stored key, and better-sqlite3 opens the file with `integrity_check = ok` and answers an expression-indexed query; `expression and partial indexes maintain their own keys` |
+| Index `COLLATE` | `create index cix on ci (s collate nocase)` | missing | `unsupported-clause` `COLLATE`: this engine compares keys with binary order, so a collated key would sort differently from better-sqlite3 and corrupt the tree; the gate pins this rejection |
 | `CREATE VIEW` | `create view vv as select a from vt where a > 1` | gated | re-runs the stored query on every read, keeps `CREATE VIEW <name>` plus the verbatim rest in `sqlite_master.sql`, rejects writes and indexes with `readonly-view`, and survives a reopen; `views re-run their query and keep catalog rows like better-sqlite3` |
 | View output naming | `create view e as select a + 1, a from t` | gated | unaliased expressions keep their exact source span (`a + 1`, `1.50`, `cast(a as text)`, `'x'`), a bare column reports the schema spelling (`select A` → `a`), and repeated names are suffixed `:1`, `:2` in views, derived tables and CTEs; `view output names follow better-sqlite3 for spans, aliases and duplicates` |
 | Declared view column list arity | `create view short(x) as select a, b from t` | gated | creation succeeds and any read reports `expected 1 columns for 'short' but got 2`, repeated declared names are de-duplicated, and matching lists rename the output; `declared view column lists report oracle arity diagnostics` |
@@ -238,17 +238,16 @@ through this engine and both live oracles. Seed and count fully determine the re
 `e3d6c1d1baf823086965286e4725e7921b79e6406ec29e72a96d03b08c1456b1`, unchanged because the generators did
 not change.
 
-Distribution: DDL 40, DML 40, expressions 40, aggregates 30, windows 30, transactions 20. Result: 158 passed,
-32 mismatched, 10 discarded because `better-sqlite3` and CPython `sqlite3` disagreed with each other. The
-baseline holds 42 entries: 32 mismatches (17 structured rejections and 15 not-implemented rejections)
-and 10 discarded oracle disagreements.
+Distribution: DDL 40, DML 40, expressions 40, aggregates 30, windows 30, transactions 20. Result: 166 passed,
+24 mismatched, 10 discarded because `better-sqlite3` and CPython `sqlite3` disagreed with each other. The
+baseline holds 34 entries: 24 structured rejections and 10 discarded oracle disagreements.
 
-All 32 mismatches are structured rejections against two successful oracles, all already listed in the cluster
-tables:
+All 24 mismatches are structured rejections against two successful oracles, all already listed in the cluster
+tables. The DDL cases left the baseline once `WITHOUT ROWID`, partial and expression indexes were implemented:
 
 | Cluster | Cases | Shapes |
 |---------|-------|--------|
-| DDL | 8 | expression index 4, `WITHOUT ROWID` 2, partial index 2 |
+| DDL | 0 | none |
 | DML | 10 | `INSERT OR REPLACE` 3, `INSERT ... SELECT` 3, UPSERT 2, `REPLACE INTO` 2 |
 | Expressions | 4 | `IS DISTINCT FROM` 2, `GLOB` 1, `NULLS FIRST` 1 |
 | Aggregates | 4 | `group_concat` with `ORDER BY` 1, `FILTER` 1, `count(DISTINCT)` 1, multi-argument `min`/`max` 1 |

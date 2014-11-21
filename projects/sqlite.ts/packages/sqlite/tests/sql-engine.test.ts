@@ -281,6 +281,61 @@ test("without rowid tables are their own primary key b-tree", () => {
   }
 });
 
+test("expression and partial indexes maintain their own keys", () => {
+  const engine = createEngine(4096);
+  engine.exec(
+    "create table items (id integer primary key, name text, flag integer, qty integer); \
+     insert into items values (1, 'Alpha', 1, 10), (2, 'beta', 0, 20), (3, 'Gamma', 1, 30); \
+     create index items_lower on items (lower(name)); \
+     create unique index items_upper on items (upper(name)) where flag = 0; \
+     create index items_flagged on items (qty) where flag = 1;",
+  );
+  // The partial unique index only guards rows whose predicate is true.
+  assert.throws(() => engine.execute("insert into items values (4, 'BETA', 0, 40)"), /UNIQUE constraint failed/);
+  engine.execute("insert into items values (4, 'delta', 0, 40)");
+  assert.deepEqual(engine.execute("select id from items where lower(name) = 'alpha'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select id from items where qty >= 20 and flag = 0 order by id").rows, [
+    [2],
+    [4],
+  ]);
+
+  // Updates change both the computed key and the partial-index membership.
+  engine.execute("update items set name = 'DELTA', qty = 50 where id = 4");
+  engine.execute("update items set flag = 0 where id = 3");
+  assert.deepEqual(engine.execute("select id from items where lower(name) = 'delta'").rows, [[4]]);
+  assert.deepEqual(engine.execute("select id from items where qty > 25 and flag = 1").rows, []);
+  assert.deepEqual(engine.execute("select id from items where upper(name) = 'GAMMA' and flag = 0").rows, [[3]]);
+  engine.execute("delete from items where id = 2");
+
+  const workspaceHandle = workspace();
+  try {
+    writeFileSync(workspaceHandle.path, engine.snapshot());
+    const external = new BetterSqlite(workspaceHandle.path);
+    try {
+      assert.equal(external.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+      assert.deepEqual(external.prepare("SELECT id FROM items WHERE lower(name) = 'alpha'").all(), [{ id: 1 }]);
+      assert.deepEqual(external.prepare("SELECT id FROM items WHERE flag = 1 AND qty > 25").all(), []);
+      // SQLite inserting into the tree must keep the partial index consistent.
+      external.prepare("INSERT INTO items VALUES (5, 'epsilon', 1, 60)").run();
+      assert.deepEqual(external.prepare("SELECT id FROM items WHERE qty > 55 AND flag = 1").all(), [{ id: 5 }]);
+      assert.deepEqual(external.prepare("SELECT name FROM items ORDER BY id").all(), [
+        { name: "Alpha" },
+        { name: "Gamma" },
+        { name: "DELTA" },
+        { name: "epsilon" },
+      ]);
+      assert.equal(external.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+    } finally {
+      external.close();
+    }
+    const reopened = createEngineFromSnapshot(engine.snapshot(), 4096);
+    assert.deepEqual(reopened.execute("select id from items where lower(name) = 'delta'").rows, [[4]]);
+    assert.deepEqual(reopened.execute("select id from items where qty > 25 and flag = 1").rows, []);
+  } finally {
+    workspaceHandle.dispose();
+  }
+});
+
 test("sqlite_master lists schema objects in creation order and stays read-only", () => {
   const engine = createEngine();
   engine.execute("create table a (x integer, y text)");
@@ -566,8 +621,9 @@ test("create index accepts ascending, composite, unique and if not exists forms"
   assert.match(tableConflict.error?.message ?? "", /there is already a table named `t8`/);
   assert.equal(engine.tryExecute("create index on_missing on ghosts(a8)").error?.code, "unknown-table");
   assert.equal(engine.tryExecute("create index on_column on t8(ghost)").error?.code, "unknown-column");
-  // Partial indexes are rejected closed instead of half-built.
-  assert.equal(engine.tryExecute("create index partial on t8(a8) where a8 > 0").error?.code, "unsupported-clause");
+  // Partial indexes are built from the rows their predicate covers.
+  const partial = engine.execute("create index partial on t8(a8) where a8 > 0");
+  assert.equal(partial.statement, "create-index");
 
   // The unique index is enforced by later inserts.
   engine.execute("insert into t8 values (1, 2, 'x')");
@@ -602,7 +658,7 @@ test("create index accepts ascending, composite, unique and if not exists forms"
       const names = external
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 't8' ORDER BY name")
         .all() as unknown as Array<{ name: string }>;
-      assert.deepEqual(names.map((row) => row.name), ["t8all", "t8i0", "t8u"]);
+      assert.deepEqual(names.map((row) => row.name), ["partial", "t8all", "t8i0", "t8u"]);
     } finally {
       external.close();
     }
