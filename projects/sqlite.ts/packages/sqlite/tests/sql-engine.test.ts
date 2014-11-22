@@ -336,6 +336,66 @@ test("expression and partial indexes maintain their own keys", () => {
   }
 });
 
+test("table-level UNIQUE constraints own automatic indexes in written order", () => {
+  const engine = createEngine(4096);
+  engine.exec("create table tu (id integer primary key, a text, b integer, c text, unique(a, b), unique(c))");
+  // Two `UNIQUE` clauses become `sqlite_autoindex_tu_1` and `_2`; the INTEGER
+  // primary key is the rowid alias and owns no index of its own.
+  assert.deepEqual(engine.execute("select name, sql from sqlite_master where type = 'index' order by rowid").rows, [
+    ["sqlite_autoindex_tu_1", null],
+    ["sqlite_autoindex_tu_2", null],
+  ]);
+  const listed = engine.execute("pragma index_list(tu)").rows;
+  assert.deepEqual(listed.map((row) => row.slice(1, 4)), [
+    ["sqlite_autoindex_tu_2", 1, "u"],
+    ["sqlite_autoindex_tu_1", 1, "u"],
+  ]);
+  // A table-level key written after a `UNIQUE` owns the higher number even when
+  // the column types make it a real index instead of a rowid alias.
+  engine.exec("create table tb (a text, b text, unique(b), primary key(a))");
+  assert.deepEqual(engine.execute("select name from sqlite_master where type = 'index' and tbl_name = 'tb' order by rowid").rows, [
+    ["sqlite_autoindex_tb_1"],
+    ["sqlite_autoindex_tb_2"],
+  ]);
+  assert.deepEqual(
+    engine.execute("pragma index_list(tb)").rows.map((row) => [row[1], row[3]]),
+    [
+      ["sqlite_autoindex_tb_2", "pk"],
+      ["sqlite_autoindex_tb_1", "u"],
+    ],
+  );
+
+  engine.exec("insert into tu values (1, 'x', 1, 'c1'), (2, 'x', 2, 'c2')");
+  assert.throws(() => engine.execute("insert into tu values (3, 'x', 1, 'c3')"), /UNIQUE constraint failed/);
+  assert.throws(() => engine.execute("insert into tu values (4, 'y', 4, 'c1')"), /UNIQUE constraint failed/);
+  // NULL participates in no comparison, so repeated NULL keys are allowed.
+  engine.exec("insert into tu values (5, null, null, 'c4'), (6, null, null, 'c5')");
+  assert.deepEqual(engine.execute("select count(*) from tu").rows, [[4]]);
+  assert.equal(engine.tryExecute("create table bad (a integer, unique(missing))").error?.message, "no such column: missing");
+
+  const workspaceHandle = workspace();
+  try {
+    writeFileSync(workspaceHandle.path, engine.snapshot());
+    const external = new BetterSqlite(workspaceHandle.path);
+    try {
+      assert.equal(external.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+      assert.deepEqual(external.prepare("PRAGMA index_list(tu)").all(), [
+        { seq: 0, name: "sqlite_autoindex_tu_2", unique: 1, origin: "u", partial: 0 },
+        { seq: 1, name: "sqlite_autoindex_tu_1", unique: 1, origin: "u", partial: 0 },
+      ]);
+      assert.deepEqual(external.prepare("SELECT id FROM tu ORDER BY id").all(), [{ id: 1 }, { id: 2 }, { id: 5 }, { id: 6 }]);
+      assert.throws(() => external.prepare("INSERT INTO tu VALUES (7, 'x', 1, 'c6')").run(), /UNIQUE constraint failed/);
+    } finally {
+      external.close();
+    }
+    const reopened = createEngineFromSnapshot(engine.snapshot(), 4096);
+    assert.throws(() => reopened.execute("insert into tu values (7, 'x', 1, 'c6')"), /UNIQUE constraint failed/);
+    assert.deepEqual(reopened.execute("select id from tu order by id").rows, [[1], [2], [5], [6]]);
+  } finally {
+    workspaceHandle.dispose();
+  }
+});
+
 test("sqlite_master lists schema objects in creation order and stays read-only", () => {
   const engine = createEngine();
   engine.execute("create table a (x integer, y text)");

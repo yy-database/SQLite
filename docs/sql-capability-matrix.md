@@ -24,7 +24,7 @@ Cluster totals (120 feature rows): **87 gated / 0 uncovered / 33 missing** at th
 
 | Feature | Probe | Status | Evidence |
 |---------|-------|--------|----------|
-| `CREATE TABLE` PK / NOT NULL / UNIQUE / DEFAULT / CHECK / AUTOINCREMENT | `create table ct (id integer primary key autoincrement, name text not null unique default 'x', score real check (score between 0 and 10))` | gated | rows equal both oracles |
+| `CREATE TABLE` PK / NOT NULL / UNIQUE / DEFAULT / CHECK / AUTOINCREMENT | `create table ct (id integer primary key autoincrement, name text not null unique default 'x', score real check (score between 0 and 10))` | gated | rows equal both oracles; table-level `UNIQUE (a, b)` clauses also build `sqlite_autoindex_<table>_<n>` in written order with `origin = 'u'`, reject duplicate non-NULL keys, let every `NULL` key coexist, and survive a reopen while better-sqlite3 reports `integrity_check = ok`; `table-level UNIQUE constraints own automatic indexes in written order` |
 | `CREATE INDEX` plain / composite / ASC / UNIQUE / IF NOT EXISTS | `create index pix on pi (a)` | gated | covered by `create index accepts ascending, composite, unique and if not exists forms` |
 | `ALTER TABLE ... RENAME TO` / `RENAME COLUMN` | `alter table r1 rename to r2` | gated | rows equal both oracles |
 | `ALTER TABLE ... ADD COLUMN` | `alter table ac add column b integer not null default 5` | gated | rows equal both oracles |
