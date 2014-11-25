@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (120 feature rows): **87 gated / 0 uncovered / 33 missing** at the pin.
+Cluster totals (120 feature rows): **88 gated / 0 uncovered / 32 missing** at the pin.
 
 ## DDL
 
@@ -70,7 +70,7 @@ Cluster totals (120 feature rows): **87 gated / 0 uncovered / 33 missing** at th
 | `DELETE FROM ... AS alias` | `delete from da as x where x.a = 2 returning a` | gated | oracle-matching with both oracles |
 | `INSERT ... SELECT` | `insert into is2 (a) select a from is1 where a > 1` | missing | `syntax`: expected `values` but found `select` |
 | `INSERT OR REPLACE` / `INSERT OR IGNORE` | `insert or replace into orr values (1,'b')` | missing | `syntax`: expected `into` but found `or` |
-| UPSERT `ON CONFLICT DO UPDATE` | `insert into up values (1, 20) on conflict (id) do update set v = excluded.v` | missing | `unsupported-statement` at `on` |
+| UPSERT `ON CONFLICT DO NOTHING` / `DO UPDATE` | `insert into up values (1, 20) on conflict (id) do update set v = excluded.v` | gated | targets match a rowid alias, a column key or a table-level `UNIQUE`, `excluded.<column>` reads the supplied tuple while a bare column reads the stored row, a false `DO UPDATE ... WHERE` leaves the row alone, a target naming no uniqueness constraint reports `ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint`, skipped rows report `affected = 0` and no `RETURNING` row, rewritten rows survive a reopen and better-sqlite3 `integrity_check = ok`; `upsert DO NOTHING and DO UPDATE follow better-sqlite3` |
 | `REPLACE INTO` | `replace into rp values (1,'b')` | missing | `unsupported-statement` at `replace` |
 | Expression inside a `VALUES` tuple | `insert into ie values (1 + 1)` | missing | `syntax`: `VALUES` tuple only accepts literals |
 | `UPDATE ... FROM` | `update ua set v = ub.w from ub where ua.id = ub.id` | missing | `unsupported-clause` after `UPDATE` |
@@ -198,7 +198,7 @@ landed at this pin and are asserted by the gate.
 
 | # | Gap | Impact | Upstream coordinates |
 |---|-----|--------|---------------------|
-| 1 | `INSERT ... SELECT`, `INSERT OR REPLACE` / `OR IGNORE`, UPSERT, `REPLACE INTO` | Data copy, idempotent seeds, conflict handling | `sql.rs:2787-2875` (`statement()` dispatch requires plain `insert`), `sql.rs:3593-3636` (after `INTO` only a `VALUES` list) |
+| 1 | `INSERT ... SELECT`, `INSERT OR REPLACE` / `OR IGNORE`, `REPLACE INTO` | Data copy and idempotent seeds | `sql.rs:2787-2875` (`statement()` dispatch requires plain `insert`), `sql.rs:3593-3636` (after `INTO` only a `VALUES` list) |
 | 2 | Window frames `GROUPS` and `EXCLUDE` | Analytics that group peers rather than rows | `sql.rs:2517-2612` (`window_spec`), `sql.rs:1037` (`window_spec_label`) |
 | 3 | Date/time and common string functions (`trim`, `replace`, `ifnull`, `nullif`, `printf`) | Reports, formatting, NULL handling in almost every app query | `sql.rs:333-357` (`ScalarFunction`), `engine.rs:5640` (scalar dispatch) |
 | 4 | `CREATE VIEW` / `CREATE TRIGGER`, `PRAGMA` / `EXPLAIN` / `ATTACH` / `VACUUM` | Schema tooling, introspection and maintenance scripts | `sql.rs:2787-2875` (statement dispatch), `engine.rs:401` (`run_statement`) |
@@ -226,6 +226,7 @@ Next tier, lower blast radius but still visible: `COLLATE` and `GLOB` (`sql.rs:3
 | `ALTER TABLE ... ADD COLUMN ... REFERENCES`: non-NULL defaults refused, existing rows stay NULL, later inserts check the parent | `sql.rs:1473` (`AlterAction::AddColumn`), `engine.rs:1370-1411` | `add column with REFERENCES enforces the parent like better-sqlite3` |
 | Canonical `CREATE TABLE` / `CREATE INDEX` / `CREATE VIEW` prefix in `sqlite_master.sql` (verbatim tail, `IF NOT EXISTS` dropped) | `sql.rs:3279-3291` (`canonical_create_sql`) | `sqlite_master lists schema objects in creation order and stays read-only`, view gate |
 | Self-referencing recursive CTE (keyword optional, `UNION ALL` duplicates, `UNION` fixed-point de-duplication, outer `LIMIT` truncation) | `engine.rs:2229` | `recursive CTEs match better-sqlite3 without and with the keyword` |
+| UPSERT `ON CONFLICT DO NOTHING` / `DO UPDATE` with `excluded` columns, column and constraint targets, `RETURNING` and per-statement row visibility | `sql.rs` (`conflict_clause`), `engine.rs` (`prepare_upsert`, `apply_upsert`) | `upsert DO NOTHING and DO UPDATE follow better-sqlite3` |
 
 The three foreign key shapes still missing at this pin (`ON DELETE CASCADE`, `ON UPDATE SET NULL` / `SET DEFAULT`,
 `DEFERRABLE INITIALLY DEFERRED`) are listed in the DDL table and asserted as structured rejections by
