@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 interface ExternalStatement {
   all(...args: unknown[]): unknown[];
   get(...args: unknown[]): { integrity_check?: string };
+  run(...args: unknown[]): { changes: number };
 }
 
 interface ExternalDatabase {
@@ -2536,6 +2537,108 @@ test("table, index and foreign key pragmas follow better-sqlite3", () => {
       assert.deepEqual(result.rows, oracleRows(db, sql), sql);
     }
   });
+});
+
+test("upsert DO NOTHING and DO UPDATE follow better-sqlite3", () => {
+  const live = workspace();
+  const snapshotFile = workspace();
+  const engine = createEngine(4096);
+  const external = new BetterSqlite(live.path);
+  try {
+    for (const sql of [
+      "create table ups (id integer primary key, sku text unique, qty integer not null default 0, note text)",
+      "create table cu (a text, b text, v integer, unique(a, b))",
+    ]) {
+      engine.execute(sql);
+      external.prepare(sql).run();
+    }
+    // Every statement runs in both engines and must report the same number of
+    // changed rows, so the expectations come from the real engine, not from
+    // this one.
+    const step = (sql: string, expected: number): void => {
+      const mine = engine.execute(sql);
+      const theirs = external.prepare(sql).run();
+      assert.equal(theirs.changes, expected, sql);
+      assert.equal(mine.affected, expected, sql);
+    };
+    step("insert into ups (id, sku, qty, note) values (1,'a',5,'first'), (2,'b',7,'second')", 2);
+    step("insert into ups (id, sku, qty) values (3,'a',50) on conflict(sku) do nothing", 0);
+    step("insert into ups (id, sku, qty, note) values (4,'c',9,'new') on conflict(sku) do update set qty = qty + excluded.qty, note = excluded.note", 1);
+    // `qty` reads the stored row, `excluded.qty` reads the supplied row.
+    step("insert into ups (id, sku, qty, note) values (5,'a',2,'upd') on conflict(sku) do update set qty = qty + excluded.qty, note = excluded.note", 1);
+    step("insert into ups (id, sku, qty) values (6,'b',3) on conflict(sku) do update set qty = excluded.qty where ups.note = 'second'", 1);
+    // A false `DO UPDATE ... WHERE` leaves the stored row alone.
+    step("insert into ups (id, sku, qty) values (7,'b',100) on conflict(sku) do update set qty = excluded.qty where 0", 0);
+    // The second tuple conflicts with the row the first tuple just inserted.
+    step("insert into ups (id, sku, qty) values (8,'d',1), (9,'d',2) on conflict(sku) do update set qty = qty + excluded.qty", 2);
+    step("insert into ups (id, sku, qty) values (2,'z',11) on conflict(id) do update set sku = excluded.sku, qty = excluded.qty", 1);
+    step("insert into ups (id, sku, qty) values (10,'z',99) on conflict(sku) do update set qty = excluded.qty", 1);
+
+    const readUps = (): unknown[] => engine.execute("select id, sku, qty, note from ups order by id").rows;
+    const oracleUps = (): unknown[] => external.prepare("select id, sku, qty, note from ups order by id").all().map((row) => Object.values(row));
+    assert.deepEqual(readUps(), [
+      [1, "a", 7, "upd"],
+      [2, "z", 99, "second"],
+      [4, "c", 9, "new"],
+      [8, "d", 3, null],
+    ]);
+    assert.deepEqual(readUps(), oracleUps());
+
+    // `RETURNING` reports nothing for a skipped row and the rewritten row for
+    // an update.
+    const skipped = engine.execute("insert into ups (id, sku, qty) values (11,'z',5) on conflict(sku) do nothing returning id, qty");
+    assert.deepEqual(skipped.rows, []);
+    assert.equal(skipped.affected, 0);
+    assert.deepEqual(external.prepare("insert into ups (id, sku, qty) values (11,'z',5) on conflict(sku) do nothing returning id, qty").all(), []);
+    const updated = engine.execute("insert into ups (id, sku, qty) values (12,'z',5) on conflict(sku) do update set qty = excluded.qty returning id, qty");
+    assert.deepEqual(updated.rows, [[2, 5]]);
+    assert.equal(updated.affected, 1);
+    assert.deepEqual(
+      external.prepare("insert into ups (id, sku, qty) values (12,'z',5) on conflict(sku) do update set qty = excluded.qty returning id, qty").all(),
+      [{ id: 2, qty: 5 }],
+    );
+
+    // A table-level composite `UNIQUE` is a valid conflict target.
+    step("insert into cu values ('a','b',1), ('a','c',2)", 2);
+    step("insert into cu values ('a','b',3) on conflict(a,b) do update set v = v + excluded.v", 1);
+    assert.deepEqual(engine.execute("select a, b, v from cu order by b").rows, [["a", "b", 4], ["a", "c", 2]]);
+    assert.deepEqual(external.prepare("select a, b, v from cu order by b").all().map((row) => Object.values(row)), [["a", "b", 4], ["a", "c", 2]]);
+
+    for (const sql of [
+      "insert into ups (id, sku) values (13,'q') on conflict(id, sku) do nothing",
+      "insert into ups (id, sku) values (14,'q') on conflict(missing) do nothing",
+    ]) {
+      const mine = engine.tryExecute(sql);
+      assert.equal(mine.ok, false, sql);
+      let theirs = "";
+      try {
+        external.prepare(sql).run();
+      } catch (error) {
+        theirs = (error as Error).message;
+      }
+      assert.equal(mine.error?.message, theirs, sql);
+    }
+
+    // The rewritten rows must survive a real engine's page check and a reopen.
+    writeFileSync(snapshotFile.path, engine.snapshot());
+    const inspector = new BetterSqlite(snapshotFile.path);
+    try {
+      assert.equal(inspector.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+      assert.deepEqual(inspector.prepare("SELECT id, qty FROM ups ORDER BY id").all(), oracleUps().map((row) => Object.fromEntries([["id", row[0]], ["qty", row[2]]])));
+    } finally {
+      inspector.close();
+    }
+    const reopened = createEngineFromSnapshot(engine.snapshot(), 4096);
+    const sql = "insert into ups (id, sku, qty) values (15,'d',4) on conflict(sku) do update set qty = qty + excluded.qty";
+    const mine = reopened.execute(sql);
+    const theirs = external.prepare(sql).run();
+    assert.equal(mine.affected, theirs.changes);
+    assert.deepEqual(reopened.execute("select id, sku, qty from ups order by id").rows, external.prepare("select id, sku, qty from ups order by id").all().map((row) => Object.values(row)));
+  } finally {
+    external.close();
+    live.dispose();
+    snapshotFile.dispose();
+  }
 });
 
 test("user_version and application_id round-trip through the header", () => {
