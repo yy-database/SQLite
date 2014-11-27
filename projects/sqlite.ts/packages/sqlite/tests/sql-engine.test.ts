@@ -2641,6 +2641,140 @@ test("upsert DO NOTHING and DO UPDATE follow better-sqlite3", () => {
   }
 });
 
+test("upsert DO UPDATE fires update triggers like better-sqlite3", () => {
+  const live = workspace();
+  const engine = createEngine(4096);
+  const external = new BetterSqlite(live.path);
+  try {
+    const schema = [
+      "create table t (id integer primary key, k text unique, v integer)",
+      "create table log (seq integer primary key, op text, old_id integer, new_id integer, old_v integer, new_v integer, new_k text)",
+      "create trigger t_bi before insert on t begin insert into log(op, new_k) values ('bi', new.k); end",
+      "create trigger t_ai after insert on t begin insert into log(op, new_k) values ('ai', new.k); end",
+      "create trigger t_bu before update on t begin insert into log(op, old_id, new_id, old_v, new_v, new_k) values ('bu', old.id, new.id, old.v, new.v, new.k); end",
+      "create trigger t_au after update on t begin insert into log(op, old_id, new_id, old_v, new_v, new_k) values ('au', old.id, new.id, old.v, new.v, new.k); end",
+    ];
+    for (const sql of schema) {
+      engine.execute(sql);
+      external.prepare(sql).run();
+    }
+    const step = (sql: string, expected: number): void => {
+      const mine = engine.execute(sql);
+      const theirs = external.prepare(sql).run();
+      assert.equal(theirs.changes, expected, sql);
+      assert.equal(mine.affected, expected, sql);
+    };
+    const readLog = (): unknown[] => engine.execute("select seq, op, old_id, new_id, old_v, new_v, new_k from log order by seq").rows;
+    const oracleLog = (): unknown[] =>
+      external.prepare("select seq, op, old_id, new_id, old_v, new_v, new_k from log order by seq").all().map((row) => Object.values(row));
+
+    step("insert into t values (1, 'a', 1)", 1);
+    step("insert into t (id, k, v) values (2, 'a', 6) on conflict(k) do update set v = excluded.v + 1", 1);
+    // The conflict fires `BEFORE INSERT`, `BEFORE UPDATE` and `AFTER UPDATE`,
+    // never `AFTER INSERT`, and the update triggers see the rewritten values.
+    assert.deepEqual(readLog(), oracleLog());
+    assert.deepEqual(readLog(), [
+      [1, "bi", null, null, null, null, "a"],
+      [2, "ai", null, null, null, null, "a"],
+      [3, "bi", null, null, null, null, "a"],
+      [4, "bu", 1, 1, 1, 7, "a"],
+      [5, "au", 1, 1, 1, 7, "a"],
+    ]);
+
+    // `WHEN` and `UPDATE OF` are evaluated against the rewritten row too.
+    for (const sql of [
+      "create trigger t_wu after update on t when old.v <> new.v begin insert into log(op, old_v, new_v) values ('wu', old.v, new.v); end",
+      "create trigger t_ku after update of k on t begin insert into log(op, new_k) values ('ku', new.k); end",
+    ]) {
+      engine.execute(sql);
+      external.prepare(sql).run();
+    }
+    step("insert into t (id, k, v) values (1, 'a', 7) on conflict(id) do update set v = excluded.v", 1);
+    step("insert into t (id, k, v) values (1, 'a', 8) on conflict(id) do update set v = excluded.v", 1);
+    step("insert into t (id, k, v) values (1, 'a', 8) on conflict(id) do update set k = excluded.k", 1);
+    assert.deepEqual(readLog(), oracleLog());
+    const ops = engine.execute("select op from log order by seq").rows.map((row) => row[0]);
+    assert.equal(ops.filter((op) => op === "ai").length, 1);
+    assert.equal(ops.filter((op) => op === "wu").length, 1);
+    assert.equal(ops.filter((op) => op === "ku").length, 1);
+  } finally {
+    external.close();
+    live.dispose();
+  }
+});
+
+test("upsert DO UPDATE runs foreign key checks like better-sqlite3", () => {
+  const live = workspace();
+  const engine = createEngine(4096);
+  const external = new BetterSqlite(live.path);
+  try {
+    for (const sql of ["pragma foreign_keys = on"]) {
+      engine.execute(sql);
+      external.prepare(sql).run();
+    }
+    const schema = [
+      "create table parent (id integer primary key, code text unique)",
+      "create table child (id integer primary key, pcode text references parent(code))",
+      "insert into parent values (1, 'p1')",
+      "insert into child values (1, 'p1')",
+      "create table parent2 (id integer primary key, code text unique)",
+      "create table child2 (id integer primary key, pcode text references parent2(code) on update restrict)",
+      "insert into parent2 values (1, 'r1')",
+      "insert into child2 values (1, 'r1')",
+    ];
+    for (const sql of schema) {
+      engine.execute(sql);
+      external.prepare(sql).run();
+    }
+    const step = (sql: string, expected: number): void => {
+      const mine = engine.execute(sql);
+      const theirs = external.prepare(sql).run();
+      assert.equal(theirs.changes, expected, sql);
+      assert.equal(mine.affected, expected, sql);
+    };
+    const failure = (sql: string): { code?: string; message: string } => {
+      const mine = engine.tryExecute(sql);
+      assert.equal(mine.ok, false, sql);
+      try {
+        external.prepare(sql).run();
+        assert.fail(`better-sqlite3 accepted ${sql}`);
+      } catch (error) {
+        assert.equal(mine.error?.message, (error as Error).message, sql);
+      }
+      return { code: mine.error?.code, message: mine.error?.message ?? "" };
+    };
+    const pair = (sql: string): unknown[] => [
+      engine.execute(sql).rows,
+      external.prepare(sql).all().map((row) => Object.values(row)),
+    ];
+
+    // Rewriting the parent key a child still uses aborts the whole statement.
+    step("insert into parent (id, code) values (1, 'p1') on conflict(id) do update set code = excluded.code", 1);
+    const parentViolation = failure("insert into parent (id, code) values (1, 'p2') on conflict(id) do update set code = 'p2'");
+    assert.equal(parentViolation.code, "SQLITE_CONSTRAINT_FOREIGNKEY");
+    assert.deepEqual(pair("select id, code from parent"), [[[1, "p1"]], [[1, "p1"]]]);
+
+    // A child upsert that moves its key to a missing parent is rejected.
+    const childViolation = failure("insert into child (id, pcode) values (1, 'pX') on conflict(id) do update set pcode = 'pX'");
+    assert.equal(childViolation.code, "SQLITE_CONSTRAINT_FOREIGNKEY");
+    assert.deepEqual(pair("select id, pcode from child"), [[[1, "p1"]], [[1, "p1"]]]);
+
+    // `ON UPDATE RESTRICT` stops the parent rewrite the same way.
+    const restrict = failure("insert into parent2 (id, code) values (1, 'r2') on conflict(id) do update set code = 'r2'");
+    assert.match(restrict.message, /FOREIGN KEY constraint failed/);
+    assert.deepEqual(pair("select id, code from parent2"), [[[1, "r1"]], [[1, "r1"]]]);
+    assert.deepEqual(pair("select id, pcode from child2"), [[[1, "r1"]], [[1, "r1"]]]);
+
+    // Once the child is gone the same parent rewrite succeeds in both engines.
+    step("delete from child where id = 1", 1);
+    step("insert into parent (id, code) values (1, 'p2') on conflict(id) do update set code = 'p2'", 1);
+    assert.deepEqual(pair("select id, code from parent"), [[[1, "p2"]], [[1, "p2"]]]);
+  } finally {
+    external.close();
+    live.dispose();
+  }
+});
+
 test("user_version and application_id round-trip through the header", () => {
   const engine = createEngine(4096);
   assert.deepEqual(engine.execute("pragma user_version").rows, [[0]]);
