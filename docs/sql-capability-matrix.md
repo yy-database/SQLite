@@ -70,7 +70,7 @@ Cluster totals (120 feature rows): **88 gated / 0 uncovered / 32 missing** at th
 | `DELETE FROM ... AS alias` | `delete from da as x where x.a = 2 returning a` | gated | oracle-matching with both oracles |
 | `INSERT ... SELECT` | `insert into is2 (a) select a from is1 where a > 1` | missing | `syntax`: expected `values` but found `select` |
 | `INSERT OR REPLACE` / `INSERT OR IGNORE` | `insert or replace into orr values (1,'b')` | missing | `syntax`: expected `into` but found `or` |
-| UPSERT `ON CONFLICT DO NOTHING` / `DO UPDATE` | `insert into up values (1, 20) on conflict (id) do update set v = excluded.v` | gated | targets match a rowid alias, a column key or a table-level `UNIQUE`, `excluded.<column>` reads the supplied tuple while a bare column reads the stored row, a false `DO UPDATE ... WHERE` leaves the row alone, a target naming no uniqueness constraint reports `ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint`, skipped rows report `affected = 0` and no `RETURNING` row, rewritten rows survive a reopen and better-sqlite3 `integrity_check = ok`; `upsert DO NOTHING and DO UPDATE follow better-sqlite3` |
+| UPSERT `ON CONFLICT DO NOTHING` / `DO UPDATE` | `insert into up values (1, 20) on conflict (id) do update set v = excluded.v` | gated | targets match a rowid alias, a column key or a table-level `UNIQUE`, `excluded.<column>` reads the supplied tuple while a bare column reads the stored row, a false `DO UPDATE ... WHERE` leaves the row alone, a target naming no uniqueness constraint reports `ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint`, skipped rows report `affected = 0` and no `RETURNING` row, rewritten rows survive a reopen and better-sqlite3 `integrity_check = ok`, a `DO UPDATE` rewrite fires `BEFORE INSERT` / `BEFORE UPDATE` / `AFTER UPDATE` with the rewritten values while `WHEN` and `UPDATE OF` follow the assignment list, and parent-side and child-side reference failures match `SQLITE_CONSTRAINT_FOREIGNKEY`; `upsert DO NOTHING and DO UPDATE follow better-sqlite3`, `upsert DO UPDATE fires update triggers like better-sqlite3`, `upsert DO UPDATE runs foreign key checks like better-sqlite3` |
 | `REPLACE INTO` | `replace into rp values (1,'b')` | missing | `unsupported-statement` at `replace` |
 | Expression inside a `VALUES` tuple | `insert into ie values (1 + 1)` | missing | `syntax`: `VALUES` tuple only accepts literals |
 | `UPDATE ... FROM` | `update ua set v = ub.w from ub where ua.id = ub.id` | missing | `unsupported-clause` after `UPDATE` |
@@ -239,17 +239,18 @@ through this engine and both live oracles. Seed and count fully determine the re
 `e3d6c1d1baf823086965286e4725e7921b79e6406ec29e72a96d03b08c1456b1`, unchanged because the generators did
 not change.
 
-Distribution: DDL 40, DML 40, expressions 40, aggregates 30, windows 30, transactions 20. Result: 166 passed,
-24 mismatched, 10 discarded because `better-sqlite3` and CPython `sqlite3` disagreed with each other. The
-baseline holds 34 entries: 24 structured rejections and 10 discarded oracle disagreements.
+Distribution: DDL 40, DML 40, expressions 40, aggregates 30, windows 30, transactions 20. Result: 168 passed,
+22 mismatched, 10 discarded because `better-sqlite3` and CPython `sqlite3` disagreed with each other. The
+baseline holds 32 entries: 22 structured rejections and 10 discarded oracle disagreements.
 
-All 24 mismatches are structured rejections against two successful oracles, all already listed in the cluster
-tables. The DDL cases left the baseline once `WITHOUT ROWID`, partial and expression indexes were implemented:
+All 22 mismatches are structured rejections against two successful oracles, all already listed in the cluster
+tables. The DDL cases left the baseline once `WITHOUT ROWID`, partial and expression indexes were implemented,
+and the two UPSERT cases left it once `ON CONFLICT` landed:
 
 | Cluster | Cases | Shapes |
 |---------|-------|--------|
 | DDL | 0 | none |
-| DML | 10 | `INSERT OR REPLACE` 3, `INSERT ... SELECT` 3, UPSERT 2, `REPLACE INTO` 2 |
+| DML | 8 | `INSERT OR REPLACE` 3, `INSERT ... SELECT` 3, `REPLACE INTO` 2 |
 | Expressions | 4 | `IS DISTINCT FROM` 2, `GLOB` 1, `NULLS FIRST` 1 |
 | Aggregates | 4 | `group_concat` with `ORDER BY` 1, `FILTER` 1, `count(DISTINCT)` 1, multi-argument `min`/`max` 1 |
 | Windows | 6 | `GROUPS` frame 3, `EXCLUDE` 3 |
