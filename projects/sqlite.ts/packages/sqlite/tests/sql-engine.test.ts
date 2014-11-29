@@ -2641,6 +2641,128 @@ test("upsert DO NOTHING and DO UPDATE follow better-sqlite3", () => {
   }
 });
 
+test("upsert targets partial unique indexes by their predicate like better-sqlite3", () => {
+  const live = workspace();
+  const snapshotFile = workspace();
+  const engine = createEngine(4096);
+  const external = new BetterSqlite(live.path);
+  try {
+    for (const sql of [
+      "create table p (a integer, v integer)",
+      "create unique index pu on p(a) where a > 10",
+      "create table q (a integer, v integer)",
+      "create unique index qf on q(a)",
+      "create unique index qp on q(a) where a > 10",
+      "create table r (a integer, b integer, v integer)",
+      "create unique index r1 on r(a) where b = 1",
+      "create unique index r2 on r(a) where b = 2",
+    ]) {
+      engine.execute(sql);
+      external.prepare(sql).run();
+    }
+    const step = (sql: string, expected: number): void => {
+      const mine = engine.execute(sql);
+      const theirs = external.prepare(sql).run();
+      assert.equal(theirs.changes, expected, sql);
+      assert.equal(mine.affected, expected, sql);
+    };
+    const failure = (sql: string): { code?: string; message: string } => {
+      const mine = engine.tryExecute(sql);
+      assert.equal(mine.ok, false, sql);
+      let theirs = "";
+      try {
+        external.prepare(sql).run();
+        assert.fail(`better-sqlite3 accepted ${sql}`);
+      } catch (error) {
+        theirs = (error as Error).message;
+      }
+      assert.equal(mine.error?.message, theirs, sql);
+      return { code: mine.error?.code, message: mine.error?.message ?? "" };
+    };
+    const same = (sql: string): void => {
+      assert.deepEqual(engine.execute(sql).rows, external.prepare(sql).all().map((row) => Object.values(row)), sql);
+    };
+
+    // Only rows inside the partial predicate belong to the index, so a value
+    // outside it is inserted even when `DO NOTHING` names the index.
+    step("insert into p values (20,1)", 1);
+    step("insert into p values (20,2) on conflict(a) where a > 10 do nothing", 0);
+    step("insert into p values (5,3)", 1);
+    step("insert into p values (5,4) on conflict(a) where a > 10 do nothing", 1);
+    same("select a, v from p order by rowid");
+    assert.deepEqual(engine.execute("select a, v from p order by rowid").rows, [
+      [20, 1],
+      [5, 3],
+      [5, 4],
+    ]);
+
+    // The target has to repeat the index predicate exactly.
+    const wrongPredicate = failure("insert into p values (20,5) on conflict(a) where a > 20 do nothing");
+    assert.equal(wrongPredicate.code, "conflict-target");
+    assert.equal(wrongPredicate.message, "ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint");
+    const missingPredicate = failure("insert into p values (20,5) on conflict(a) do nothing");
+    assert.equal(missingPredicate.code, "conflict-target");
+    assert.equal(missingPredicate.message, "ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint");
+    // `excluded` is not in scope in the target predicate.
+    const excluded = failure("insert into p values (20,6) on conflict(a) where excluded.a > 10 do nothing");
+    assert.equal(excluded.code, "unknown-column");
+    assert.equal(excluded.message, "no such column: excluded.a");
+    // An ordinary table qualifier is in scope.
+    step("insert into p values (20,7) on conflict(a) where p.a > 10 do update set v = excluded.v", 1);
+    same("select a, v from p order by rowid");
+    assert.deepEqual(engine.execute("select a, v from p order by rowid").rows, [
+      [20, 7],
+      [5, 3],
+      [5, 4],
+    ]);
+
+    // A full and a partial unique index share the key column: a target with a
+    // `WHERE` resolves through the partial one, a bare target through the full one.
+    step("insert into q values (20,1)", 1);
+    step("insert into q values (20,2) on conflict(a) where a > 10 do update set v = excluded.v", 1);
+    step("insert into q values (20,3) on conflict(a) do update set v = excluded.v + 100", 1);
+    same("select a, v from q order by rowid");
+    assert.deepEqual(engine.execute("select a, v from q order by rowid").rows, [[20, 103]]);
+
+    // Two partial indexes cover the same key column. Only the target's
+    // predicate resolves, so a supplied row that violates the other one still
+    // aborts with `UNIQUE constraint failed`, even for `DO NOTHING`.
+    step("insert into r values (7,1,10), (7,2,20)", 2);
+    step("insert into r values (7,1,11) on conflict(a) where b = 1 do nothing", 0);
+    const otherIndex = failure("insert into r values (7,2,21) on conflict(a) where b = 1 do nothing");
+    assert.equal(otherIndex.code, "unique-constraint");
+    assert.equal(otherIndex.message, "UNIQUE constraint failed: r.a");
+    step("insert into r values (7,2,22) on conflict(a) where b = 2 do nothing", 0);
+    same("select a, b, v from r order by rowid");
+    assert.deepEqual(engine.execute("select a, b, v from r order by rowid").rows, [
+      [7, 1, 10],
+      [7, 2, 20],
+    ]);
+
+    // The rewritten rows keep every partial index consistent for a real engine.
+    writeFileSync(snapshotFile.path, engine.snapshot());
+    const inspector = new BetterSqlite(snapshotFile.path);
+    try {
+      assert.equal(inspector.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+      assert.deepEqual(inspector.prepare("select a, v from p where a > 10 order by a").all(), [{ a: 20, v: 7 }]);
+      assert.deepEqual(inspector.prepare("select a, b, v from r where b = 2").all(), [{ a: 7, b: 2, v: 20 }]);
+    } finally {
+      inspector.close();
+    }
+    const reopened = createEngineFromSnapshot(engine.snapshot(), 4096);
+    const sql = "insert into p values (20,8) on conflict(a) where a > 10 do update set v = excluded.v";
+    assert.equal(reopened.execute(sql).affected, external.prepare(sql).run().changes);
+    assert.deepEqual(
+      reopened.execute("select a, v from p order by rowid").rows,
+      external.prepare("select a, v from p order by rowid").all().map((row) => Object.values(row)),
+    );
+  } finally {
+    external.close();
+    live.dispose();
+    snapshotFile.dispose();
+  }
+});
+
 test("upsert DO UPDATE fires update triggers like better-sqlite3", () => {
   const live = workspace();
   const engine = createEngine(4096);
