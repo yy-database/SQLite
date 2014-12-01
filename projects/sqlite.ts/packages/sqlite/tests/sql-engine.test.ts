@@ -2096,26 +2096,196 @@ test("composite foreign keys and statement rollback match better-sqlite3", () =>
   });
 });
 
-// Referential actions, deferred checks and adding a reference through
-// `ALTER TABLE` stay rejected with a structured code instead of silently
-// weakening the constraint.
-test("unsupported foreign key shapes keep structured rejections", () => {
+// Deferred checks still stay rejected: this engine only implements SQLite's
+// immediate constraint timing.
+test("deferred foreign keys stay rejected", () => {
   const engine = createEngine(4096);
   engine.execute("create table parent (id integer primary key)");
-  engine.execute("create table plain (id integer primary key)");
+  const deferred = engine.tryExecute(
+    "create table c (id integer primary key, pid integer references parent (id) deferrable initially deferred)",
+  );
+  assert.equal(deferred.ok, false);
+  assert.equal(deferred.error?.code, "unsupported-deferred-foreign-key");
+  assert.equal(deferred.error?.clause, "DEFERRABLE");
+  engine.execute("create table ok (id integer primary key, pid integer references parent (id) not deferrable)");
+});
 
-  const cases: Array<[string, string, string]> = [
-    ["create table c1 (id integer primary key, pid integer references parent (id) on delete cascade)", "unsupported-foreign-key-action", "CASCADE"],
-    ["create table c2 (id integer primary key, pid integer references parent (id) on update cascade)", "unsupported-foreign-key-action", "CASCADE"],
-    ["create table c3 (id integer primary key, pid integer references parent (id) on update set null)", "unsupported-foreign-key-action", "SET NULL"],
-    ["create table c4 (id integer primary key, pid integer references parent (id) on update set default)", "unsupported-foreign-key-action", "SET DEFAULT"],
-    ["create table c5 (id integer primary key, pid integer references parent (id) deferrable initially deferred)", "unsupported-deferred-foreign-key", "DEFERRABLE"],
+// The live oracle decides every row edit, the rollback and the child-table
+// triggers that `ON DELETE` / `ON UPDATE` actions have to perform.
+test("referential actions cascade, set null and set default like better-sqlite3", () => {
+  const steps = [
+    "pragma foreign_keys = on",
+    "create table p (id integer primary key)",
+    "create table c (id integer primary key, pid integer references p(id) on delete cascade)",
+    "insert into p values (1), (2)",
+    "insert into c values (10, 1), (11, 1), (12, 2)",
+    "delete from p where id = 1",
+    "create table u1 (id integer primary key)",
+    "create table u2 (id integer primary key, uid integer unique references u1(id) on update cascade)",
+    "create table u3 (id integer primary key, u2uid integer references u2(uid) on update cascade)",
+    "insert into u1 values (1)",
+    "insert into u2 values (2, 1)",
+    "insert into u3 values (3, 1)",
+    "update u1 set id = 5 where id = 1",
+    "create table s1 (id integer primary key)",
+    "create table s2 (id integer primary key, sid integer references s1(id) on delete set null on update set null)",
+    "create table s3 (id integer primary key, sid integer default 9 references s1(id) on delete set default on update set default)",
+    "insert into s1 values (1), (9)",
+    "insert into s2 values (20, 1)",
+    "insert into s3 values (30, 1)",
+    "update s1 set id = 7 where id = 1",
+    "create table d1 (id integer primary key)",
+    "create table d2 (id integer primary key, d1id integer default 77 references d1(id) on delete set default)",
+    "insert into d1 values (1)",
+    "insert into d2 values (2, 1)",
   ];
-  for (const [sql, code, clause] of cases) {
-    const result = engine.tryExecute(sql);
-    assert.equal(result.ok, false, sql);
-    assert.equal(result.error?.code, code, sql);
-    assert.equal(result.error?.clause, clause, sql);
+  const engine = createEngine(4096);
+  const db = new BetterSqlite(":memory:") as unknown as OracleDatabase;
+  try {
+    const advance = (sql: string): void => {
+      const mine = engine.tryExecute(sql);
+      let theirs = "";
+      try {
+        db.exec(sql);
+      } catch (error) {
+        theirs = (error as Error).message;
+      }
+      if (mine.ok) {
+        assert.equal(theirs, "", sql);
+      } else {
+        assert.equal(mine.error?.message, theirs, sql);
+      }
+    };
+    const same = (sql: string): void => {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    };
+    for (const sql of steps) advance(sql);
+    same("select id, pid from c order by id");
+    assert.deepEqual(engine.execute("select id, pid from c order by id").rows, [[12, 2]]);
+    same("select id, uid from u2 order by id");
+    same("select id, u2uid from u3 order by id");
+    assert.deepEqual(engine.execute("select id, uid from u2 order by id").rows, [[2, 5]]);
+    assert.deepEqual(engine.execute("select id, u2uid from u3 order by id").rows, [[3, 5]]);
+    same("select id, sid from s2 order by id");
+    same("select id, sid from s3 order by id");
+    assert.deepEqual(engine.execute("select id, sid from s2 order by id").rows, [[20, null]]);
+    assert.deepEqual(engine.execute("select id, sid from s3 order by id").rows, [[30, 9]]);
+
+    // `SET NULL` on a `NOT NULL` child aborts the statement and rolls it back.
+    advance("delete from s1 where id = 7");
+    same("select id from s1");
+    same("select id, sid from s2 order by id");
+    same("select id, sid from s3 order by id");
+    for (const sql of [
+      "create table ns1 (id integer primary key)",
+      "create table ns2 (id integer primary key, sid integer not null references ns1(id) on delete set null)",
+      "insert into ns1 values (60)",
+      "insert into ns2 values (61, 60)",
+    ]) {
+      advance(sql);
+    }
+    advance("delete from ns1 where id = 60");
+    same("select id from ns1");
+    same("select id, sid from ns2");
+    assert.deepEqual(engine.execute("select id from ns1").rows, [[60]]);
+    assert.deepEqual(engine.execute("select id, sid from ns2").rows, [[61, 60]]);
+
+    // A default that names no parent is a foreign key failure after the rewrite.
+    advance("delete from d1 where id = 1");
+    same("select id, d1id from d2 order by id");
+
+    // Composite keys cascade both columns.
+    for (const sql of [
+      "create table k1 (a text, b text, primary key (a, b))",
+      "create table k2 (id integer primary key, ka text, kb text, foreign key (ka, kb) references k1(a, b) on delete cascade on update cascade)",
+      "insert into k1 values ('x', 'y')",
+      "insert into k2 values (50, 'x', 'y')",
+      "update k1 set b = 'z' where a = 'x'",
+      "delete from k1 where a = 'x'",
+    ]) {
+      advance(sql);
+    }
+    same("select id from k2");
+    assert.deepEqual(engine.execute("select id from k2").rows, []);
+
+    // Self-referencing cascades walk the whole subtree.
+    for (const sql of [
+      "create table tree (id integer primary key, parent integer references tree(id) on delete cascade)",
+      "insert into tree values (1, null), (2, 1), (3, 2)",
+      "delete from tree where id = 1",
+    ]) {
+      advance(sql);
+    }
+    same("select id, parent from tree order by id");
+    assert.deepEqual(engine.execute("select id, parent from tree order by id").rows, []);
+
+    // Child-table triggers fire between the parent `BEFORE` and `AFTER` events.
+    for (const sql of [
+      "create table t1 (id integer primary key)",
+      "create table t2 (id integer primary key, t1id integer references t1(id) on delete cascade on update cascade)",
+      "create table tlog (seq integer primary key, op text, old_id integer, old_pid integer, new_id integer, new_pid integer)",
+      "create trigger t2_bd before delete on t2 begin insert into tlog(op, old_id, old_pid) values ('bd', old.id, old.t1id); end",
+      "create trigger t2_ad after delete on t2 begin insert into tlog(op, old_id, old_pid) values ('ad', old.id, old.t1id); end",
+      "create trigger t2_bu before update on t2 begin insert into tlog(op, old_id, old_pid, new_id, new_pid) values ('bu', old.id, old.t1id, new.id, new.t1id); end",
+      "create trigger t2_au after update on t2 begin insert into tlog(op, old_id, old_pid, new_id, new_pid) values ('au', old.id, old.t1id, new.id, new.t1id); end",
+      "create trigger t1_bu before update on t1 begin insert into tlog(op) values ('p-bu'); end",
+      "create trigger t1_au after update on t1 begin insert into tlog(op) values ('p-au'); end",
+      "create trigger t1_bd before delete on t1 begin insert into tlog(op) values ('p-bd'); end",
+      "create trigger t1_ad after delete on t1 begin insert into tlog(op) values ('p-ad'); end",
+      "insert into t1 values (1)",
+      "insert into t2 values (2, 1), (3, 1)",
+      "update t1 set id = 8 where id = 1",
+    ]) {
+      advance(sql);
+    }
+    same("select op, old_id, old_pid, new_id, new_pid from tlog order by seq");
+    assert.deepEqual(engine.execute("select op from tlog order by seq").rows, [["p-bu"], ["bu"], ["au"], ["bu"], ["au"], ["p-au"]]);
+    advance("delete from t1 where id = 8");
+    same("select op, old_id, old_pid, new_id, new_pid from tlog order by seq");
+    assert.deepEqual(
+      engine.execute("select op from tlog order by seq").rows.slice(6),
+      [["p-bd"], ["bd"], ["ad"], ["bd"], ["ad"], ["p-ad"]],
+    );
+
+    // `RESTRICT` and `NO ACTION` keep the parent row and report the same wording.
+    for (const sql of [
+      "create table r1 (id integer primary key)",
+      "create table r2 (id integer primary key, r1id integer references r1(id) on delete restrict)",
+      "create table n1 (id integer primary key)",
+      "create table n2 (id integer primary key, n1id integer references n1(id) on delete no action)",
+      "insert into r1 values (1)",
+      "insert into r2 values (2, 1)",
+      "insert into n1 values (1)",
+      "insert into n2 values (2, 1)",
+    ]) {
+      advance(sql);
+    }
+    advance("delete from r1 where id = 1");
+    advance("delete from n1 where id = 1");
+    same("select id from r1");
+    same("select id from n1");
+    assert.deepEqual(engine.execute("select id from r1").rows, [[1]]);
+    assert.deepEqual(engine.execute("select id from n1").rows, [[1]]);
+
+    // Every cascaded rewrite keeps the stored indexes and b-trees valid.
+    const snapshot = workspace();
+    try {
+      writeFileSync(snapshot.path, engine.snapshot());
+      const inspector = new BetterSqlite(snapshot.path);
+      try {
+        assert.equal(inspector.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+        assert.deepEqual(inspector.prepare("select id, uid from u2 order by id").all(), [{ id: 2, uid: 5 }]);
+      } finally {
+        inspector.close();
+      }
+      const reopened = createEngineFromSnapshot(engine.snapshot(), 4096);
+      assert.deepEqual(reopened.execute("select id, uid from u2 order by id").rows, [[2, 5]]);
+      assert.deepEqual(reopened.execute("select id, sid from s3 order by id").rows, [[30, 9]]);
+    } finally {
+      snapshot.dispose();
+    }
+  } finally {
+    db.close();
   }
 });
 
