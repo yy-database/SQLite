@@ -1,6 +1,6 @@
 # SQL capability matrix
 
-Measured against the pinned `database.rs` facade rev `c72b2a7` (`c72b2a7927ee7bec3a242fa7c7e88e682723f470`,
+Measured against the pinned `database.rs` facade rev `bcebe60` (`bcebe60e4c72976260088806956bd7a5c5843873`,
 `projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
 through both live oracles; the oracle value, not an internal expectation, decides whether a row is correct.
 
@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (120 feature rows): **90 gated / 0 uncovered / 30 missing** at the pin.
+Cluster totals (121 feature rows): **94 gated / 0 uncovered / 27 missing** at the pin.
 
 ## DDL
 
@@ -32,7 +32,7 @@ Cluster totals (120 feature rows): **90 gated / 0 uncovered / 30 missing** at th
 | `CREATE TABLE ... WITHOUT ROWID` | `create table wr (a text primary key, b integer) without rowid` | gated | rows live in the primary-key index b-tree rooted at the schema `rootpage` (page types 10/2), key columns lead every stored record even when declared later, and no hidden `rowid` exists; a missing or duplicated key is rejected; better-sqlite3 opens the file, reports `integrity_check = ok` and inserts further rows into the tree; `without rowid tables are their own primary key b-tree` |
 | `CREATE TABLE ... STRICT` | `create table st (a integer) strict` | gated | affinity runs first, then a value whose storage class differs from the declared type fails with `constraint-datatype`; invalid declared types fail with `unknown-datatype`; `strict tables enforce declared storage classes like better-sqlite3` |
 | `CREATE TEMP TABLE` / `sqlite_temp_master` | `create temp table tp (a integer)` | gated | lives in its own schema that shadows an equally named main table, reports `type/name/tbl_name/rootpage/sql` from `sqlite_temp_master`, reuses freed root pages, removes the temp object first on `DROP TABLE`, and disappears with the connection; `temp tables shadow main and vanish with the connection like better-sqlite3` |
-| `CREATE TABLE ... AS SELECT` | `create table dst as select a from src where a > 1` | missing | `syntax`: expected `(` but found `as` |
+| `CREATE TABLE ... AS SELECT` | `create table dst as select a from src where a > 1` | gated | the query runs before the table exists, output labels become declared names (duplicates numbered `:1`, `:2`), a bare source column copies its affinity as `INT` / `TEXT` / `REAL` / `NUM` while expressions get no type, `CREATE TABLE ... AS` stores the generated compact definition, and the statement reports `affected = 0`; `create table as select derives declared types and rows like better-sqlite3` |
 | Partial index (`... WHERE`) | `create index pix on pi (a) where a > 1` | gated | only rows satisfying the predicate enter the index b-tree, the membership is recomputed on every write so an update that fails the predicate removes the entry, a `UNIQUE ... WHERE` still rejects duplicates among covered rows, and better-sqlite3 opens the file with `integrity_check = ok`, answers a query through the partial index and keeps it consistent after its own insert; `expression and partial indexes maintain their own keys` |
 | Expression index | `create index eix on ei (a + 1)` or `lower(name)` | gated | the engine evaluates each key term per row and hands the exact key/rowid pairs to the writer, a plain index keeps its column-derived keys, updates change the stored key, and better-sqlite3 opens the file with `integrity_check = ok` and answers an expression-indexed query; `expression and partial indexes maintain their own keys` |
 | Index `COLLATE` | `create index cix on ci (s collate nocase)` | missing | `unsupported-clause` `COLLATE`: this engine compares keys with binary order, so a collated key would sort differently from better-sqlite3 and corrupt the tree; the gate pins this rejection |
@@ -68,10 +68,11 @@ Cluster totals (120 feature rows): **90 gated / 0 uncovered / 30 missing** at th
 | `DELETE ... RETURNING` | `delete from dr where id = 2 returning id, v` | gated | rows equal both oracles |
 | Multi-row `INSERT ... RETURNING` | `insert into mr (v) values ('a'), ('b') returning id, v` | gated | oracle-matching with both oracles |
 | `DELETE FROM ... AS alias` | `delete from da as x where x.a = 2 returning a` | gated | oracle-matching with both oracles |
-| `INSERT ... SELECT` | `insert into is2 (a) select a from is1 where a > 1` | missing | `syntax`: expected `values` but found `select` |
-| `INSERT OR REPLACE` / `INSERT OR IGNORE` | `insert or replace into orr values (1,'b')` | missing | `syntax`: expected `into` but found `or` |
+| `INSERT ... SELECT` | `insert into is2 (a) select a from is1 where a > 1` | gated | the query is evaluated before any row is written, so a self-referencing insert reads the original rows and then hits the primary key; a column subset follows the `VALUES` mapping, arity errors report `table t has N columns but M values were supplied` / `N values for M columns`, and `ON CONFLICT` / `RETURNING` trail the query; `insert select and replace follow better-sqlite3` |
+| `INSERT OR REPLACE` | `insert or replace into orr values (1,'b')` | gated | every stored row that conflicts on any unique key (including a rowid alias) is deleted before the new row is written, so one row can displace several; the message wording and statement-level rollback on a later `NOT NULL` failure match better-sqlite3; `insert select and replace follow better-sqlite3` |
+| `INSERT OR IGNORE` | `insert or ignore into orr values (1,'b')` | missing | `unsupported-clause` `OR` |
 | UPSERT `ON CONFLICT DO NOTHING` / `DO UPDATE` | `insert into up values (1, 20) on conflict (id) do update set v = excluded.v` | gated | targets match a rowid alias, a column key, a table-level `UNIQUE`, or a partial unique index whose `WHERE` text equals the target's, `excluded.<column>` reads the supplied tuple while a bare column reads the stored row, a false `DO UPDATE ... WHERE` leaves the row alone, a target naming no uniqueness constraint reports `ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint` (including a partial-index table addressed without `WHERE` or with a different predicate), `excluded` in the target predicate reports `no such column: excluded.a` while `p.a` resolves, a supplied row outside the partial predicate inserts even when the target names that index, a full and partial index on the same column resolve through the one the target's `WHERE` selects, two same-column partial indexes resolve only the selected one while a row violating the other still aborts with `UNIQUE constraint failed: r.a`, skipped rows report `affected = 0` and no `RETURNING` row, rewritten rows survive a reopen and better-sqlite3 `integrity_check = ok`, a `DO UPDATE` rewrite fires `BEFORE INSERT` / `BEFORE UPDATE` / `AFTER UPDATE` with the rewritten values while `WHEN` and `UPDATE OF` follow the assignment list, and parent-side and child-side reference failures match `SQLITE_CONSTRAINT_FOREIGNKEY`; `upsert DO NOTHING and DO UPDATE follow better-sqlite3`, `upsert targets partial unique indexes by their predicate like better-sqlite3`, `upsert DO UPDATE fires update triggers like better-sqlite3`, `upsert DO UPDATE runs foreign key checks like better-sqlite3` |
-| `REPLACE INTO` | `replace into rp values (1,'b')` | missing | `unsupported-statement` at `replace` |
+| `REPLACE INTO` | `replace into rp values (1,'b')` | gated | same conflict-resolution path as `INSERT OR REPLACE`, also accepting a `SELECT` source; `DELETE` triggers stay silent unless `recursive_triggers` is on, foreign-key `ON DELETE` actions still run, and an insert that then violates `NOT NULL` rolls the whole statement back; `replace only fires delete triggers with recursive_triggers and applies foreign keys` |
 | Expression inside a `VALUES` tuple | `insert into ie values (1 + 1)` | missing | `syntax`: `VALUES` tuple only accepts literals |
 | `UPDATE ... FROM` | `update ua set v = ub.w from ub where ua.id = ub.id` | missing | `unsupported-clause` after `UPDATE` |
 | Row-value assignment `SET (a, b) = (...)` | `update rv set (a, b) = (1, 2)` | missing | `unsupported-clause` (deliberate rejection) |
@@ -193,16 +194,15 @@ Cluster totals (120 feature rows): **90 gated / 0 uncovered / 30 missing** at th
 ## Unimplemented: top 5 by impact
 
 Ranked by how many ordinary SQLite clients would break on the first statement they send. Foreign keys,
-recursive CTEs, transaction control, `SELECT DISTINCT`, modulo and `instr` are no longer on this list: all
-landed at this pin and are asserted by the gate.
+recursive CTEs, transaction control, `SELECT DISTINCT`, modulo, `instr`, `CREATE TABLE ... AS SELECT`,
+`INSERT ... SELECT` and `REPLACE` are no longer on this list: all landed at this pin and are asserted by the gate.
 
 | # | Gap | Impact | Upstream coordinates |
 |---|-----|--------|---------------------|
-| 1 | `INSERT ... SELECT`, `INSERT OR REPLACE` / `OR IGNORE`, `REPLACE INTO` | Data copy and idempotent seeds | `sql.rs:2787-2875` (`statement()` dispatch requires plain `insert`), `sql.rs:3593-3636` (after `INTO` only a `VALUES` list) |
-| 2 | Window frames `GROUPS` and `EXCLUDE` | Analytics that group peers rather than rows | `sql.rs:2517-2612` (`window_spec`), `sql.rs:1037` (`window_spec_label`) |
-| 3 | Date/time and common string functions (`trim`, `replace`, `ifnull`, `nullif`, `printf`) | Reports, formatting, NULL handling in almost every app query | `sql.rs:333-357` (`ScalarFunction`), `engine.rs:5640` (scalar dispatch) |
-| 4 | `CREATE VIEW` / `CREATE TRIGGER`, `PRAGMA` / `EXPLAIN` / `ATTACH` / `VACUUM` | Schema tooling, introspection and maintenance scripts | `sql.rs:2787-2875` (statement dispatch), `engine.rs:401` (`run_statement`) |
-| 5 | `GROUP_CONCAT ... ORDER BY`, aggregate `FILTER`, `count(DISTINCT x)`, multi-argument `min`/`max` | Aggregate shaping in reports | `sql.rs:333-357`, aggregate argument parser in `sql.rs:400-460`, `engine.rs:5640` |
+| 1 | Window frames `GROUPS` and `EXCLUDE` | Analytics that group peers rather than rows | `sql.rs:2517-2612` (`window_spec`), `sql.rs:1037` (`window_spec_label`) |
+| 2 | Date/time and common string functions (`trim`, `replace`, `ifnull`, `nullif`, `printf`) | Reports, formatting, NULL handling in almost every app query | `sql.rs:333-357` (`ScalarFunction`), `engine.rs:5640` (scalar dispatch) |
+| 3 | `CREATE VIEW` / `CREATE TRIGGER`, `PRAGMA` / `EXPLAIN` / `ATTACH` / `VACUUM` | Schema tooling, introspection and maintenance scripts | `sql.rs:2787-2875` (statement dispatch), `engine.rs:401` (`run_statement`) |
+| 4 | `GROUP_CONCAT ... ORDER BY`, aggregate `FILTER`, `count(DISTINCT x)`, multi-argument `min`/`max` | Aggregate shaping in reports | `sql.rs:333-357`, aggregate argument parser in `sql.rs:400-460`, `engine.rs:5640` |
 
 Next tier, lower blast radius but still visible: `COLLATE` and `GLOB` (`sql.rs:3846-4020`, no operator in
 `BinaryOp`), JSON functions and `->` (`sql.rs:333-357`, `BinaryOp`), expression indexes and partial indexes
@@ -238,18 +238,19 @@ through this engine and both live oracles. Seed and count fully determine the re
 `e3d6c1d1baf823086965286e4725e7921b79e6406ec29e72a96d03b08c1456b1`, unchanged because the generators did
 not change.
 
-Distribution: DDL 40, DML 40, expressions 40, aggregates 30, windows 30, transactions 20. Result: 168 passed,
-22 mismatched, 10 discarded because `better-sqlite3` and CPython `sqlite3` disagreed with each other. The
-baseline holds 32 entries: 22 structured rejections and 10 discarded oracle disagreements.
+Distribution: DDL 40, DML 40, expressions 40, aggregates 30, windows 30, transactions 20. Result: 176 passed,
+14 mismatched, 10 discarded because `better-sqlite3` and CPython `sqlite3` disagreed with each other. The
+baseline holds 24 entries: 14 structured rejections and 10 discarded oracle disagreements.
 
-All 22 mismatches are structured rejections against two successful oracles, all already listed in the cluster
-tables. The DDL cases left the baseline once `WITHOUT ROWID`, partial and expression indexes were implemented,
-and the two UPSERT cases left it once `ON CONFLICT` landed:
+All 14 mismatches are structured rejections against two successful oracles, all already listed in the cluster
+tables. The DDL cases left the baseline once `WITHOUT ROWID`, partial and expression indexes were implemented, the
+two UPSERT cases left it once `ON CONFLICT` landed, and the eight DML cases left it once `CREATE TABLE ... AS SELECT`,
+`INSERT ... SELECT` and `REPLACE` landed:
 
 | Cluster | Cases | Shapes |
 |---------|-------|--------|
 | DDL | 0 | none |
-| DML | 8 | `INSERT OR REPLACE` 3, `INSERT ... SELECT` 3, `REPLACE INTO` 2 |
+| DML | 0 | none |
 | Expressions | 4 | `IS DISTINCT FROM` 2, `GLOB` 1, `NULLS FIRST` 1 |
 | Aggregates | 4 | `group_concat` with `ORDER BY` 1, `FILTER` 1, `count(DISTINCT)` 1, multi-argument `min`/`max` 1 |
 | Windows | 6 | `GROUPS` frame 3, `EXCLUDE` 3 |

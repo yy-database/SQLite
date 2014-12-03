@@ -3079,3 +3079,157 @@ test("user_version and application_id round-trip through the header", () => {
   assert.deepEqual(reopened.execute("pragma user_version").rows, [[7]]);
   assert.deepEqual(reopened.execute("pragma application_id").rows, [[42]]);
 });
+test("create table as select derives declared types and rows like better-sqlite3", () => {
+  const steps = [
+    "create table src (id integer primary key, name text not null, score real)",
+    "insert into src values (1, 'a', 1.5), (2, 'b', 2.5)",
+    "create table c as select id, name, score, id + 1 as next, upper(name) as up from src",
+    "create table star as select * from src",
+    "create table expr as select 1 as a, 2.5 as b, null as c, x'ff' as d",
+    "create table dup as select 1 as a, 2 as a, 3 as a",
+    "create table agg as select count(*) as n, sum(score) as s from src",
+    "create table lim as select id from src order by id desc limit 1",
+    "create table fromsub as select x.id, x.name from (select id, name from src) x",
+    "create table j as select one.id, two.name from src one join src two on one.id = two.id",
+    "create table if not exists expr as select 3 as a",
+  ];
+  const engine = createEngine(4096);
+  withOracle(steps, (db) => {
+    for (const step of steps) engine.execute(step);
+    for (const sql of [
+      "pragma table_info(c)",
+      "pragma table_info(star)",
+      "pragma table_info(expr)",
+      "pragma table_info(dup)",
+      "pragma table_info(agg)",
+      "pragma table_info(lim)",
+      "pragma table_info(fromsub)",
+      "pragma table_info(j)",
+    ]) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+    for (const sql of [
+      "select sql from sqlite_master where name in ('expr', 'agg', 'lim', 'fromsub', 'j') order by name",
+      "select * from c order by rowid",
+      "select * from star order by rowid",
+      "select a, b, c from expr order by rowid",
+      "select * from dup",
+      "select * from agg",
+      "select * from lim",
+      "select * from fromsub order by rowid",
+      "select * from j order by rowid",
+    ]) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+    // `db.exec` reports zero changes for a CTAS even when it copied rows.
+    assert.equal(engine.execute("create table extra as select id from src").affected, 0);
+  });
+  const reopened = createEngineFromSnapshot(engine.snapshot());
+  assert.deepEqual(reopened.execute("pragma table_info(c)").rows, engine.execute("pragma table_info(c)").rows);
+  assert.deepEqual(reopened.execute("select * from c order by rowid").rows, engine.execute("select * from c order by rowid").rows);
+  assert.deepEqual(engine.execute("select count(*) from extra").rows, [[2]]);
+  assert.equal(engine.tryExecute("create table c as select 1").error?.message, "table c already exists");
+});
+
+test("insert select and replace follow better-sqlite3", () => {
+  const steps = [
+    "create table src (id integer primary key, name text)",
+    "insert into src values (1, 'a'), (2, 'b')",
+    "create table dst (a integer primary key, b text)",
+    "insert into dst select id, name from src",
+    "insert into dst (b, a) select name, id + 10 from src",
+    "insert into dst (a, b) select id + 100, name from src returning a, b",
+    "create table u (k text primary key, v int)",
+    "insert into u values ('x', 1)",
+    "insert into u select 'x', 2 on conflict (k) do update set v = excluded.v",
+    "create table r (k integer primary key, v text unique, w text not null)",
+    "insert into r values (1, 'a', 'x')",
+    "replace into r values (1, 'b', 'y')",
+    "replace into r values (2, 'a', 'z')",
+    "create table r2 (k integer primary key, v text)",
+    "replace into r2 select id, name from src",
+    "insert or replace into r2 select id + 10, name from src",
+    "insert into dst (a, b) select id + 200, name from src order by id desc limit 1",
+  ];
+  const engine = createEngine(4096);
+  let changes = 0;
+  withOracle(steps, (db) => {
+    for (const step of steps) {
+      const result = engine.execute(step);
+      if (result.statement === "insert") changes = result.affected;
+    }
+    for (const sql of [
+      "select a, b from dst order by a",
+      "select k, v from u",
+      "select rowid, k, v, w from r",
+      "select rowid, k, v from r2 order by rowid",
+      "select sql from sqlite_master where name in ('r', 'r2') order by name",
+    ]) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+  });
+  assert.equal(changes, 1);
+
+  for (const [sql, message] of [
+    ["insert into dst select 1, 2, 3", "table dst has 2 columns but 3 values were supplied"],
+    ["insert into dst (a) select id, name from src", "2 values for 1 columns"],
+  ] as const) {
+    assert.equal(withOracleMessage(steps, sql), message);
+    assert.equal(engine.tryExecute(sql).error?.message, message);
+  }
+  // A self-referencing `INSERT ... SELECT` reads the original rows and then
+  // fails on the primary key, exactly like better-sqlite3.
+  assert.throws(() => withOracle([...steps, "insert into dst select * from dst"], () => {}));
+  assert.equal(engine.tryExecute("insert into dst select * from dst").ok, false);
+
+  // A failing REPLACE rolls the statement back, including the rows it deleted
+  // to make room for the new one.
+  const failed = engine.tryExecute("replace into r values (2, 'c', null)");
+  assert.equal(failed.ok, false);
+  assert.match(failed.error?.message ?? "", /NOT NULL constraint failed/);
+  withOracle(steps, (db) => {
+    assert.deepEqual(engine.execute("select rowid, k, v, w from r").rows, oracleRows(db, "select rowid, k, v, w from r"));
+  });
+});
+
+test("replace only fires delete triggers with recursive_triggers and applies foreign keys", () => {
+  const steps = [
+    "create table r (k integer primary key, v text)",
+    "create table log (msg text, k)",
+    "create trigger rd after delete on r begin insert into log values ('del', old.k); end",
+    "create trigger ri after insert on r begin insert into log values ('ins', new.k); end",
+    "insert into r values (1, 'a')",
+    "replace into r values (1, 'b')",
+  ];
+  const engine = createEngine(4096);
+  withOracle(steps, (db) => {
+    for (const step of steps) engine.execute(step);
+    assert.deepEqual(engine.execute("select msg, k from log order by rowid").rows, oracleRows(db, "select msg, k from log order by rowid"));
+  });
+
+  const recursive = ["pragma recursive_triggers = on", ...steps];
+  const recursiveEngine = createEngine(4096);
+  withOracle(recursive, (db) => {
+    for (const step of recursive) recursiveEngine.execute(step);
+    assert.deepEqual(
+      recursiveEngine.execute("select msg, k from log order by rowid").rows,
+      oracleRows(db, "select msg, k from log order by rowid"),
+    );
+  });
+
+  const cascade = [
+    "pragma foreign_keys = on",
+    "create table parent (k integer primary key, v text)",
+    "create table child (id integer primary key, pk integer references parent(k) on delete cascade)",
+    "insert into parent values (1, 'a')",
+    "insert into child values (10, 1)",
+    "replace into parent values (1, 'b')",
+  ];
+  const cascadeEngine = createEngine(4096);
+  withOracle(cascade, (db) => {
+    for (const step of cascade) cascadeEngine.execute(step);
+    for (const sql of ["select k, v from parent", "select id, pk from child"]) {
+      assert.deepEqual(cascadeEngine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+  });
+});
