@@ -928,6 +928,130 @@ test("like follows sqlite wildcard and case rules", () => {
   assert.deepEqual(engine.execute("select 'axb' like 'a\\%b' escape '\\'").rows, [[0]]);
 });
 
+// `IS DISTINCT FROM` compares `NULL` as an ordinary value: two `NULL`s are not
+// distinct, while `NULL` against anything else is. Non-null operands keep the
+// storage-class ordering, so `1` and `1.0` are equal but `1` and `'1'` are not.
+test("is distinct from treats null as a value like better-sqlite3", () => {
+  const engine = createEngine(4096);
+  assert.deepEqual(engine.execute("select null is distinct from null").rows, [[0]]);
+  assert.deepEqual(engine.execute("select null is not distinct from null").rows, [[1]]);
+  assert.deepEqual(engine.execute("select null is distinct from 1").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 1 is distinct from null").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 1 is distinct from '1'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 1 is distinct from 1.0").rows, [[0]]);
+  assert.deepEqual(engine.execute("select 'a' is distinct from 'A'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select x'31' is distinct from x'31'").rows, [[0]]);
+  assert.deepEqual(engine.execute("select 1 + 1 is distinct from 2").rows, [[0]]);
+  assert.deepEqual(engine.execute("select (1 is distinct from 2) as d").rows, [[1]]);
+  // `AND` binds looser than the comparison.
+  assert.deepEqual(engine.execute("select 1 is distinct from 2 and 0").rows, [[0]]);
+
+  engine.execute("create table t (id integer primary key, v integer)");
+  engine.execute("insert into t values (1, 1), (2, null), (3, 2), (4, null), (5, 3)");
+  assert.deepEqual(
+    engine.execute("select v, v is distinct from lag(v) over (order by id) from t order by id").rows,
+    [
+      [1, 1],
+      [null, 1],
+      [2, 1],
+      [null, 1],
+      [3, 1],
+    ],
+  );
+
+  const missing = engine.tryExecute("select 1 is distinct from");
+  assert.equal(missing.ok, false);
+  assert.equal(missing.error?.code, "syntax");
+});
+
+// `GLOB` is case sensitive and reads `[...]` as a class: `^` negates, `a-c` is
+// a range, a leading `]` is a member, an unclosed `[` never matches, and only
+// text operands participate, so a blob never matches and `NULL` propagates.
+test("glob follows sqlite class and case rules", () => {
+  const engine = createEngine(4096);
+  assert.deepEqual(engine.execute("select 'abc' glob 'a*'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 'ABC' glob 'a*'").rows, [[0]]);
+  assert.deepEqual(engine.execute("select 'abc' not glob 'a*'").rows, [[0]]);
+  assert.deepEqual(engine.execute("select 'abc' glob 'a.c'").rows, [[0]]);
+  assert.deepEqual(engine.execute("select 'abc' glob 'a?c'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 'abc' glob '[a-c]*'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 'abc' glob '[^abd]*'").rows, [[0]]);
+  assert.deepEqual(engine.execute("select 'z' glob '[^abd]*'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 'abc' glob '[!abd]*'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 'z' glob '[!abd]*'").rows, [[0]]);
+  assert.deepEqual(engine.execute("select '[' glob '['").rows, [[0]]);
+  assert.deepEqual(engine.execute("select '[' glob '[[]'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select ']' glob '[]]'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 'ab' glob 'a[b'").rows, [[0]]);
+  assert.deepEqual(engine.execute("select 'ab' glob 'a[b]'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select '-' glob '[a-]'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 'abc' glob 'a**c'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select '' glob '*'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 'abc' glob ''").rows, [[0]]);
+  assert.deepEqual(engine.execute("select 123 glob '1*'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 1.5 glob '1*'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select null glob 'a*'").rows, [[null]]);
+  assert.deepEqual(engine.execute("select 'abc' glob null").rows, [[null]]);
+  assert.deepEqual(engine.execute("select x'616263' glob 'abc'").rows, [[0]]);
+  assert.deepEqual(engine.execute("select 'abc' glob x'616263'").rows, [[0]]);
+  assert.deepEqual(engine.execute("select 'a' glob 'a*' or 0").rows, [[1]]);
+});
+
+// `NULLS FIRST` / `NULLS LAST` override SQLite's default placement, which sorts
+// `NULL` below every value and therefore puts them first for `ASC` and last for
+// `DESC`. The placement also drives the window sort order used by a frame.
+test("order by nulls first and last override the default placement", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table t (id integer primary key, a text, b text, v integer)");
+  engine.execute("insert into t values (1,'x','p',1),(2,'x','q',null),(3,'y','p',2),(4,null,'q',null),(5,'x','q',3)");
+
+  assert.deepEqual(engine.execute("select id from t order by v asc nulls first").rows, [[2], [4], [1], [3], [5]]);
+  assert.deepEqual(engine.execute("select id from t order by v asc nulls last").rows, [[1], [3], [5], [2], [4]]);
+  assert.deepEqual(engine.execute("select id from t order by v desc nulls first").rows, [[2], [4], [5], [3], [1]]);
+  assert.deepEqual(engine.execute("select id from t order by v desc nulls last").rows, [[5], [3], [1], [2], [4]]);
+  assert.deepEqual(engine.execute("select id from t order by v nulls last").rows, [[1], [3], [5], [2], [4]]);
+  assert.deepEqual(
+    engine.execute("select id from t order by a asc nulls last, b desc nulls first").rows,
+    [[2], [5], [1], [3], [4]],
+  );
+  assert.deepEqual(engine.execute("select id from t order by a asc nulls first, v desc").rows, [[4], [5], [1], [2], [3]]);
+  assert.deepEqual(engine.execute("select id from t order by v asc nulls first, id desc").rows, [[4], [2], [1], [3], [5]]);
+  assert.deepEqual(engine.execute("select (select id from t order by v nulls last limit 1)").rows, [[1]]);
+
+  assert.deepEqual(
+    engine
+      .execute(
+        "select id, sum(v) over (order by v nulls first rows between 1 preceding and current row) from t order by id",
+      )
+      .rows,
+    [
+      [1, 1],
+      [2, null],
+      [3, 3],
+      [4, null],
+      [5, 5],
+    ],
+  );
+  assert.deepEqual(
+    engine
+      .execute(
+        "select id, sum(v) over (order by v nulls last rows between 1 preceding and current row) from t order by id",
+      )
+      .rows,
+    [
+      [1, 1],
+      [2, 3],
+      [3, 3],
+      [4, null],
+      [5, 5],
+    ],
+  );
+
+  const middle = engine.tryExecute("select id from t order by v nulls middle");
+  assert.equal(middle.ok, false);
+  assert.equal(middle.error?.code, "syntax");
+});
+
 // `IS TRUE` is the truthiness test, not `= 1`, and it never yields `NULL`.
 test("is true and is false follow sqlite truthiness", () => {
   const engine = createEngine(4096);
