@@ -1,17 +1,31 @@
 name: Check Rust
 
-# Rust workspace build and tests. TypeScript and Python suites: check-typescript.yml
-# and check-python.yml.
+# Rust workspace fmt / build / test. TypeScript: check-typescript.yml
+# Python: check-python.yml. Publish: publish-npm.yml on v* tags.
 on:
   push:
-    branches: [ dev, master ]
+    branches: [dev, master]
   pull_request:
-    branches: [ dev, master ]
+    branches: [dev, master]
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  rust-fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-07-20
+          components: rustfmt
+      - name: Format check
+        run: cargo fmt --manifest-path projects/sqlite.rs/Cargo.toml --all --check
+
   rust-test:
     name: cargo test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -22,9 +36,9 @@ jobs:
     steps:
       - run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
-      - name: Rust Nightly
-        uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@nightly
         with:
+          toolchain: nightly-2026-07-20
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:

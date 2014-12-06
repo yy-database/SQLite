@@ -1,12 +1,14 @@
 name: Check TypeScript
 
-# pnpm install, the merged TypeScript and platform gate, and the examples.
+# pnpm install, the merged TypeScript and platform gate, examples and corpus.
 # Python wheel: check-python.yml. Rust workspace: check-rust.yml.
+# Publish: publish-npm.yml on v* tags.
 on:
   push:
-    branches: [ dev, master ]
+    branches: [dev, master]
   pull_request:
-    branches: [ dev, master ]
+    branches: [dev, master]
+  workflow_call:
 
 jobs:
   typescript:
@@ -21,23 +23,22 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 10.18.3
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
         with:
+          toolchain: nightly-2026-07-20
           targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: projects/sqlite.rs
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-bindgen-cli@0.2.127
-      # The platform stages build a wheel for the installed-wheel Python stage.
       - name: Install the wheel build tool
-        run: python3 -m pip install --quiet maturin
+        run: python3 -m pip install --quiet "maturin>=1.7,<2.0"
       - name: Assert the checkout has no native artifact
         run: test ! -e projects/sqlite.rs/sqlite-napi/sqlite.node
       - name: Install SQLite test dependencies
         run: pnpm install --no-frozen-lockfile
-      # One entry builds the native binding, then runs every suite and every
-      # platform stage: `sqlite.ts`, `sqlite.py`, node, wasm and python. The
-      # report separates external conformance, storage primitives and SQL
-      # execution instead of printing one aggregate number.
       - name: TypeScript suite, Python suite and platform stages
         run: node scripts/check-test-floor.mjs
       - name: Downstream examples
@@ -45,9 +46,6 @@ jobs:
           pnpm examples:ts
           pnpm examples:py
 
-  # Seeded differential corpus as a regression gate. The seed and the count are
-  # fixed, the corpus digest is verified before any engine starts, and every
-  # observed difference must match one entry in the known-difference baseline.
   corpus:
     name: differential corpus
     runs-on: ubuntu-latest
@@ -60,10 +58,15 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 10.18.3
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-07-20
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: projects/sqlite.rs
       - name: Install SQLite test dependencies
         run: pnpm install --no-frozen-lockfile
       - name: Build the native binding
         run: node scripts/build-napi.mjs
       - name: Differential corpus gate
-        run: pnpm corpus -- --seed 20261106 --count 200 --check
+        run: pnpm corpus --seed 20261106 --count 200 --check
