@@ -44,6 +44,6 @@ jobs:
         with:
           workspaces: projects/sqlite.rs
       - name: Build
-        run: cargo build --release --manifest-path projects/sqlite.rs/Cargo.toml --workspace
+        run: cargo build --release --manifest-path projects/sqlite.rs/Cargo.toml --workspace --exclude sqlite-napi --exclude sqlite-pyo3
       - name: Tests
-        run: cargo test --release --manifest-path projects/sqlite.rs/Cargo.toml --workspace
+        run: cargo test --release --manifest-path projects/sqlite.rs/Cargo.toml --workspace --exclude sqlite-napi --exclude sqlite-pyo3
