@@ -928,6 +928,70 @@ test("like follows sqlite wildcard and case rules", () => {
   assert.deepEqual(engine.execute("select 'axb' like 'a\\%b' escape '\\'").rows, [[0]]);
 });
 
+// Aggregate modifiers: `FILTER` drops rows before the aggregate sees them,
+// `DISTINCT` keeps one argument value per group and an in-argument `ORDER BY`
+// controls the `group_concat` output. A window aggregate keeps `FILTER` but
+// SQLite refuses `DISTINCT` and the in-argument order once `OVER` is present.
+test("aggregate filter, distinct and argument order follow better-sqlite3", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table g (k text, v integer, w integer)");
+  engine.execute("insert into g values ('a',1,10),('a',2,20),('a',2,30),('b',null,10),('b',3,20),('b',3,40)");
+
+  assert.deepEqual(
+    engine
+      .execute(
+        "select k, count(*) filter (where v > 1), sum(v) filter (where v > 1), count(v) filter (where v is null) from g group by k order by k",
+      )
+      .rows,
+    [
+      ["a", 2, 4, 0],
+      ["b", 2, 6, 0],
+    ],
+  );
+  assert.deepEqual(engine.execute("select count(*) filter (where v > 1) from g where v is null").rows, [[0]]);
+  assert.deepEqual(engine.execute("select sum(v) filter (where 0) from g").rows, [[null]]);
+  assert.deepEqual(engine.execute("select count(v) filter (where 0), group_concat(v) filter (where 0) from g").rows, [[0, null]]);
+  assert.deepEqual(engine.execute("select group_concat(v) filter (where v > 1) from g").rows, [["2,2,3,3"]]);
+  assert.deepEqual(engine.execute("select min(v), max(v) filter (where k = 'a') from g").rows, [[1, 2]]);
+
+  assert.deepEqual(
+    engine.execute("select k, count(distinct v), sum(distinct v), avg(distinct v), total(distinct v) from g group by k order by k").rows,
+    [
+      ["a", 2, 3, 1.5, 3],
+      ["b", 1, 3, 3, 3],
+    ],
+  );
+  assert.deepEqual(engine.execute("select count(distinct v), count(distinct w) from g").rows, [[3, 4]]);
+  assert.deepEqual(engine.execute("select count(distinct v) filter (where w > 10), sum(distinct v) filter (where w > 10) from g").rows, [
+    [2, 5],
+  ]);
+
+  assert.deepEqual(engine.execute("select group_concat(distinct v) from g").rows, [["1,2,3"]]);
+  assert.deepEqual(engine.execute("select group_concat(distinct v order by v desc) from g").rows, [["3,2,1"]]);
+  assert.deepEqual(engine.execute("select group_concat(v order by w desc) from g").rows, [["3,2,2,3,1"]]);
+  assert.deepEqual(engine.execute("select group_concat(v, '-' order by v) from g").rows, [["1-2-2-3-3"]]);
+  assert.deepEqual(engine.execute("select k, group_concat(v order by v desc) from g group by k order by k").rows, [
+    ["a", "2,2,1"],
+    ["b", "3,3"],
+  ]);
+
+  assert.deepEqual(
+    engine.execute("select k, v, count(*) filter (where v > 1) over (partition by k) from g order by k, v").rows,
+    [
+      ["a", 1, 2],
+      ["a", 2, 2],
+      ["a", 2, 2],
+      ["b", null, 2],
+      ["b", 3, 2],
+      ["b", 3, 2],
+    ],
+  );
+
+  assert.equal(engine.tryExecute("select group_concat(distinct v, '|') from g").ok, false);
+  assert.equal(engine.tryExecute("select sum(distinct v) over (partition by k) from g").ok, false);
+  assert.equal(engine.tryExecute("select sum(v order by w) over (partition by k) from g").ok, false);
+});
+
 // `IS DISTINCT FROM` compares `NULL` as an ordinary value: two `NULL`s are not
 // distinct, while `NULL` against anything else is. Non-null operands keep the
 // storage-class ordering, so `1` and `1.0` are equal but `1` and `'1'` are not.
@@ -3356,4 +3420,44 @@ test("replace only fires delete triggers with recursive_triggers and applies for
       assert.deepEqual(cascadeEngine.execute(sql).rows, oracleRows(db, sql), sql);
     }
   });
+});
+
+test("window groups frames and exclude clauses follow better-sqlite3", () => {
+  const steps = [
+    "create table t (id integer primary key, v integer)",
+    "insert into t (v) values (1), (2), (2), (3), (5), (null)",
+  ];
+  const engine = createEngine(4096);
+  const queries = [
+    "select id, v, sum(v) over (order by v groups between 1 preceding and 1 following) as s from t order by id",
+    "select id, v, count(*) over (order by v groups between current row and current row) as c from t order by id",
+    "select id, v, sum(v) over (order by v groups between unbounded preceding and current row) as s from t order by id",
+    "select id, v, group_concat(id) over (order by v groups between 1 preceding and current row) as g from t order by id",
+    // `GROUPS` needs no `ORDER BY`: the whole partition is one peer group.
+    "select id, count(*) over (groups between unbounded preceding and current row) as c from t order by id",
+    "select id, v, count(*) over (order by v groups between 2 following and 2 following exclude ties) as c from t order by id",
+    "select id, v, sum(v) over (order by v rows between unbounded preceding and unbounded following exclude group) as s from t order by id",
+    "select id, v, sum(v) over (order by v rows between unbounded preceding and unbounded following exclude ties) as s from t order by id",
+    "select id, v, sum(v) over (order by v range between 1 preceding and current row exclude current row) as s from t order by id",
+    "select id, v, first_value(v) over (order by v range between unbounded preceding and unbounded following exclude ties) as f from t order by id",
+    "select id, v, last_value(v) over (order by v, id rows between unbounded preceding and unbounded following exclude current row) as l from t order by id",
+    "select id, v, nth_value(v, 2) over (order by v groups between unbounded preceding and unbounded following exclude group) as n from t order by id",
+    // An unbounded `RANGE` edge spans rows whose key is `NULL`.
+    "select id, count(*) over (order by v range between unbounded preceding and current row) as c from t order by id",
+    "select id, count(*) over (order by v range between unbounded preceding and 1 preceding) as c from t order by id",
+    "select id, count(*) over (order by v desc range between current row and unbounded following) as c from t order by id",
+  ];
+  withOracle(steps, (db) => {
+    for (const step of steps) engine.execute(step);
+    for (const sql of queries) assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+  });
+
+  // `EXCLUDE` exists only after a frame unit, and its argument set is closed.
+  for (const sql of [
+    "select count(*) over (order by v exclude current row) from t",
+    "select count(*) over (order by v groups between 1 preceding and current row exclude side) from t",
+  ]) {
+    assert.notEqual(withOracleMessage(steps, sql), "", sql);
+    assert.equal(engine.tryExecute(sql).ok, false, sql);
+  }
 });

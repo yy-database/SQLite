@@ -1,6 +1,6 @@
 # SQL capability matrix
 
-Measured against the pinned `database.rs` facade rev `bcebe60` (`bcebe60e4c72976260088806956bd7a5c5843873`,
+Measured against the pinned `database.rs` facade rev `1a1ad45` (`1a1ad451a5c5105942a7fa0ce83891280df6bbd0`,
 `projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
 through both live oracles; the oracle value, not an internal expectation, decides whether a row is correct.
 
@@ -9,7 +9,7 @@ through both live oracles; the oracle value, not an internal expectation, decide
 | Engine under test | `sqlite.node` built from the pin, `createEngine()` |
 | Oracle A | `better-sqlite3` 12.11.1 (SQLite 3.53.2) |
 | Oracle B | CPython `sqlite3` (SQLite 3.49.1) |
-| Probes | 140 statements/cases, one or more per cluster |
+| Probes | 145 statements/cases, one or more per cluster |
 | Local facade override | None; Cargo resolved the pin directly |
 
 Status legend:
@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (121 feature rows): **94 gated / 0 uncovered / 27 missing** at the pin.
+Cluster totals (121 feature rows): **102 gated / 0 uncovered / 19 missing** at the pin.
 
 ## DDL
 
@@ -101,10 +101,10 @@ Cluster totals (121 feature rows): **94 gated / 0 uncovered / 27 missing** at th
 | `ORDER BY` an output alias | `select a as x from ob2 order by x desc` | gated | oracle-matching with both oracles |
 | `GROUP BY` an expression | `select a + 1 as k, count(*) from gb group by a + 1 order by k` | gated | oracle-matching with both oracles |
 | Modulo `%` | `select 7 % 3, -7 % 3, 7.5 % 2, 7 % 2.5, 5 % 0` | gated | truncates both operands to integers, keeps the dividend's sign, returns a real when either operand was real, `NULL` for a zero divisor; `instr, round and modulo follow the oracle exactly` |
-| `GLOB` | `select 'abc' glob 'a*'` | missing | `syntax` at `glob` |
+| `GLOB` / `NOT GLOB` | `select 'abc' glob 'a*'` | gated | case sensitive, `*` matches any run, `?` exactly one character, `[a-c]` is a range, `^` negates a class, a leading `]` is a member, an unclosed `[` never matches, numbers are compared as text, a blob operand never matches and `NULL` propagates; `glob follows sqlite class and case rules` |
 | `COLLATE` (column, expression, `ORDER BY`) | `select 'a' = 'A' collate nocase` | missing | `unsupported-column-constraint` `COLLATE`; expression form is `syntax` |
-| `IS DISTINCT FROM` / `IS NOT DISTINCT FROM` | `select 1 is distinct from 2` | missing | `syntax` at `distinct` |
-| `ORDER BY ... NULLS FIRST/LAST` | `select a from onf order by a asc nulls first` | missing | `unsupported-clause` at `nulls` |
+| `IS DISTINCT FROM` / `IS NOT DISTINCT FROM` | `select 1 is distinct from 2` | gated | `NULL` is an ordinary value (`NULL` versus `NULL` is not distinct, `NULL` versus anything else is), non-null operands keep the storage-class ordering so `1` and `1.0` are equal while `1` and `'1'` are not, and `AND` binds looser; `is distinct from treats null as a value like better-sqlite3` |
+| `ORDER BY ... NULLS FIRST/LAST` | `select a from onf order by a asc nulls first` | gated | each key carries its own placement, the default keeps `NULL` below every value (first for `ASC`, last for `DESC`), the placement also drives the sort order a window frame reads; `order by nulls first and last override the default placement` |
 | `SELECT DISTINCT` | `select distinct a from sd order by a` | gated | collapses duplicates before `ORDER BY` and `LIMIT`; `select distinct collapses duplicates before order by and limit` |
 | Self-referencing `WITH RECURSIVE` (keyword optional), `UNION ALL` duplicates, `UNION` fixed-point de-duplication, outer `LIMIT` truncation | `with c(x) as (select 1 union all select x + 1 from c where x < 3) select x from c` | gated | six oracle-backed shapes in `recursive CTEs match better-sqlite3 without and with the keyword` |
 
@@ -118,9 +118,9 @@ Cluster totals (121 feature rows): **94 gated / 0 uncovered / 27 missing** at th
 | `substr` bounds (`0`, `-n`, past end) | `select substr('abcdef', 0, 2), substr('abcdef', 2, 99)` | gated | oracle-matching with both oracles |
 | `round` tie behaviour (`±2.5`) | `select round(2.5), round(-2.5)` | gated | oracle-matching with both oracles |
 | Aggregates over an empty table | `select avg(v), min(v), max(v), count(v) from empty` | gated | oracle-matching with both oracles |
-| `group_concat ... ORDER BY` | `select group_concat(v, '|' order by v) from ago` | missing | `syntax`: argument list stops at `order` |
-| `count(DISTINCT x)` | `select count(distinct v) from cd` | missing | `syntax`: argument list stops at `v` |
-| Aggregate `FILTER (WHERE ...)` | `select sum(v) filter (where v > 1) from afi` | missing | `syntax` at `filter` |
+| `group_concat ... ORDER BY` | `select group_concat(v, '|' order by v) from ago` | gated | the argument list carries its own `ORDER BY`, `group_concat(DISTINCT v)` sorts by value before joining and rejects a separator (`DISTINCT aggregates must have exactly one argument`), and `count(DISTINCT v, w)` reports `wrong number of arguments to function count()`; `aggregate filter, distinct and argument order follow better-sqlite3` |
+| `count(DISTINCT x)` | `select count(distinct v) from cd` | gated | `DISTINCT` de-duplicates by value with `NULL` counted once, `count` then ignores `NULL`, and every `sum` / `avg` / `total` / `count` form accepts it; same gate |
+| Aggregate `FILTER (WHERE ...)` | `select sum(v) filter (where v > 1) from afi` | gated | the filter runs before the aggregate sees a row, so an empty input reports `count = 0` and `sum` / `group_concat` `NULL`, it composes with `DISTINCT` and works on window aggregates, while `DISTINCT` and argument `ORDER BY` on a window aggregate are rejected with SQLite's wording; same gate |
 | Multi-argument `min()` / `max()` | `select min(3, 1, 2), max(3, 1, 2)` | missing | `wrong-arguments` to `min()` |
 | `trim` / `ltrim` / `rtrim` | `select trim('  x  '), ltrim('  x'), rtrim('x  ')` | missing | `unknown-function`: `trim` |
 | `instr` | `select instr('abcabc', 'bc'), instr('abc', 'z'), instr('abc', '')` | gated | `instr, round and modulo follow the oracle exactly` |
@@ -140,10 +140,10 @@ Cluster totals (121 feature rows): **94 gated / 0 uncovered / 27 missing** at th
 | `lag` / `lead` with offset and default | `select a, lag(a, 1, 99) over (order by a), lead(a, 1, -1) over (order by a) from w` | gated | oracle-matching with both oracles |
 | `first_value` / `last_value` / `nth_value` | `select first_value(a) over (order by a), nth_value(a, 2) over (order by a) from w` | gated | oracle-matching with both oracles |
 | `ROWS` frame with numeric offsets | `select sum(a) over (order by a rows between 1 preceding and 1 following) from w` | gated | oracle-matching with both oracles |
-| `RANGE` frame with numeric offsets | `select sum(a) over (order by a range between 1 preceding and 1 following) from w` | gated | oracle-matching with both oracles |
+| `RANGE` frame with numeric offsets | `select sum(a) over (order by a range between 1 preceding and 1 following) from w` | gated | oracle-matching with both oracles; an unbounded edge remains position-based, so it spans rows whose key has no numeric form (`NULL` included from the partition start) |
 | Aggregate over the whole result / `group_concat` as a window aggregate | `select count(*) over (), sum(a) over () from w` | gated | oracle-matching with both oracles |
-| `GROUPS` frame unit | `select sum(a) over (order by a groups between 1 preceding and current row) from w` | missing | `unsupported-clause` `GROUPS` |
-| Frame `EXCLUDE` clause | `select sum(a) over (order by a rows between 1 preceding and 1 following exclude ties) from w` | missing | parser rejects at `sql.rs:2499-2505` |
+| `GROUPS` frame unit | `select sum(a) over (order by a groups between 1 preceding and current row) from w` | gated | peer groups instead of rows bound the frame, `CURRENT ROW` spans the whole peer group, an edge beyond either end yields an empty frame, and `GROUPS` works without an `ORDER BY`; `window groups frames and exclude clauses follow better-sqlite3` |
+| Frame `EXCLUDE` clause | `select sum(a) over (order by a rows between 1 preceding and 1 following exclude ties) from w` | gated | `NO OTHERS` / `CURRENT ROW` / `GROUP` / `TIES` drop rows from the computed frame for aggregates and `first_value` / `last_value` / `nth_value`, and `EXCLUDE` is accepted only after a frame unit like SQLite's grammar; same gate |
 
 ## Transactions and savepoints
 
@@ -191,22 +191,23 @@ Cluster totals (121 feature rows): **94 gated / 0 uncovered / 27 missing** at th
 | `DETACH DATABASE` | `detach database aux` | gated | flushes the attached image, removes the schema, refuses `main` / `temp` with `cannot detach database <name>` and an unknown name with `no such database: <name>`; same gates |
 | `VACUUM` / `VACUUM INTO` | `vacuum` | missing | `unsupported-statement` at `vacuum` |
 
-## Unimplemented: top 5 by impact
+## Unimplemented: top 4 by impact
 
 Ranked by how many ordinary SQLite clients would break on the first statement they send. Foreign keys,
 recursive CTEs, transaction control, `SELECT DISTINCT`, modulo, `instr`, `CREATE TABLE ... AS SELECT`,
-`INSERT ... SELECT` and `REPLACE` are no longer on this list: all landed at this pin and are asserted by the gate.
+`INSERT ... SELECT`, `REPLACE`, `IS DISTINCT FROM`, `GLOB`, `NULLS FIRST|LAST`, aggregate `FILTER` / `DISTINCT` /
+argument `ORDER BY` and window `GROUPS` / `EXCLUDE` are no longer on this list: all landed at this pin and are
+asserted by the gate.
 
 | # | Gap | Impact | Upstream coordinates |
 |---|-----|--------|---------------------|
-| 1 | Window frames `GROUPS` and `EXCLUDE` | Analytics that group peers rather than rows | `sql.rs:2517-2612` (`window_spec`), `sql.rs:1037` (`window_spec_label`) |
-| 2 | Date/time and common string functions (`trim`, `replace`, `ifnull`, `nullif`, `printf`) | Reports, formatting, NULL handling in almost every app query | `sql.rs:333-357` (`ScalarFunction`), `engine.rs:5640` (scalar dispatch) |
-| 3 | `CREATE VIEW` / `CREATE TRIGGER`, `PRAGMA` / `EXPLAIN` / `ATTACH` / `VACUUM` | Schema tooling, introspection and maintenance scripts | `sql.rs:2787-2875` (statement dispatch), `engine.rs:401` (`run_statement`) |
-| 4 | `GROUP_CONCAT ... ORDER BY`, aggregate `FILTER`, `count(DISTINCT x)`, multi-argument `min`/`max` | Aggregate shaping in reports | `sql.rs:333-357`, aggregate argument parser in `sql.rs:400-460`, `engine.rs:5640` |
+| 1 | Date/time and common string functions (`trim`, `replace`, `ifnull`, `nullif`, `printf`) | Reports, formatting, NULL handling in almost every app query | `sql.rs:333-357` (`ScalarFunction`), `engine.rs:5640` (scalar dispatch) |
+| 2 | Multi-argument `min` / `max` and remaining aggregate arity | Aggregate shaping in reports | `sql.rs` (`function_expr`), `engine.rs` (`aggregate_cells`) |
+| 3 | `COLLATE` (column, expression, `ORDER BY`) | Case-insensitive comparisons and sorted output | `sql.rs`, no collation hook in the key comparators |
+| 4 | JSON functions and `->` / `->>` | Structured payloads stored as text | `sql.rs:333-357` (`ScalarFunction`), `BinaryOp` |
 
-Next tier, lower blast radius but still visible: `COLLATE` and `GLOB` (`sql.rs:3846-4020`, no operator in
-`BinaryOp`), JSON functions and `->` (`sql.rs:333-357`, `BinaryOp`), expression indexes and partial indexes
-(`sql.rs:3125`).
+Next tier, lower blast radius but still visible: `PRAGMA integrity_check`, `EXPLAIN`, `VACUUM`,
+`INSERT OR IGNORE`, `UPDATE ... FROM` and expression tuples inside `VALUES`.
 
 ## Landed at this pin
 
@@ -227,6 +228,8 @@ Next tier, lower blast radius but still visible: `COLLATE` and `GLOB` (`sql.rs:3
 | Canonical `CREATE TABLE` / `CREATE INDEX` / `CREATE VIEW` prefix in `sqlite_master.sql` (verbatim tail, `IF NOT EXISTS` dropped) | `sql.rs:3279-3291` (`canonical_create_sql`) | `sqlite_master lists schema objects in creation order and stays read-only`, view gate |
 | Self-referencing recursive CTE (keyword optional, `UNION ALL` duplicates, `UNION` fixed-point de-duplication, outer `LIMIT` truncation) | `engine.rs:2229` | `recursive CTEs match better-sqlite3 without and with the keyword` |
 | UPSERT `ON CONFLICT DO NOTHING` / `DO UPDATE` with `excluded` columns, column and constraint targets, `RETURNING` and per-statement row visibility | `sql.rs` (`conflict_clause`), `engine.rs` (`prepare_upsert`, `apply_upsert`) | `upsert DO NOTHING and DO UPDATE follow better-sqlite3` |
+| `IS DISTINCT FROM` / `GLOB` / `ORDER BY ... NULLS FIRST` / `NULLS LAST` | `sql.rs` (`comparison_expr`, `order_key`), `engine.rs` (`glob_match`, `SortDirection`) | `is distinct from treats null as a value like better-sqlite3`, `glob follows sqlite class and case rules`, `order by nulls first and last override the default placement` |
+| Aggregate `FILTER` / `DISTINCT` / argument `ORDER BY`, window `GROUPS` frames and `EXCLUDE` clauses | `sql.rs` (`function_expr`, `window_function`, `frame`), `engine.rs` (`compute_aggregate`, `shape_aggregate_inputs`, `evaluate_frame_aggregate`, `groups_edge`, `frame_row_excluded`) | `aggregate filter, distinct and argument order follow better-sqlite3`, `window groups frames and exclude clauses follow better-sqlite3` |
 
 The one foreign key shape still missing at this pin (`DEFERRABLE INITIALLY DEFERRED`) is listed in the DDL
 table and asserted as a structured rejection by `deferred foreign keys stay rejected`.
@@ -238,22 +241,24 @@ through this engine and both live oracles. Seed and count fully determine the re
 `e3d6c1d1baf823086965286e4725e7921b79e6406ec29e72a96d03b08c1456b1`, unchanged because the generators did
 not change.
 
-Distribution: DDL 40, DML 40, expressions 40, aggregates 30, windows 30, transactions 20. Result: 176 passed,
-14 mismatched, 10 discarded because `better-sqlite3` and CPython `sqlite3` disagreed with each other. The
-baseline holds 24 entries: 14 structured rejections and 10 discarded oracle disagreements.
+Distribution: DDL 40, DML 40, expressions 40, aggregates 30, windows 30, transactions 20. Result: 189 passed,
+1 mismatched, 10 discarded because `better-sqlite3` and CPython `sqlite3` disagreed with each other. The
+baseline holds 11 entries: 1 structured rejection and 10 discarded oracle disagreements.
 
-All 14 mismatches are structured rejections against two successful oracles, all already listed in the cluster
-tables. The DDL cases left the baseline once `WITHOUT ROWID`, partial and expression indexes were implemented, the
-two UPSERT cases left it once `ON CONFLICT` landed, and the eight DML cases left it once `CREATE TABLE ... AS SELECT`,
-`INSERT ... SELECT` and `REPLACE` landed:
+The remaining mismatch is a structured rejection against two successful oracles: multi-argument `min` / `max`.
+The DDL cases left the baseline once `WITHOUT ROWID`, partial and expression indexes were implemented, the
+two UPSERT cases left it once `ON CONFLICT` landed, the eight DML cases left it once `CREATE TABLE ... AS SELECT`,
+`INSERT ... SELECT` and `REPLACE` landed, the four expression cases left it once `IS DISTINCT FROM`, `GLOB`
+and `NULLS FIRST` / `NULLS LAST` landed, and the four aggregate cases plus the six window cases left it once
+aggregate `FILTER` / `DISTINCT` / argument `ORDER BY` and window `GROUPS` / `EXCLUDE` landed:
 
 | Cluster | Cases | Shapes |
 |---------|-------|--------|
 | DDL | 0 | none |
 | DML | 0 | none |
-| Expressions | 4 | `IS DISTINCT FROM` 2, `GLOB` 1, `NULLS FIRST` 1 |
-| Aggregates | 4 | `group_concat` with `ORDER BY` 1, `FILTER` 1, `count(DISTINCT)` 1, multi-argument `min`/`max` 1 |
-| Windows | 6 | `GROUPS` frame 3, `EXCLUDE` 3 |
+| Expressions | 0 | none |
+| Aggregates | 1 | multi-argument `min`/`max` 1 |
+| Windows | 0 | none |
 | Transactions | 0 | none |
 
 The 10 discarded cases are all transaction statements. CPython's default isolation keeps an implicit transaction
@@ -271,4 +276,4 @@ oracles agree on, now pass and left the baseline together with the six `round` d
 3. The gate cases added by this change use the live `better-sqlite3` oracle (`withOracle`) exactly like the
    existing window and CTE cases.
 
-`readme.md` still describes the early `SELECT`-only subset; this file is the current surface description.
+`../../../../../readme.md` still describes the early `SELECT`-only subset; this file is the current surface description.
