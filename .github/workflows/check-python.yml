@@ -45,7 +45,5 @@ jobs:
         run: |
           pnpm install --no-frozen-lockfile
           node scripts/build-napi.mjs
-      - name: Build the wheel and run it inside a clean virtual environment
-        run: node projects/sqlite.ts/packages/sqlite-harness/stages/python/run_tests.mjs
-      - name: Python acceptance suite
-        run: python -m unittest discover -v -s projects/sqlite.py/packages/sqlite/tests -t projects/sqlite.py/packages/sqlite/tests
+      - name: Build the wheel and run both Python suites inside a clean virtual environment
+        run: node projects/sqlite.ts/packages/sqlite-harness/stages/python/run_tests.mjs --acceptance

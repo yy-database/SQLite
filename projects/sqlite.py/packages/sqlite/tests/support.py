@@ -19,6 +19,7 @@ def call(command: str, payload: dict) -> object:
         input=json.dumps(payload),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
     if completed.returncode != 0:

@@ -30,3 +30,10 @@ const venvPython = resolve(venv, process.platform === "win32" ? "Scripts/python.
 
 run(venvPython, ["-m", "pip", "install", "--quiet", "--force-reinstall", "--no-index", "--find-links", wheels, "sqlite-format3"]);
 run(venvPython, ["test_features.py"], { cwd: resolve(stagesDir, "python") });
+
+// `--acceptance` also runs the package suite in the same venv, so the tests
+// import the wheel that was just built instead of the host interpreter.
+if (process.argv.includes("--acceptance")) {
+  const tests = resolve(project, "tests");
+  run(venvPython, ["-m", "unittest", "discover", "-v", "-s", tests, "-t", tests], { cwd: project });
+}
