@@ -151,7 +151,11 @@ fn build_decoded_rows(bytes: &[u8], rows: Vec<sqlite::TableRow>, limits: TableLi
         .collect()
 }
 
-fn build_decoded_payloads(bytes: &[u8], payloads: Vec<Vec<u8>>, limits: TableLimits) -> napi::Result<Vec<Vec<SqliteRecordValue>>> {
+fn build_decoded_payloads(
+    bytes: &[u8],
+    payloads: Vec<Vec<u8>>,
+    limits: TableLimits,
+) -> napi::Result<Vec<Vec<SqliteRecordValue>>> {
     let encoding = detect_encoding(bytes)?;
     let record_limits = RecordLimits { max_columns: 1024, max_payload_bytes: limits.max_payload_bytes.max(1_048_576) };
     payloads
@@ -170,7 +174,8 @@ fn build_index_rows(bytes: &[u8], payloads: Vec<Vec<u8>>, limits: TableLimits) -
     payloads
         .into_iter()
         .map(|payload| {
-            let mut columns = decode_record(&payload, encoding, record_limits).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            let mut columns =
+                decode_record(&payload, encoding, record_limits).map_err(|e| napi::Error::from_reason(e.to_string()))?;
             let trailing = columns.pop().ok_or_else(|| napi::Error::from_reason("sqlite index record has no rowid column"))?;
             let rowid = match trailing {
                 RecordValue::Integer(rowid) => rowid,
@@ -361,7 +366,11 @@ impl SqliteDatabase {
 
     /// Reads decoded typed records from a WITHOUT ROWID table in primary-key order.
     #[napi]
-    pub fn tableWithoutRowid(&self, name: String, limits: Option<SqliteReadLimits>) -> napi::Result<Vec<Vec<SqliteRecordValue>>> {
+    pub fn tableWithoutRowid(
+        &self,
+        name: String,
+        limits: Option<SqliteReadLimits>,
+    ) -> napi::Result<Vec<Vec<SqliteRecordValue>>> {
         let resolved = SqliteReadLimits::resolve(limits);
         let payloads =
             read_named_without_rowid(&self.bytes, &name, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -515,7 +524,6 @@ fn json_to_cell(json: &serde_json::Value) -> napi::Result<sqlite::Cell> {
         }
     })
 }
-
 
 /// Writes SQLite format-3 database files that upstream SQLite implementations
 /// open directly. The writer keeps the image in memory until [`save`](SqliteWriter::save).
@@ -743,13 +751,18 @@ impl SqliteEngine {
     /// Reopens an existing main-file image and rebuilds its schema catalog.
     #[napi(factory)]
     pub fn fromSnapshot(bytes: Buffer) -> napi::Result<Self> {
-        let writer = sqlite::SqliteWriter::from_pages(bytes.to_vec()).map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        let writer =
+            sqlite::SqliteWriter::from_pages(bytes.to_vec()).map_err(|error| napi::Error::from_reason(error.to_string()))?;
         sqlite::Engine::from_writer(writer).map(|engine| Self { engine }).map_err(engine_error)
     }
 
     /// Executes one statement with positional `?` parameters bound in order.
     #[napi]
-    pub fn executeWithParameters(&mut self, statement: String, parameters: Vec<serde_json::Value>) -> napi::Result<serde_json::Value> {
+    pub fn executeWithParameters(
+        &mut self,
+        statement: String,
+        parameters: Vec<serde_json::Value>,
+    ) -> napi::Result<serde_json::Value> {
         let cells = parameters.iter().map(json_to_cell).collect::<napi::Result<Vec<_>>>()?;
         let results = self.engine.execute_with_parameters(&statement, &cells).map_err(engine_error)?;
         engine_json(sqlite::results_json(&results))
@@ -832,10 +845,7 @@ mod tests {
         let grouped = engine.execute_one("select label, count(*) from t group by label order by label").expect("group by");
         assert_eq!(
             grouped.rows,
-            vec![
-                vec![Cell::Text("a".to_string()), Cell::Integer(2)],
-                vec![Cell::Text("b".to_string()), Cell::Integer(1)],
-            ]
+            vec![vec![Cell::Text("a".to_string()), Cell::Integer(2)], vec![Cell::Text("b".to_string()), Cell::Integer(1)],]
         );
         let unknown = engine.execute_one("insert into missing values (1)").expect_err("unknown table");
         assert_eq!(unknown.code, "unknown-table");
@@ -870,4 +880,3 @@ mod tests {
         assert_eq!(unknown.code, "unknown-column");
     }
 }
-

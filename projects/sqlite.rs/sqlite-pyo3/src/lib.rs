@@ -5,12 +5,14 @@
 
 #![deny(missing_docs)]
 
-use pyo3::exceptions::PyRuntimeError;
-use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyBytes, PyDict, PyList};
+use pyo3::{
+    exceptions::PyRuntimeError,
+    prelude::*,
+    types::{PyAny, PyBytes, PyDict, PyList},
+};
 use sqlite::{
-    ColumnSpec, RecordLimits, RecordValue, SchemaObjectKind, SqliteDatabase as Database, SqliteWriter as Writer, TableLimits, TableRow,
-    TextEncoding, UpdateValue, WriteValue, decode_library_version, decode_record, validate_database,
+    ColumnSpec, RecordLimits, RecordValue, SchemaObjectKind, SqliteDatabase as Database, SqliteWriter as Writer, TableLimits,
+    TableRow, TextEncoding, UpdateValue, WriteValue, decode_library_version, decode_record, validate_database,
 };
 
 fn runtime_error(error: impl std::fmt::Display) -> PyErr {
@@ -145,7 +147,8 @@ fn column_specs(columns: &Bound<'_, PyAny>) -> PyResult<Vec<ColumnSpec>> {
     for item in columns.try_iter()? {
         let item = item?;
         let column = item.cast::<PyDict>().map_err(|_| PyRuntimeError::new_err("each column must be a dict"))?;
-        let name: String = column.get_item("name")?.ok_or_else(|| PyRuntimeError::new_err("column is missing `name`"))?.extract()?;
+        let name: String =
+            column.get_item("name")?.ok_or_else(|| PyRuntimeError::new_err("column is missing `name`"))?.extract()?;
         let declared_type: String = match column.get_item("declaredType")? {
             Some(value) if !value.is_none() => value.extract()?,
             _ => "BLOB".to_string(),
