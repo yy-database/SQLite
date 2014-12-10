@@ -549,6 +549,41 @@ test("instr, round and modulo follow the oracle exactly", () => {
   assert.deepEqual(engine.execute("select typeof(7.5 % 2), typeof(7 % 3)").rows, [["real", "integer"]]);
 });
 
+test("trim, replace, ifnull and nullif follow the oracle exactly", () => {
+  const engine = createEngine();
+  // 期望值来自 better-sqlite3 3.53.2 与 CPython sqlite3 的实测结果。
+  assert.deepEqual(
+    engine.execute(
+      "select trim('  x  '), ltrim('  x  '), rtrim('  x  '), trim('xxaxx', 'x'), trim('--a-b--', '-ab'), trim('abc', ''), trim('abc', null), trim(null)",
+    ).rows,
+    [["x", "x  ", "  x", "a", "", "abc", null, null]],
+  );
+  assert.deepEqual(
+    engine.execute("select typeof(trim(12)), typeof(trim(1.0)), trim(12), trim(1.50)").rows,
+    [["text", "text", "12", "1.5"]],
+  );
+  assert.deepEqual(
+    engine.execute("select trim('\u00e9x\u00e9', '\u00e9')").rows,
+    [["x"]],
+  );
+  assert.deepEqual(
+    engine.execute(
+      "select replace('abcabc', 'b', 'X'), replace('abc', '', 'X'), replace('abc', 'b', null), replace(null, 'b', 'X'), replace(123, '2', '5'), replace(x'616263', 'b', 'X')",
+    ).rows,
+    [["aXcaXc", "abc", null, null, "153", "aXc"]],
+  );
+  // `nullif` 共用 `=` 的比较语义：数字之间相等即返回 NULL，文本与数字不相等。
+  assert.deepEqual(
+    engine.execute("select ifnull(null, 7), ifnull(0, 7), ifnull(null, null), nullif(1, 1), nullif(1.0, 1), nullif('1', 1), nullif(null, 1), nullif(1, null)").rows,
+    [[7, 0, null, null, null, "1", null, 1]],
+  );
+  for (const sql of ["select trim()", "select replace('a', 'b')", "select ifnull(1)"]) {
+    const rejected = engine.tryExecute(sql);
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error?.code, "wrong-arguments");
+  }
+});
+
 test("select distinct collapses duplicates before order by and limit", () => {
   const engine = createEngine();
   engine.exec("create table d (a integer, b text); insert into d values (1, 'x'), (1, 'x'), (2, 'y'), (null, 'z')");

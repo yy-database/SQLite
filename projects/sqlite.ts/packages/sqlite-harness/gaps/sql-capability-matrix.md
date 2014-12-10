@@ -122,10 +122,10 @@ Cluster totals (121 feature rows): **102 gated / 0 uncovered / 19 missing** at t
 | `count(DISTINCT x)` | `select count(distinct v) from cd` | gated | `DISTINCT` de-duplicates by value with `NULL` counted once, `count` then ignores `NULL`, and every `sum` / `avg` / `total` / `count` form accepts it; same gate |
 | Aggregate `FILTER (WHERE ...)` | `select sum(v) filter (where v > 1) from afi` | gated | the filter runs before the aggregate sees a row, so an empty input reports `count = 0` and `sum` / `group_concat` `NULL`, it composes with `DISTINCT` and works on window aggregates, while `DISTINCT` and argument `ORDER BY` on a window aggregate are rejected with SQLite's wording; same gate |
 | Multi-argument `min()` / `max()` | `select min(3, 1, 2), max(3, 1, 2)` | missing | `wrong-arguments` to `min()` |
-| `trim` / `ltrim` / `rtrim` | `select trim('  x  '), ltrim('  x'), rtrim('x  ')` | missing | `unknown-function`: `trim` |
+| `trim` / `ltrim` / `rtrim` | `select trim('  x  '), ltrim('  x'), rtrim('x  ')` | gated | `trim, replace, ifnull, nullif follow the oracle exactly`: 第二个参数是按字符集合裁剪，缺省只裁剪空格，空集合原样返回，`NULL` 传播，非文本先转文本 |
 | `instr` | `select instr('abcabc', 'bc'), instr('abc', 'z'), instr('abc', '')` | gated | `instr, round and modulo follow the oracle exactly` |
-| `replace` | `select replace('abcabc', 'b', 'X')` | missing | `unknown-function`: `replace` |
-| `ifnull` / `nullif` | `select ifnull(null, 7), nullif(1, 1)` | missing | `unknown-function`: `ifnull` |
+| `replace` | `select replace('abcabc', 'b', 'X')` | gated | 同一门禁：空模式原样返回，任一参数为 `NULL` 时返回 `NULL`，数字与 blob 先转文本 |
+| `ifnull` / `nullif` | `select ifnull(null, 7), nullif(1, 1)` | gated | 同一门禁：`nullif` 复用 `=` 的比较语义，数字之间相等即返回 `NULL`，文本与数字不相等 |
 | `printf` / `format` / `char` / `unicode` / `soundex` | `select printf('%d', 7)` | missing | absent from `ScalarFunction::from_name` |
 | Math functions (`sqrt`, `power`, `floor`, `ceil`, `log`, ...) | `select sqrt(9), power(2, 10), floor(2.7), ceil(2.1)` | missing | `unknown-function`: `sqrt` |
 | Date/time functions (`date`, `time`, `datetime`, `julianday`, `unixepoch`, `strftime`, `timediff`) | `select date('2024-01-02 03:04:05'), strftime('%Y', '2024-01-02')` | missing | `unknown-function`: `date` |

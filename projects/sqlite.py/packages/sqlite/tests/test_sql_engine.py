@@ -37,6 +37,12 @@ class SqlEngineTests(unittest.TestCase):
         nulls = self.engine.execute("select count(*) from people where score is null")
         self.assertEqual(nulls["rows"], [[1]])
 
+    def test_text_and_null_functions_match_oracle(self):
+        selected = self.engine.execute(
+            "select trim('  x  '), ltrim('  x'), rtrim('x  '), replace('abcabc', 'b', 'X'), ifnull(null, 7), nullif(1, 1)"
+        )
+        self.assertEqual(selected["rows"], [["x", "x", "x", "aXcaXc", 7, None]])
+
     def test_rejections_carry_a_code_and_clause(self):
         right_join = self.engine.try_execute("select * from people right join people as p2 on people.id = p2.id")
         self.assertIs(right_join["ok"], True)
