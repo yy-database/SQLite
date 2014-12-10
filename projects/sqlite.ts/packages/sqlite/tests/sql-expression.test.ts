@@ -634,6 +634,117 @@ test("multi-argument min and max follow the oracle tie rules", () => {
   assert.deepEqual(engine.execute("select min(a), max(a) from mm").rows, [[-7, 7]]);
 });
 
+test("math scalars follow the oracle exactly", () => {
+  const engine = createEngine();
+  // 期望值来自 better-sqlite3 3.53.2 与 CPython sqlite3 3.49.1 的实测结果。
+  assert.deepEqual(engine.execute("select abs(-7), abs(-7.5), abs('-7'), typeof(abs('-7'))").rows, [[7, 7.5, 7, "real"]]);
+  assert.deepEqual(engine.execute("select ceil(2), ceil(2.5), ceil(-2.5), floor(2.5), floor(-2.5), trunc(2.7), trunc(-2.7)").rows, [
+    [2, 3, -2, 2, -3, 2, -2],
+  ]);
+  // 整数入参取整后仍是整数，实数入参保持实数。
+  assert.deepEqual(engine.execute("select typeof(ceil(2)), typeof(ceil(2.5)), typeof(floor('3')), typeof(trunc(2))").rows, [
+    ["integer", "real", "integer", "integer"],
+  ]);
+  // 数学函数套用 numeric affinity：整段文本必须可解析，前后空白可忽略。
+  assert.deepEqual(engine.execute("select ceil('2abc'), ceil(null), ceil(x'32'), ceil(' 2 ')").rows, [[null, null, null, 2]]);
+  assert.deepEqual(engine.execute("select sqrt(4), sqrt(16.0), sqrt(-1), pow(2,10), pow(2,-1), pow(-1,0.5)").rows, [
+    [2, 4, null, 1024, 0.5, null],
+  ]);
+  assert.deepEqual(engine.execute("select mod(7,3), mod(7.5,2), mod(-7,3), mod(7,0)").rows, [[1, 1.5, -1, null]]);
+  assert.deepEqual(engine.execute("select exp(0), ln(1), ln(2.718281828459045), log(100), log(2,8), log10(1000), log2(8)").rows, [
+    [1, 0, 1, 2, 3, 3, 3],
+  ]);
+  // `ln`/`log` 的非正入参与底数不大于 1 都返回 NULL，而不是 -inf 或 NaN。
+  assert.deepEqual(engine.execute("select ln(0), log(0), log(1,100), log(2,0.5)").rows, [[null, null, null, -1]]);
+  assert.deepEqual(engine.execute("select sin(0), cos(0), tan(0), asin(1), acos(1), atan(1), atan2(1,1)").rows, [
+    [0, 1, 0, 1.5707963267948966, 0, 0.7853981633974483, 0.7853981633974483],
+  ]);
+  assert.deepEqual(engine.execute("select degrees(3.141592653589793), radians(180), pi()").rows, [[180, 3.141592653589793, 3.141592653589793]]);
+  assert.deepEqual(engine.execute("select sign(-5), sign(0), sign(5.5), sign(-0.5), sign('abc'), sign(null)").rows, [
+    [-1, 0, 1, -1, null, null],
+  ]);
+  // 数学结果除 `sign` 与整数取整外恒为实数。
+  assert.deepEqual(engine.execute("select typeof(sqrt(4)), typeof(pow(2,3)), typeof(mod(7,3)), typeof(sign(5))").rows, [
+    ["real", "real", "real", "integer"],
+  ]);
+  for (const sql of ["select pow(1)", "select pi(1)", "select sign()", "select mod(1)"]) {
+    const rejected = engine.tryExecute(sql);
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error?.code, "wrong-arguments");
+  }
+});
+
+test("date, time and strftime follow the oracle exactly", () => {
+  const engine = createEngine();
+  // 期望值来自 better-sqlite3 3.53.2 与 CPython sqlite3 3.49.1 的实测结果。
+  assert.deepEqual(engine.execute("select date('2024-01-02'), date('2024-01-02 03:04:05'), date('2024-01-02T03:04:05Z'), date('2024-01-02T03:04:05+05:30')").rows, [
+    ["2024-01-02", "2024-01-02", "2024-01-02", "2024-01-01"],
+  ]);
+  // 只有时间的输入落到默认日期 2000-01-01，只有日期的输入落到 00:00:00。
+  assert.deepEqual(engine.execute("select time('03:04:05'), time('03:04:05.678'), time('2024-01-02'), datetime('2024-01-02'), datetime('03:04:05')").rows, [
+    ["03:04:05", "03:04:05", "00:00:00", "2024-01-02 00:00:00", "2000-01-01 03:04:05"],
+  ]);
+  // `24:00:00` 保留缓存里的时分秒，非法日历日按 iJD 规范化。
+  assert.deepEqual(engine.execute("select datetime('2024-01-02 24:00:00'), date('2024-01-02 24:00:00'), datetime('2024-02-30 12:00:00')").rows, [
+    ["2024-01-02 24:00:00", "2024-01-02", "2024-03-01 12:00:00"],
+  ]);
+  assert.deepEqual(engine.execute("select julianday('2024-01-02'), julianday('2024-01-02 03:04:05'), unixepoch('2024-01-02'), unixepoch('2024-01-02 03:04:05')").rows, [
+    [2460311.5, 2460311.627835648, 1704153600, 1704164645],
+  ]);
+  assert.deepEqual(engine.execute("select unixepoch('2024-01-02 03:04:05.678'), unixepoch('2024-01-02 03:04:05.678','subsec')").rows, [
+    [1704164645, 1704164645.678],
+  ]);
+  assert.deepEqual(engine.execute("select date('2024-01-02','start of month'), date('2024-01-02','start of year'), date('2024-01-02 03:04:05','start of day')").rows, [
+    ["2024-01-01", "2024-01-01", "2024-01-02"],
+  ]);
+  // 月与年按日历进位，小数部分分别按 30 天/月与 365.25 天/年折算。
+  assert.deepEqual(engine.execute("select date('2024-01-31','+1 month'), date('2024-03-31','+1 month'), date('2024-02-29','+1 year'), date('2024-01-02','+0.5 years'), date('2024-01-02','+0.5 months')").rows, [
+    ["2024-03-02", "2024-05-01", "2025-03-01", "2024-07-02", "2024-01-17"],
+  ]);
+  // `weekday N` 以星期日为 0，且同一天不移动。
+  assert.deepEqual(engine.execute("select date('2024-01-02','weekday 0'), date('2024-01-02','weekday 1'), date('2024-01-02','weekday 2'), date('2024-01-03','weekday 0')").rows, [
+    ["2024-01-07", "2024-01-08", "2024-01-02", "2024-01-07"],
+  ]);
+  // 时区修饰符按 24 小时取模，`+25:00` 越界为 NULL。
+  assert.deepEqual(engine.execute("select datetime('2024-01-02 03:04:05','+05:30'), datetime('2024-01-02 03:04:05','-05:30'), datetime('2024-01-02 03:04:05','+23:59'), datetime('2024-01-02 03:04:05','+24:30'), datetime('2024-01-02 03:04:05','+25:00')").rows, [
+    ["2024-01-02 08:34:05", "2024-01-01 21:34:05", "2024-01-03 03:03:05", "2024-01-02 03:34:05", null],
+  ]);
+  assert.deepEqual(engine.execute("select datetime('2024-01-02 03:04:05','subsec'), datetime('2024-01-02','subsecond')").rows, [
+    ["2024-01-02 03:04:05.000", "2024-01-02 00:00:00.000"],
+  ]);
+  // 入参解释型修饰符也接受数值文本；`auto` 按数量级在儒略日与 Unix 秒间选择。
+  assert.deepEqual(engine.execute("select datetime(0,'unixepoch'), datetime(1700000000,'unixepoch'), datetime(1700000000,'auto'), datetime(2450000,'julianday'), datetime('2450000','julianday'), datetime(2450000,'unixepoch')").rows, [
+    ["1970-01-01 00:00:00", "2023-11-14 22:13:20", "2023-11-14 22:13:20", "1995-10-09 12:00:00", "1995-10-09 12:00:00", "1970-01-29 08:33:20"],
+  ]);
+  assert.deepEqual(engine.execute("select strftime('%Y-%m-%d %H:%M:%S','2024-01-02 03:04:05'), strftime('%f','2024-01-02 03:04:05.678'), strftime('%J','2024-01-02')").rows, [
+    ["2024-01-02 03:04:05", "05.678", "2460311.5"],
+  ]);
+  // `%u`/`%w`/`%U`/`%W`/`%V`/`%G`/`%g` 全部对齐 ISO 与星期日/星期一两种周口径。
+  assert.deepEqual(engine.execute("select strftime('%u %w %U %W %V %G %g','2024-01-02'), strftime('%u %w %U %W %V %G %g','2024-12-30'), strftime('%V','2021-01-01'), strftime('%V','2016-01-01')").rows, [
+    ["2 2 00 01 01 2024 24", "1 1 52 53 01 2025 25", "53", "53"],
+  ]);
+  assert.deepEqual(engine.execute("select strftime('%p %P %I %l %k %R %T','2024-01-02 15:30:00')").rows, [["PM pm 03  3 15 15:30 15:30:00"]]);
+  // `%s` 没有小数秒时向下取整，未知转换整条为 NULL，无转换的格式串原样返回。
+  assert.deepEqual(engine.execute("select strftime('%s','2024-01-02'), strftime('%s','2024-01-02 03:04:05.678'), strftime('%Q','2024-01-02'), strftime('abc','2024-01-02')").rows, [
+    ["1704153600", "1704164645", null, "abc"],
+  ]);
+  assert.deepEqual(engine.execute("select timediff('2024-01-02','2024-01-03'), timediff('2024-01-03','2024-01-02'), timediff('2024-01-02 03:04:05','2024-01-02 04:04:05'), timediff('2024-01-31','2024-02-29')").rows, [
+    ["-0000-00-01 00:00:00.000", "+0000-00-01 00:00:00.000", "-0000-00-00 01:00:00.000", "-0000-00-29 00:00:00.000"],
+  ]);
+  // 前导空格非法、尾随空格合法，纯数字按儒略日解释，修饰符的空格与大小写都有硬约束。
+  assert.deepEqual(engine.execute("select date(null), date('abc'), date(' 2024-01-02'), date('2024-01-02 '), date('12'), date('12:30'), date('2024-01-02','start of month ')").rows, [
+    [null, null, null, "2024-01-02", "-4713-12-06", "2000-01-01", null],
+  ]);
+  assert.deepEqual(engine.execute("select date('2024-01-02','+ 5 days'), date('2024-01-02','+5days'), date('2024-01-02','+5 days ')").rows, [[null, null, null]]);
+  for (const sql of ["select timediff('2024-01-02')", "select strftime()"]) {
+    const rejected = engine.tryExecute(sql);
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error?.code, "wrong-arguments");
+  }
+  // 未知修饰符不是错误，而是让整条日期函数返回 NULL。
+  assert.deepEqual(engine.execute("select date('2024-01-02','bogus')").rows, [[null]]);
+});
+
 test("select distinct collapses duplicates before order by and limit", () => {
   const engine = createEngine();
   engine.exec("create table d (a integer, b text); insert into d values (1, 'x'), (1, 'x'), (2, 'y'), (null, 'z')");

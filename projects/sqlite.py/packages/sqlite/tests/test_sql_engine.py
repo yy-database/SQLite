@@ -61,6 +61,84 @@ class SqlEngineTests(unittest.TestCase):
         )
         self.assertEqual(selected["rows"], [[1, 3, None, "real", "integer", "integer", "real"]])
 
+    def test_math_scalars_match_oracle(self):
+        selected = self.engine.execute(
+            "select abs(-7), abs('-7'), typeof(abs('-7')), "
+            "ceil(2.5), ceil(-2.5), floor('3'), trunc(-2.7), "
+            "typeof(ceil(2)), typeof(trunc(2)), ceil('2abc')"
+        )
+        self.assertEqual(selected["rows"], [[7, 7, "real", 3, -2, 3, -2, "integer", "integer", None]])
+
+        selected = self.engine.execute(
+            "select sqrt(4), sqrt(-1), pow(2,10), pow(-1,0.5), mod(7,3), mod(-7,3), mod(7,0), "
+            "exp(0), ln(1), log(100), log(2,8), log(1,100), sign(-5), sign(0), sign('abc')"
+        )
+        self.assertEqual(
+            selected["rows"],
+            [[2.0, None, 1024.0, None, 1.0, -1.0, None, 1.0, 0.0, 2.0, 3.0, None, -1, 0, None]],
+        )
+
+        selected = self.engine.execute(
+            "select sin(0), cos(0), asin(1), atan2(1,1), degrees(3.141592653589793), radians(180), pi()"
+        )
+        self.assertEqual(
+            selected["rows"],
+            [[0.0, 1.0, 1.5707963267948966, 0.7853981633974483, 180.0, 3.141592653589793, 3.141592653589793]],
+        )
+
+    def test_date_time_and_strftime_match_oracle(self):
+        selected = self.engine.execute(
+            "select date('2024-01-02T03:04:05+05:30'), time('03:04:05.678'), time('2024-01-02'), "
+            "datetime('2024-01-02 24:00:00'), datetime('2024-02-30 12:00:00')"
+        )
+        self.assertEqual(
+            selected["rows"],
+            [["2024-01-01", "03:04:05", "00:00:00", "2024-01-02 24:00:00", "2024-03-01 12:00:00"]],
+        )
+
+        selected = self.engine.execute(
+            "select julianday('2024-01-02'), unixepoch('2024-01-02'), "
+            "unixepoch('2024-01-02 03:04:05.678','subsec')"
+        )
+        self.assertEqual(selected["rows"], [[2460311.5, 1704153600, 1704164645.678]])
+
+        selected = self.engine.execute(
+            "select date('2024-01-31','+1 month'), date('2024-01-31','start of month','+1 month'), "
+            "date('2024-01-02','+0.5 years'), date('2024-01-02','weekday 0'), date('2024-01-02','weekday 2')"
+        )
+        self.assertEqual(
+            selected["rows"],
+            [["2024-03-02", "2024-02-01", "2024-07-02", "2024-01-07", "2024-01-02"]],
+        )
+
+        selected = self.engine.execute(
+            "select datetime('2024-01-02 03:04:05','+24:30'), datetime('2024-01-02 03:04:05','+25:00'), "
+            "datetime(1700000000,'auto'), datetime('2450000','julianday')"
+        )
+        self.assertEqual(
+            selected["rows"],
+            [["2024-01-02 03:34:05", None, "2023-11-14 22:13:20", "1995-10-09 12:00:00"]],
+        )
+
+        selected = self.engine.execute(
+            "select strftime('%u %w %U %W %V %G %g','2024-12-30'), "
+            "strftime('%f','2024-01-02 03:04:05.678'), strftime('%J','2024-01-02'), "
+            "strftime('%s','2024-01-02 03:04:05.678'), strftime('%Q','2024-01-02')"
+        )
+        self.assertEqual(
+            selected["rows"],
+            [["1 1 52 53 01 2025 25", "05.678", "2460311.5", "1704164645", None]],
+        )
+
+        selected = self.engine.execute(
+            "select timediff('2024-01-02','2024-01-03'), timediff('2024-01-02 03:04:05','2024-01-02 04:04:05'), "
+            "date(' 2024-01-02'), date('2024-01-02 '), date('12'), date('2024-01-02','+ 5 days')"
+        )
+        self.assertEqual(
+            selected["rows"],
+            [["-0000-00-01 00:00:00.000", "-0000-00-00 01:00:00.000", None, "2024-01-02", "-4713-12-06", None]],
+        )
+
     def test_rejections_carry_a_code_and_clause(self):
         right_join = self.engine.try_execute("select * from people right join people as p2 on people.id = p2.id")
         self.assertIs(right_join["ok"], True)

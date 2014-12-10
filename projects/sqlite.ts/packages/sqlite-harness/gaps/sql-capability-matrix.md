@@ -1,6 +1,6 @@
 # SQL capability matrix
 
-Measured against the pinned `database.rs` facade rev `7ac5bd9` (`7ac5bd92ba5a57f0f1bb1297626eb7189853aeca`,
+Measured against the pinned `database.rs` facade rev `3bb849f` (`3bb849f5f696e938f27aefdd67f174c91f652cd8`,
 `projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
 through both live oracles; the oracle value, not an internal expectation, decides whether a row is correct.
 
@@ -9,7 +9,7 @@ through both live oracles; the oracle value, not an internal expectation, decide
 | Engine under test | `sqlite.node` built from the pin, `createEngine()` |
 | Oracle A | `better-sqlite3` 12.11.1 (SQLite 3.53.2) |
 | Oracle B | CPython `sqlite3` (SQLite 3.49.1) |
-| Probes | 145 statements/cases, one or more per cluster |
+| Probes | 182 statements/cases, one or more per cluster |
 | Local facade override | None; Cargo resolved the pin directly |
 
 Status legend:
@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (121 feature rows): **107 gated / 0 uncovered / 14 missing** at the pin.
+Cluster totals (121 feature rows): **109 gated / 0 uncovered / 12 missing** at the pin.
 
 ## DDL
 
@@ -127,8 +127,8 @@ Cluster totals (121 feature rows): **107 gated / 0 uncovered / 14 missing** at t
 | `replace` | `select replace('abcabc', 'b', 'X')` | gated | 同一门禁：空模式原样返回，任一参数为 `NULL` 时返回 `NULL`，数字与 blob 先转文本 |
 | `ifnull` / `nullif` | `select ifnull(null, 7), nullif(1, 1)` | gated | 同一门禁：`nullif` 复用 `=` 的比较语义，数字之间相等即返回 `NULL`，文本与数字不相等 |
 | `printf` / `format` / `char` / `unicode` / `soundex` | `select printf('%d', 7)` | gated | 门禁 `printf, char, unicode and soundex follow the oracle exactly`：`%d/%i/%u/%x/%X/%o` 含 `#` 前缀与零填充，`%f/%e/%g` 按十进制四舍五入且 `%.0e` 不带小数点，`%c` 取文本首字符且精度表示重复次数，`%q/%Q/%w` 先按精度截断再转义，`%p` 是大写十六进制，`%n` 不消费参数，`%z` 把 `NULL` 变空串，未知转换终止解析且空输出返回 `NULL`；`char` 越界码点变 U+FFFD，`unicode('')` 为 `NULL`，`soundex` 按 SQLite 分组补零
-| Math functions (`sqrt`, `power`, `floor`, `ceil`, `log`, ...) | `select sqrt(9), power(2, 10), floor(2.7), ceil(2.1)` | missing | `unknown-function`: `sqrt` |
-| Date/time functions (`date`, `time`, `datetime`, `julianday`, `unixepoch`, `strftime`, `timediff`) | `select date('2024-01-02 03:04:05'), strftime('%Y', '2024-01-02')` | missing | `unknown-function`: `date` |
+| Math functions (`sqrt`, `power`, `floor`, `ceil`, `log`, ...) | `select sqrt(9), power(2, 10), floor(2.7), ceil(2.1)` | gated | 门禁 `math scalars follow the oracle exactly`：`abs` 文本入参恒为实数、整数取整保持整数，文本套用 numeric affinity 且整段必须可解析（`'2abc'` 为 `NULL`），`NaN` 记 `NULL` 而无穷保留实数，`ln`/`log` 的非正入参与底数不大于 1 返回 `NULL`，`sign` 恒为整数 |
+| Date/time functions (`date`, `time`, `datetime`, `julianday`, `unixepoch`, `strftime`, `timediff`) | `select date('2024-01-02 03:04:05'), strftime('%Y', '2024-01-02')` | gated | 门禁 `date, time and strftime follow the oracle exactly`：日期/时间/时区解析与 `24:00:00`、非法日历日规范化，`start of`、`weekday`、月年进位与小数折算，时区修饰符按 24 小时取模，`unixepoch`/`julianday`/`auto` 入参解释，`strftime` 全部指令（含 ISO 周与星期日/星期一两种周口径），以及 `timediff` 的借位分解 |
 | JSON functions (`json_extract`, `json_array`, `json_object`, `json_valid`, ...) and `->` / `->>` | `select json_extract('{"a":1}', '$.a'), json_array(1, 2)` | missing | `unknown-function`: `json_extract` |
 
 ## Window functions
@@ -191,9 +191,10 @@ Cluster totals (121 feature rows): **107 gated / 0 uncovered / 14 missing** at t
 | `DETACH DATABASE` | `detach database aux` | gated | flushes the attached image, removes the schema, refuses `main` / `temp` with `cannot detach database <name>` and an unknown name with `no such database: <name>`; same gates |
 | `VACUUM` / `VACUUM INTO` | `vacuum` | missing | `unsupported-statement` at `vacuum` |
 
-## Unimplemented: top 4 by impact
+## Unimplemented: top 2 by impact
 
-Ranked by how many ordinary SQLite clients would break on the first statement they send. Foreign keys,
+Ranked by how many ordinary SQLite clients would break on the first statement they send. Date/time and math
+functions, `trim`, `replace`, `ifnull`, `nullif`, `printf`, multi-argument `min` / `max`, foreign keys,
 recursive CTEs, transaction control, `SELECT DISTINCT`, modulo, `instr`, `CREATE TABLE ... AS SELECT`,
 `INSERT ... SELECT`, `REPLACE`, `IS DISTINCT FROM`, `GLOB`, `NULLS FIRST|LAST`, aggregate `FILTER` / `DISTINCT` /
 argument `ORDER BY` and window `GROUPS` / `EXCLUDE` are no longer on this list: all landed at this pin and are
@@ -201,13 +202,11 @@ asserted by the gate.
 
 | # | Gap | Impact | Upstream coordinates |
 |---|-----|--------|---------------------|
-| 1 | Date/time and common string functions (`trim`, `replace`, `ifnull`, `nullif`, `printf`) | Reports, formatting, NULL handling in almost every app query | `sql.rs:333-357` (`ScalarFunction`), `engine.rs:5640` (scalar dispatch) |
-| 2 | Multi-argument `min` / `max` and remaining aggregate arity | Aggregate shaping in reports | `sql.rs` (`function_expr`), `engine.rs` (`aggregate_cells`) |
-| 3 | `COLLATE` (column, expression, `ORDER BY`) | Case-insensitive comparisons and sorted output | `sql.rs`, no collation hook in the key comparators |
-| 4 | JSON functions and `->` / `->>` | Structured payloads stored as text | `sql.rs:333-357` (`ScalarFunction`), `BinaryOp` |
+| 1 | `COLLATE` (column, expression, `ORDER BY`) | Case-insensitive comparisons and sorted output | `sql.rs`, no collation hook in the key comparators |
+| 2 | JSON functions and `->` / `->>` | Structured payloads stored as text | `sql.rs:333-357` (`ScalarFunction`), `BinaryOp` |
 
 Next tier, lower blast radius but still visible: `PRAGMA integrity_check`, `EXPLAIN`, `VACUUM`,
-`INSERT OR IGNORE`, `UPDATE ... FROM` and expression tuples inside `VALUES`.
+`INSERT OR IGNORE`, `UPDATE ... FROM`, row-value assignment and expression tuples inside `VALUES`.
 
 ## Landed at this pin
 
@@ -241,23 +240,23 @@ through this engine and both live oracles. Seed and count fully determine the re
 `e3d6c1d1baf823086965286e4725e7921b79e6406ec29e72a96d03b08c1456b1`, unchanged because the generators did
 not change.
 
-Distribution: DDL 40, DML 40, expressions 40, aggregates 30, windows 30, transactions 20. Result: 189 passed,
-1 mismatched, 10 discarded because `better-sqlite3` and CPython `sqlite3` disagreed with each other. The
-baseline holds 11 entries: 1 structured rejection and 10 discarded oracle disagreements.
+Distribution: DDL 40, DML 40, expressions 40, aggregates 30, windows 30, transactions 20. Result: 190 passed,
+0 mismatched, 10 discarded because `better-sqlite3` and CPython `sqlite3` disagreed with each other. The
+baseline holds 10 entries, all discarded oracle disagreements.
 
-The remaining mismatch is a structured rejection against two successful oracles: multi-argument `min` / `max`.
-The DDL cases left the baseline once `WITHOUT ROWID`, partial and expression indexes were implemented, the
-two UPSERT cases left it once `ON CONFLICT` landed, the eight DML cases left it once `CREATE TABLE ... AS SELECT`,
-`INSERT ... SELECT` and `REPLACE` landed, the four expression cases left it once `IS DISTINCT FROM`, `GLOB`
-and `NULLS FIRST` / `NULLS LAST` landed, and the four aggregate cases plus the six window cases left it once
-aggregate `FILTER` / `DISTINCT` / argument `ORDER BY` and window `GROUPS` / `EXCLUDE` landed:
+Every cluster now agrees with both oracles. The DDL cases left the baseline once `WITHOUT ROWID`, partial and
+expression indexes were implemented, the two UPSERT cases left it once `ON CONFLICT` landed, the eight DML cases
+left it once `CREATE TABLE ... AS SELECT`, `INSERT ... SELECT` and `REPLACE` landed, the four expression cases
+left it once `IS DISTINCT FROM`, `GLOB` and `NULLS FIRST` / `NULLS LAST` landed, the four aggregate cases and the
+six window cases left it once aggregate `FILTER` / `DISTINCT` / argument `ORDER BY` and window `GROUPS` /
+`EXCLUDE` landed, and the last aggregate mismatch left it once multi-argument `min` / `max` landed:
 
 | Cluster | Cases | Shapes |
 |---------|-------|--------|
 | DDL | 0 | none |
 | DML | 0 | none |
 | Expressions | 0 | none |
-| Aggregates | 1 | multi-argument `min`/`max` 1 |
+| Aggregates | 0 | none |
 | Windows | 0 | none |
 | Transactions | 0 | none |
 
