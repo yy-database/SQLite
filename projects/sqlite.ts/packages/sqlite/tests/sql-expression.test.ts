@@ -584,6 +584,56 @@ test("trim, replace, ifnull and nullif follow the oracle exactly", () => {
   }
 });
 
+test("printf, char, unicode and soundex follow the oracle exactly", () => {
+  const engine = createEngine();
+  // 期望值来自 better-sqlite3 3.53.2 与 CPython sqlite3 的实测结果。
+  assert.deepEqual(engine.execute("select printf('%d/%i/%u/%x/%X/%#x/%o/%#o', 42, -42, -1, 255, 255, 255, 8, 8)").rows, [
+    ["42/-42/18446744073709551615/ff/FF/0xff/10/010"],
+  ]);
+  assert.deepEqual(engine.execute("select printf('%.2f/%.0f/%.0e/%.2e/%.3g/%g', 1.005, 0.5, 12345, 0.000123, 1234.5, 1000000)").rows, [
+    ["1.00/1/1e+04/1.23e-04/1.23e+03/1e+06"],
+  ]);
+  assert.deepEqual(engine.execute("select printf('%5d|%-5d|%05d|%+05d|% d', 42, 42, -42, 5, 5)").rows, [
+    ["   42|42   |-0042|+0005| 5"],
+  ]);
+  assert.deepEqual(engine.execute("select printf('%s|%5s|%05s|%.2s|%c|%.2c|%10c', 42, 'ab', 'ab', 'abcdef', 'abc', 'abc', 'x')").rows, [
+    ["42|   ab|   ab|ab|a|aa|         x"],
+  ]);
+  assert.deepEqual(engine.execute("select printf('%q|%Q|%w|%.2q', 'a''b', null, null, 'a''bc')").rows, [
+    ["a''b|NULL|(NULL)|a''"],
+  ]);
+  assert.deepEqual(engine.execute("select printf('%p|%#p|%5p|%#05p', 42, 255, 255, 255)").rows, [["2A|0xFF|   FF|0x000FF"]]);
+  // `%n` 不消费参数，`%z` 把 NULL 变空串，未知转换终止解析且空输出为 NULL。
+  assert.deepEqual(engine.execute("select printf('%n%%'), printf('%n%d', 42), printf('%z', null), printf('x%y', 42, 43)").rows, [
+    ["%", "42", "", "x"],
+  ]);
+  assert.deepEqual(engine.execute("select printf('%y', 42), typeof(printf('%y', 42))").rows, [[null, "null"]]);
+  assert.deepEqual(engine.execute("select char(65, 66, 67), char(), char(null), char(97.9), char(1114112), unicode('ABC'), unicode(''), unicode(null)").rows, [
+    ["ABC", "", "\u0000", "a", "\uFFFD", 65, null, null],
+  ]);
+  assert.deepEqual(engine.execute("select soundex('Robert'), soundex('Tymczak'), soundex('Pfister'), soundex(''), soundex('123'), soundex(null)").rows, [
+    ["R163", "T522", "P236", "?000", "?000", "?000"],
+  ]);
+});
+
+test("multi-argument min and max follow the oracle tie rules", () => {
+  const engine = createEngine();
+  // 期望值来自 better-sqlite3 3.53.2 与 CPython sqlite3 的实测结果。
+  assert.deepEqual(engine.execute("select min(3, 1, 2), max(3, 1, 2), min('abc', 'abd'), max('a', 'A'), min(null, 2), max(2, null)").rows, [
+    [1, 3, "abc", "a", null, null],
+  ]);
+  // 打平时 `min` 取后一个、`max` 保留前一个，返回值的类型随被选中的参数。
+  assert.deepEqual(engine.execute("select typeof(min(1, 1.0)), typeof(max(1, 1.0)), typeof(min(1.0, 1)), typeof(max(1.0, 1))").rows, [
+    ["real", "integer", "integer", "real"],
+  ]);
+  assert.deepEqual(engine.execute("select typeof(min(3, 3.0, 3)), typeof(max(3.0, 3, 3)), min(1, 2, 3), max(1, 2, 3)").rows, [
+    ["integer", "real", 1, 3],
+  ]);
+  engine.exec("create table mm (a integer); insert into mm values (7), (-7), (null)");
+  // 单参数仍走聚合路径，与多参数标量形式互不影响。
+  assert.deepEqual(engine.execute("select min(a), max(a) from mm").rows, [[-7, 7]]);
+});
+
 test("select distinct collapses duplicates before order by and limit", () => {
   const engine = createEngine();
   engine.exec("create table d (a integer, b text); insert into d values (1, 'x'), (1, 'x'), (2, 'y'), (null, 'z')");

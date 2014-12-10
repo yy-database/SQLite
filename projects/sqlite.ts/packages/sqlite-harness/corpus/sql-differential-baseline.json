@@ -9,21 +9,6 @@
   },
   "entries": [
     {
-      "id": 144,
-      "cluster": "aggregate",
-      "sql": "select min(3, 1, 2), max(3, 1, 2)",
-      "check": null,
-      "kind": "mismatch",
-      "reason": "structured-rejection",
-      "detail": "this repository rejects the statement: wrong-arguments wrong number of arguments to function min()",
-      "coordinates": "sql.rs:2315-2387 (function_expr)",
-      "signal": [
-        "ours error wrong-arguments wrong number of arguments to function min()",
-        "better rows [[\"n:1\",\"n:3\"]]",
-        "python rows [[\"n:1\",\"n:3\"]]"
-      ]
-    },
-    {
       "id": 184,
       "cluster": "transaction",
       "sql": "commit",

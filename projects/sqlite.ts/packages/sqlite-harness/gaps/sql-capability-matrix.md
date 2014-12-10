@@ -1,6 +1,6 @@
 # SQL capability matrix
 
-Measured against the pinned `database.rs` facade rev `1a1ad45` (`1a1ad451a5c5105942a7fa0ce83891280df6bbd0`,
+Measured against the pinned `database.rs` facade rev `7ac5bd9` (`7ac5bd92ba5a57f0f1bb1297626eb7189853aeca`,
 `projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
 through both live oracles; the oracle value, not an internal expectation, decides whether a row is correct.
 
@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (121 feature rows): **102 gated / 0 uncovered / 19 missing** at the pin.
+Cluster totals (121 feature rows): **107 gated / 0 uncovered / 14 missing** at the pin.
 
 ## DDL
 
@@ -121,12 +121,12 @@ Cluster totals (121 feature rows): **102 gated / 0 uncovered / 19 missing** at t
 | `group_concat ... ORDER BY` | `select group_concat(v, '|' order by v) from ago` | gated | the argument list carries its own `ORDER BY`, `group_concat(DISTINCT v)` sorts by value before joining and rejects a separator (`DISTINCT aggregates must have exactly one argument`), and `count(DISTINCT v, w)` reports `wrong number of arguments to function count()`; `aggregate filter, distinct and argument order follow better-sqlite3` |
 | `count(DISTINCT x)` | `select count(distinct v) from cd` | gated | `DISTINCT` de-duplicates by value with `NULL` counted once, `count` then ignores `NULL`, and every `sum` / `avg` / `total` / `count` form accepts it; same gate |
 | Aggregate `FILTER (WHERE ...)` | `select sum(v) filter (where v > 1) from afi` | gated | the filter runs before the aggregate sees a row, so an empty input reports `count = 0` and `sum` / `group_concat` `NULL`, it composes with `DISTINCT` and works on window aggregates, while `DISTINCT` and argument `ORDER BY` on a window aggregate are rejected with SQLite's wording; same gate |
-| Multi-argument `min()` / `max()` | `select min(3, 1, 2), max(3, 1, 2)` | missing | `wrong-arguments` to `min()` |
+| Multi-argument `min()` / `max()` | `select min(3, 1, 2), max(3, 1, 2)` | gated | 门禁 `multi-argument min and max follow the oracle tie rules`：两个及以上参数走标量路径，单参数仍是聚合；任一参数为 `NULL` 返回 `NULL`；打平时 `min` 取后一个、`max` 保留前一个，因此 `typeof(min(1, 1.0))` 是 `real` 而 `typeof(max(1, 1.0))` 是 `integer` |
 | `trim` / `ltrim` / `rtrim` | `select trim('  x  '), ltrim('  x'), rtrim('x  ')` | gated | `trim, replace, ifnull, nullif follow the oracle exactly`: 第二个参数是按字符集合裁剪，缺省只裁剪空格，空集合原样返回，`NULL` 传播，非文本先转文本 |
 | `instr` | `select instr('abcabc', 'bc'), instr('abc', 'z'), instr('abc', '')` | gated | `instr, round and modulo follow the oracle exactly` |
 | `replace` | `select replace('abcabc', 'b', 'X')` | gated | 同一门禁：空模式原样返回，任一参数为 `NULL` 时返回 `NULL`，数字与 blob 先转文本 |
 | `ifnull` / `nullif` | `select ifnull(null, 7), nullif(1, 1)` | gated | 同一门禁：`nullif` 复用 `=` 的比较语义，数字之间相等即返回 `NULL`，文本与数字不相等 |
-| `printf` / `format` / `char` / `unicode` / `soundex` | `select printf('%d', 7)` | missing | absent from `ScalarFunction::from_name` |
+| `printf` / `format` / `char` / `unicode` / `soundex` | `select printf('%d', 7)` | gated | 门禁 `printf, char, unicode and soundex follow the oracle exactly`：`%d/%i/%u/%x/%X/%o` 含 `#` 前缀与零填充，`%f/%e/%g` 按十进制四舍五入且 `%.0e` 不带小数点，`%c` 取文本首字符且精度表示重复次数，`%q/%Q/%w` 先按精度截断再转义，`%p` 是大写十六进制，`%n` 不消费参数，`%z` 把 `NULL` 变空串，未知转换终止解析且空输出返回 `NULL`；`char` 越界码点变 U+FFFD，`unicode('')` 为 `NULL`，`soundex` 按 SQLite 分组补零
 | Math functions (`sqrt`, `power`, `floor`, `ceil`, `log`, ...) | `select sqrt(9), power(2, 10), floor(2.7), ceil(2.1)` | missing | `unknown-function`: `sqrt` |
 | Date/time functions (`date`, `time`, `datetime`, `julianday`, `unixepoch`, `strftime`, `timediff`) | `select date('2024-01-02 03:04:05'), strftime('%Y', '2024-01-02')` | missing | `unknown-function`: `date` |
 | JSON functions (`json_extract`, `json_array`, `json_object`, `json_valid`, ...) and `->` / `->>` | `select json_extract('{"a":1}', '$.a'), json_array(1, 2)` | missing | `unknown-function`: `json_extract` |

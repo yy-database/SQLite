@@ -43,6 +43,24 @@ class SqlEngineTests(unittest.TestCase):
         )
         self.assertEqual(selected["rows"], [["x", "x", "x", "aXcaXc", 7, None]])
 
+    def test_format_and_text_scalars_match_oracle(self):
+        selected = self.engine.execute(
+            "select printf('%d/%x/%#o', 42, 255, 8), printf('%.2f/%.0e', 1.005, 12345), "
+            "printf('%5s|%q', 'ab', null), printf('%n%%'), printf('%y', 42), "
+            "char(65, 66), unicode('ABC'), soundex('Robert')"
+        )
+        self.assertEqual(
+            selected["rows"],
+            [["42/ff/010", "1.00/1e+04", "   ab|(NULL)", "%", None, "AB", 65, "R163"]],
+        )
+
+    def test_multi_argument_min_max_follow_oracle_ties(self):
+        selected = self.engine.execute(
+            "select min(3, 1, 2), max(3, 1, 2), min(null, 2), "
+            "typeof(min(1, 1.0)), typeof(max(1, 1.0)), typeof(min(1.0, 1)), typeof(max(1.0, 1))"
+        )
+        self.assertEqual(selected["rows"], [[1, 3, None, "real", "integer", "integer", "real"]])
+
     def test_rejections_carry_a_code_and_clause(self):
         right_join = self.engine.try_execute("select * from people right join people as p2 on people.id = p2.id")
         self.assertIs(right_join["ok"], True)
