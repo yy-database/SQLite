@@ -2,6 +2,13 @@
 import { defineConfig } from '@doki-land/nifty';
 
 export default defineConfig({
+    trust: {
+        npm: {
+            repo: 'yy-database/SQLite',
+            file: 'publish-npm.yml',
+            environment: 'NPM_PUBLISH',
+        },
+    },
     format: {
         preset: 'nifty',
         style: {
@@ -24,3 +31,4 @@ export default defineConfig({
         ],
     },
 });
+

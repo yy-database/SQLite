@@ -8,6 +8,8 @@ time-travel.*
 .vs/
 .idea/
 *.iml
+*.log
+*.txt
 
 # Rust
 target/
@@ -15,10 +17,15 @@ Cargo.lock
 projects/sqlite.rs/Cargo.lock
 projects/sqlite.rs/.cargo/config.toml
 .cargo/config.toml
-projects/sqlite.rs/sqlite-napi/sqlite.node
+
+# Node
 node_modules
 pnpm-lock.yaml
 *.tsbuildinfo
+*.node
+*.wasm
+
+# Python
 __pycache__/
 *.pyc
 
@@ -29,3 +36,11 @@ projects/sqlite.ts/packages/sqlite-harness/stages/wasm/pkg/
 projects/sqlite.ts/packages/sqlite-harness/stages/python/wheels/
 projects/sqlite.ts/packages/sqlite-harness/stages/python/.venv/
 projects/sqlite.ts/platforms/sqlite-unknown-wasm32/pkg/
+projects/sqlite.ts/platforms/*/*.node
+
+# Local npm 2FA (never commit)
+.env.placeholder.local
+.env*.local
+
+# Nifty local cache
+.cache/

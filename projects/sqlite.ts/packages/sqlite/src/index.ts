@@ -1,6 +1,6 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { resolve } from "node:path";
 
 const require = createRequire(import.meta.url);
 
@@ -188,7 +188,7 @@ function loadModule(specifier: string): NativeBindings {
   return (loaded.default ?? loaded) as NativeBindings;
 }
 
-/** Absolute path of the `.node` binary staged in the platform package `lib/`. */
+/** Absolute path of the platform package `main` (the `.node` binary). */
 export function nativeBindingPath(): string {
   const fromEnv = process.env.SQLITE_NATIVE?.trim();
   if (fromEnv) {
@@ -202,14 +202,8 @@ export function nativeBindingPath(): string {
   if (!key) {
     throw new Error(`SQLite native binding not available for ${process.platform}-${process.arch}`);
   }
-  const libDir = join(dirname(require.resolve(`@yydb/sqlite-${key}`)), "lib");
-  const fileName = existsSync(libDir)
-    ? readdirSync(libDir).find((entry) => entry.endsWith(".node"))
-    : undefined;
-  if (!fileName) {
-    throw new Error(`Missing .node binary in ${libDir}. Run pnpm build:napi from the repo root.`);
-  }
-  return join(libDir, fileName);
+  // `package.json#main` owns the `.node` filename — callers never concatenate it.
+  return require.resolve(`@yydb/sqlite-${key}`);
 }
 
 /** Load the platform binding through the package entry installed for this host. */

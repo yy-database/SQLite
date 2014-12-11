@@ -1,15 +1,21 @@
 {
     "name": "@yydb/sqlite-darwin-x64",
-    "version": "0.1.0",
-    "private": true,
-    "description": "Node-API binding for macOS x64",
+    "version": "0.0.0",
     "license": "MPL-2.0",
-    "type": "module",
+    "description": "Native binding for @yydb/sqlite on macOS x64",
     "os": ["darwin"],
     "cpu": ["x64"],
-    "main": "./index.js",
-    "exports": {
-        ".": "./index.js"
+    "main": "sqlite.darwin-x64.node",
+    "files": [
+        "sqlite.darwin-x64.node",
+        "readme.md"
+    ],
+    "engines": {
+        "node": ">=18"
     },
-    "files": ["index.js", "lib"]
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/yy-database/SQLite.git",
+        "directory": "projects/sqlite.ts/platforms/sqlite-darwin-x64"
+    }
 }

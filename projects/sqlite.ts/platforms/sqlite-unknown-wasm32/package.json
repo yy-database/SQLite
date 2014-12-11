@@ -1,14 +1,19 @@
 {
     "name": "@yydb/sqlite-unknown-wasm32",
-    "version": "0.1.0",
-    "private": true,
-    "description": "WebAssembly build of the in-memory SQLite format-3 database",
+    "version": "0.0.0",
     "license": "MPL-2.0",
-    "type": "module",
-    "main": "./index.js",
-    "exports": {
-        ".": "./index.js",
-        "./wasm": "./pkg/sqlite_wasm_bg.wasm"
+    "description": "WASM binding for @yydb/sqlite",
+    "main": "sqlite.unknown-wasm32.node",
+    "files": [
+        "sqlite.unknown-wasm32.node",
+        "readme.md"
+    ],
+    "engines": {
+        "node": ">=18"
     },
-    "files": ["index.js", "pkg"]
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/yy-database/SQLite.git",
+        "directory": "projects/sqlite.ts/platforms/sqlite-unknown-wasm32"
+    }
 }

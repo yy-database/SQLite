@@ -3,7 +3,6 @@
 // default and the same data as JSON when `--json` is passed.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,9 +27,10 @@ export function platformKey(platform = process.platform, arch = process.arch): P
   return null;
 }
 
-// The binding lives in `projects/sqlite.ts/platforms/<pkg>/lib` and is created by
-// `scripts/build-napi.mjs`. Resolve it through the platform package entry so a
-// missing build fails with a platform message instead of a bare `MODULE_NOT_FOUND`.
+// The binding is the platform package `main`, staged by `scripts/build-napi.mjs`.
+// Resolve through the package entry so a missing build fails with a platform
+// message instead of a bare `MODULE_NOT_FOUND`. Callers never concatenate the
+// `.node` filename.
 export function nativeModulePath(): string {
   const fromEnv = process.env.SQLITE_NATIVE?.trim();
   if (fromEnv) {
@@ -40,14 +40,7 @@ export function nativeModulePath(): string {
   if (!key) {
     throw new Error(`SQLite native binding not available for ${process.platform}-${process.arch}`);
   }
-  const libDir = join(dirname(require.resolve(`@yydb/sqlite-${key}`)), "lib");
-  const fileName = existsSync(libDir)
-    ? readdirSync(libDir).find((entry) => entry.endsWith(".node"))
-    : undefined;
-  if (!fileName) {
-    throw new Error(`Missing .node binary in ${libDir}. Run pnpm build:napi from the repo root.`);
-  }
-  return join(libDir, fileName);
+  return require.resolve(`@yydb/sqlite-${key}`);
 }
 
 export interface CommandResult {

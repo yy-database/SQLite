@@ -1,15 +1,21 @@
 {
     "name": "@yydb/sqlite-linux-x64",
-    "version": "0.1.0",
-    "private": true,
-    "description": "Node-API binding for Linux x64",
+    "version": "0.0.0",
     "license": "MPL-2.0",
-    "type": "module",
+    "description": "Native binding for @yydb/sqlite on Linux x64",
     "os": ["linux"],
     "cpu": ["x64"],
-    "main": "./index.js",
-    "exports": {
-        ".": "./index.js"
+    "main": "sqlite.linux-x64.node",
+    "files": [
+        "sqlite.linux-x64.node",
+        "readme.md"
+    ],
+    "engines": {
+        "node": ">=18"
     },
-    "files": ["index.js", "lib"]
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/yy-database/SQLite.git",
+        "directory": "projects/sqlite.ts/platforms/sqlite-linux-x64"
+    }
 }
