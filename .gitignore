@@ -1,0 +1,17 @@
+# OS
+.DS_Store/
+thumbs.db
+time-travel.*
+
+# IDE
+.vscode/
+.vs/
+.idea/
+*.iml
+
+# Rust
+target/
+Cargo.lock
+projects/sqlite.rs/Cargo.lock
+projects/sqlite.rs/.cargo/config.toml
+.cargo/config.toml
