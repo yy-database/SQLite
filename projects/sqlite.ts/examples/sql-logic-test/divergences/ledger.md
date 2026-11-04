@@ -12,8 +12,9 @@
 
 | direction | 条数 |
 |-----------|------|
-| `sqlite-accepts-ours-rejects` | 19 |
-| `none` | 18 |
+| `none` | 19 |
+| `sqlite-accepts-ours-rejects` | 17 |
+| `same-statement-different-result` | 1 |
 
 ## 按 class 计数
 
@@ -27,10 +28,11 @@
 
 | direction | class | 条数 |
 |-----------|-------|------|
-| `none` | `missing-feature` | 11 |
+| `none` | `missing-feature` | 12 |
 | `none` | `none` | 6 |
 | `none` | `semantic-diff` | 1 |
-| `sqlite-accepts-ours-rejects` | `missing-feature` | 19 |
+| `same-statement-different-result` | `missing-feature` | 1 |
+| `sqlite-accepts-ours-rejects` | `missing-feature` | 17 |
 
 ## 明细
 
@@ -113,6 +115,15 @@
 - class：`missing-feature`
 - setup：无
 - sql：`SELECT * FROM (SELECT 1)`
+- SQLite：`[[1]]`
+- 本仓：`[[1]]`
+
+### `syntax.is-true`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：无
+- sql：`SELECT 1 IS TRUE`
 - SQLite：`[[1]]`
 - 本仓：`[[1]]`
 
@@ -203,6 +214,15 @@
 - SQLite：`[[1],[2]]`
 - 本仓：`[[1],[2]]`
 
+### `syntax.insert-default-values`
+
+- direction：`same-statement-different-result`
+- class：`missing-feature`
+- setup：`CREATE TABLE dv(a INTEGER DEFAULT 5, b INTEGER)`
+- sql：`INSERT INTO dv DEFAULT VALUES`
+- SQLite：`[]`
+- 本仓：`[[1]]`
+
 ### `implicit.group-concat`
 
 - direction：`sqlite-accepts-ours-rejects`
@@ -285,24 +305,6 @@
 - sql：`SELECT 'a' || 'b'`
 - SQLite：`[["ab"]]`
 - 本仓：`syntax: expected `,` or `FROM` in the projection but found `|``
-
-### `syntax.insert-default-values`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：`CREATE TABLE dv(a INTEGER DEFAULT 5, b INTEGER)`
-- sql：`INSERT INTO dv DEFAULT VALUES`
-- SQLite：`[]`
-- 本仓：`syntax: expected `values` but found `DEFAULT``
-
-### `syntax.is-true`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：无
-- sql：`SELECT 1 IS TRUE`
-- SQLite：`[[1]]`
-- 本仓：`syntax: expected `null` but found `TRUE``
 
 ### `syntax.join-full`
 
