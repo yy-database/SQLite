@@ -440,7 +440,7 @@
     },
     {
       "id": "syntax.concat-operator",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [],
       "sql": "SELECT 'a' || 'b'",
       "sqlite": {
@@ -452,11 +452,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "syntax",
-        "clause": null,
-        "message": "expected `,` or `FROM` in the projection but found `|`"
+        "kind": "rows",
+        "rows": [
+          [
+            "ab"
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
