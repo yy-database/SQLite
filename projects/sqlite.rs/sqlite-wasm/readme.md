@@ -53,8 +53,8 @@ Integers are JSON numbers, text is a JSON string, blobs are
 | Stage | Bytes |
 |-------|-------|
 | `cargo build --release` (`wasm32-unknown-unknown`) | 370 031 |
-| `wasm-bindgen --target nodejs` | 347 628 |
-| `wasm-opt -Oz` | 266 815 |
+| `wasm-bindgen --target nodejs` | 347 640 |
+| `wasm-opt -Oz` | 266 829 |
 
 ## Limits
 
