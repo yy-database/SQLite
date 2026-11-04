@@ -518,7 +518,7 @@
     },
     {
       "id": "implicit.rowid",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [
         "CREATE TABLE r(a INTEGER)",
         "INSERT INTO r VALUES (10), (20)"
@@ -536,11 +536,15 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "unknown-column",
-        "clause": null,
-        "message": "unknown column `rowid` in table `r`"
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -551,7 +555,7 @@
     },
     {
       "id": "implicit.underscore-rowid",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [
         "CREATE TABLE r(a INTEGER)",
         "INSERT INTO r VALUES (10), (20)"
@@ -569,11 +573,15 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "unknown-column",
-        "clause": null,
-        "message": "unknown column `_rowid_` in table `r`"
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -584,7 +592,7 @@
     },
     {
       "id": "implicit.oid",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [
         "CREATE TABLE r(a INTEGER)",
         "INSERT INTO r VALUES (10), (20)"
@@ -602,11 +610,15 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "unknown-column",
-        "clause": null,
-        "message": "unknown column `oid` in table `r`"
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -1051,7 +1063,7 @@
     },
     {
       "id": "semantics.limit-negative",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [
         "CREATE TABLE t1(a INTEGER)",
         "INSERT INTO t1 VALUES (1), (2)"
@@ -1069,11 +1081,15 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "invalid-limit",
-        "clause": "LIMIT",
-        "message": "`LIMIT` must be a non-negative integer"
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
       },
       "class": "semantic-diff",
       "evidence": {

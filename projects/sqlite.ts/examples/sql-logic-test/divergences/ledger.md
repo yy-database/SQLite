@@ -12,8 +12,8 @@
 
 | direction | 条数 |
 |-----------|------|
-| `sqlite-accepts-ours-rejects` | 31 |
-| `none` | 6 |
+| `sqlite-accepts-ours-rejects` | 27 |
+| `none` | 10 |
 
 ## 按 class 计数
 
@@ -27,11 +27,39 @@
 
 | direction | class | 条数 |
 |-----------|-------|------|
+| `none` | `missing-feature` | 3 |
 | `none` | `none` | 6 |
-| `sqlite-accepts-ours-rejects` | `missing-feature` | 30 |
-| `sqlite-accepts-ours-rejects` | `semantic-diff` | 1 |
+| `none` | `semantic-diff` | 1 |
+| `sqlite-accepts-ours-rejects` | `missing-feature` | 27 |
 
 ## 明细
+
+### `implicit.oid`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：`CREATE TABLE r(a INTEGER)`，`INSERT INTO r VALUES (10), (20)`
+- sql：`SELECT oid FROM r`
+- SQLite：`[[1],[2]]`
+- 本仓：`[[1],[2]]`
+
+### `implicit.rowid`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：`CREATE TABLE r(a INTEGER)`，`INSERT INTO r VALUES (10), (20)`
+- sql：`SELECT rowid FROM r`
+- SQLite：`[[1],[2]]`
+- 本仓：`[[1],[2]]`
+
+### `implicit.underscore-rowid`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：`CREATE TABLE r(a INTEGER)`，`INSERT INTO r VALUES (10), (20)`
+- sql：`SELECT _rowid_ FROM r`
+- SQLite：`[[1],[2]]`
+- 本仓：`[[1],[2]]`
 
 ### `semantics.count-column-vs-star`
 
@@ -93,6 +121,15 @@
 - 本仓：`syntax: expected `,` or `FROM` in the projection but found `INTERSECT``
 - 备注：背景记录称本引擎接受 `INTERSECT ALL`，本产物在复合查询处直接拒绝，两侧均不接受该语句
 
+### `semantics.limit-negative`
+
+- direction：`none`
+- class：`semantic-diff`
+- setup：`CREATE TABLE t1(a INTEGER)`，`INSERT INTO t1 VALUES (1), (2)`
+- sql：`SELECT a FROM t1 ORDER BY a LIMIT -2`
+- SQLite：`[[1],[2]]`
+- 本仓：`[[1],[2]]`
+
 ### `implicit.group-concat`
 
 - direction：`sqlite-accepts-ours-rejects`
@@ -111,15 +148,6 @@
 - SQLite：`[["41"]]`
 - 本仓：`unknown-function: no such function: hex`
 
-### `implicit.oid`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：`CREATE TABLE r(a INTEGER)`，`INSERT INTO r VALUES (10), (20)`
-- sql：`SELECT oid FROM r`
-- SQLite：`[[1],[2]]`
-- 本仓：`unknown-column: unknown column `oid` in table `r``
-
 ### `implicit.quote-function`
 
 - direction：`sqlite-accepts-ours-rejects`
@@ -137,15 +165,6 @@
 - sql：`SELECT typeof(random())`
 - SQLite：`[["integer"]]`
 - 本仓：`unknown-function: no such function: random`
-
-### `implicit.rowid`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：`CREATE TABLE r(a INTEGER)`，`INSERT INTO r VALUES (10), (20)`
-- sql：`SELECT rowid FROM r`
-- SQLite：`[[1],[2]]`
-- 本仓：`unknown-column: unknown column `rowid` in table `r``
 
 ### `implicit.sqlite-master`
 
@@ -174,15 +193,6 @@
 - sql：`SELECT total(a) FROM t1`
 - SQLite：`[[3]]`
 - 本仓：`unsupported-clause: aggregate function `total(...)` is not supported, except `count(*)` over the whole result`
-
-### `implicit.underscore-rowid`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：`CREATE TABLE r(a INTEGER)`，`INSERT INTO r VALUES (10), (20)`
-- sql：`SELECT _rowid_ FROM r`
-- SQLite：`[[1],[2]]`
-- 本仓：`unknown-column: unknown column `_rowid_` in table `r``
 
 ### `semantics.compound-associativity`
 
@@ -365,12 +375,3 @@
 - sql：`WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM cnt WHERE x < 5) SELECT x FROM cnt`
 - SQLite：`[[1],[2],[3],[4],[5]]`
 - 本仓：`syntax: expected `,` or `FROM` in the projection but found `UNION``
-
-### `semantics.limit-negative`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`semantic-diff`
-- setup：`CREATE TABLE t1(a INTEGER)`，`INSERT INTO t1 VALUES (1), (2)`
-- sql：`SELECT a FROM t1 ORDER BY a LIMIT -2`
-- SQLite：`[[1],[2]]`
-- 本仓：`invalid-limit: `LIMIT` must be a non-negative integer`
