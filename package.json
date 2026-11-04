@@ -1,10 +1,11 @@
-﻿{
+{
   "name": "sqlite-workspace",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "check": "cargo check --manifest-path projects/sqlite.rs/Cargo.toml --workspace",
+    "build:napi": "node scripts/build-napi.mjs",
     "fmt": "cargo fmt --manifest-path projects/sqlite.rs/Cargo.toml --all",
     "test": "cargo test --manifest-path projects/sqlite.rs/Cargo.toml --workspace"
   },
