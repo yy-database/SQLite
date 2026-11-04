@@ -1,0 +1,240 @@
+{
+  "category": "types-and-affinity",
+  "cases": [
+    {
+      "id": "type.varchar_modifier",
+      "setup": [
+        "CREATE TABLE v(a VARCHAR(30))",
+        "INSERT INTO v VALUES ('x')"
+      ],
+      "sql": "SELECT TYPEOF(a), LENGTH(a) FROM v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "text",
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "type.decimal_modifier",
+      "setup": [
+        "CREATE TABLE v(a DECIMAL(10,2))",
+        "INSERT INTO v VALUES (1.5), ('1.5')"
+      ],
+      "sql": "SELECT TYPEOF(a), a FROM v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "real",
+            1.5
+          ],
+          [
+            "real",
+            1.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "type.char_modifier",
+      "setup": [
+        "CREATE TABLE v(a CHAR(3))",
+        "INSERT INTO v VALUES ('ab')"
+      ],
+      "sql": "SELECT TYPEOF(a), LENGTH(a) FROM v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "text",
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "type.double_precision",
+      "setup": [
+        "CREATE TABLE v(a DOUBLE PRECISION)",
+        "INSERT INTO v VALUES ('1.5')"
+      ],
+      "sql": "SELECT TYPEOF(a), a FROM v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "real",
+            1.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "type.blob_column",
+      "setup": [
+        "CREATE TABLE v(a BLOB)",
+        "INSERT INTO v VALUES (x'00ff')"
+      ],
+      "sql": "SELECT TYPEOF(a), LENGTH(a) FROM v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "blob",
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "type.no_declared_type",
+      "setup": [
+        "CREATE TABLE v(a)",
+        "INSERT INTO v VALUES (1), ('1'), (1.0)"
+      ],
+      "sql": "SELECT TYPEOF(a) FROM v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "integer"
+          ],
+          [
+            "text"
+          ],
+          [
+            "real"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "type.integer_affinity",
+      "setup": [
+        "CREATE TABLE v(a INTEGER)",
+        "INSERT INTO v VALUES ('12')"
+      ],
+      "sql": "SELECT TYPEOF(a), a FROM v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "integer",
+            12
+          ]
+        ]
+      }
+    },
+    {
+      "id": "type.real_affinity",
+      "setup": [
+        "CREATE TABLE v(a REAL)",
+        "INSERT INTO v VALUES ('1.5')"
+      ],
+      "sql": "SELECT TYPEOF(a), a FROM v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "real",
+            1.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "type.numeric_affinity",
+      "setup": [
+        "CREATE TABLE v(a NUMERIC)",
+        "INSERT INTO v VALUES ('1.5'), ('12')"
+      ],
+      "sql": "SELECT TYPEOF(a), a FROM v",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "real",
+            1.5
+          ],
+          [
+            "integer",
+            12
+          ]
+        ]
+      }
+    },
+    {
+      "id": "type.mixed_equality",
+      "setup": [
+        "CREATE TABLE m(a)",
+        "INSERT INTO m VALUES (1), ('1'), (1.0)"
+      ],
+      "sql": "SELECT a = 1 FROM m",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            0
+          ],
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "type.mixed_sort",
+      "setup": [
+        "CREATE TABLE m(a)",
+        "INSERT INTO m VALUES (1), ('1'), (1.0)"
+      ],
+      "sql": "SELECT TYPEOF(a), a FROM m ORDER BY a",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "integer",
+            1
+          ],
+          [
+            "real",
+            1.0
+          ],
+          [
+            "text",
+            "1"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "type.text_lexical_order",
+      "setup": [
+        "CREATE TABLE v(a TEXT)",
+        "INSERT INTO v VALUES ('1'), ('2'), ('10')"
+      ],
+      "sql": "SELECT a FROM v ORDER BY a",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "1"
+          ],
+          [
+            "10"
+          ],
+          [
+            "2"
+          ]
+        ]
+      }
+    }
+  ]
+}

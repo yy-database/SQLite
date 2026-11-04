@@ -1,0 +1,120 @@
+{
+  "contract": "pending",
+  "note": "Binding-layer fixtures are intentionally unimplemented: the public call shape of the engine is still being redesigned. Each entry names a semantic fixture id and the calling shapes the frozen contract must expose before it can run.",
+  "shapes": {
+    "prepared-parameters": "Bind ? placeholders to values without string interpolating the SQL text.",
+    "cursor-iterate": "Read one row at a time and observe the value stream rather than a preallocated array.",
+    "transaction": "Wrap several statements so a rejected statement rolls the whole unit back.",
+    "exec-multi-statement": "Run a semicolon-separated script and receive one result per statement.",
+    "affected-count": "Report how many rows a mutating statement touched.",
+    "error-detail": "Receive a structured code, message, clause and position instead of a bare throw.",
+    "typed-columns": "Receive declared column names and storage classes alongside the row values."
+  },
+  "cases": [
+    {
+      "id": "bind.select.parameter-binds-where",
+      "semanticCaseId": "where.comparison.eq",
+      "status": "todo",
+      "shapes": ["prepared-parameters"],
+      "params": [3],
+      "expect": "same rows as `SELECT a FROM t1 WHERE b = 3`"
+    },
+    {
+      "id": "bind.select.between-parameters",
+      "semanticCaseId": "where.between",
+      "status": "todo",
+      "shapes": ["prepared-parameters"],
+      "params": [2, 3],
+      "expect": "same rows as `SELECT a FROM t1 WHERE b BETWEEN 2 AND 3`"
+    },
+    {
+      "id": "bind.select.offset-parameters",
+      "semanticCaseId": "limit.offset",
+      "status": "todo",
+      "shapes": ["prepared-parameters"],
+      "params": [2, 1],
+      "expect": "same rows as `SELECT a FROM t1 ORDER BY a LIMIT 2 OFFSET 1`"
+    },
+    {
+      "id": "bind.select.cursor-row-order",
+      "semanticCaseId": "order.multi_mixed",
+      "status": "todo",
+      "shapes": ["cursor-iterate", "typed-columns"],
+      "expect": "rows arrive in the same order and with the same declared columns as the eager result"
+    },
+    {
+      "id": "bind.select.cursor-early-exit",
+      "semanticCaseId": "boundary.limit_beyond",
+      "status": "todo",
+      "shapes": ["cursor-iterate", "affected-count"],
+      "expect": "stopping iteration early neither errors nor hides the remaining rows of a new query"
+    },
+    {
+      "id": "bind.insert.affected-count",
+      "semanticCaseId": "pk.integer_rowid_alias",
+      "status": "todo",
+      "shapes": ["affected-count", "prepared-parameters"],
+      "params": [1, "x"],
+      "expect": "one inserted row reported, and the rowid alias read back as `a`"
+    },
+    {
+      "id": "bind.constraint.error-detail",
+      "semanticCaseId": "not_null.violation",
+      "status": "todo",
+      "shapes": ["error-detail", "prepared-parameters"],
+      "params": [null, 2],
+      "expect": "a structured rejection naming the violated constraint rather than a message-only throw"
+    },
+    {
+      "id": "bind.constraint.transaction-rollback",
+      "semanticCaseId": "err.residual_after_not_null",
+      "status": "todo",
+      "shapes": ["transaction", "error-detail"],
+      "expect": "the failed insert leaves `count(*)` at zero and releases the transaction cleanly"
+    },
+    {
+      "id": "bind.script.multi-statement-results",
+      "semanticCaseId": "boundary.multiple_tables",
+      "status": "todo",
+      "shapes": ["exec-multi-statement"],
+      "expect": "one result object per statement, in script order"
+    },
+    {
+      "id": "bind.script.multi-statement-partial-failure",
+      "semanticCaseId": "err.failed_create_table_invisible",
+      "status": "todo",
+      "shapes": ["exec-multi-statement", "error-detail"],
+      "expect": "the failing `CREATE TABLE` is reported and the follow-up `SELECT` still rejects as unknown table"
+    },
+    {
+      "id": "bind.types.blob-roundtrip",
+      "semanticCaseId": "type.blob_column",
+      "status": "todo",
+      "shapes": ["typed-columns", "prepared-parameters"],
+      "params": ["00ff"],
+      "expect": "a bound blob reads back as the same bytes and reports the blob storage class"
+    },
+    {
+      "id": "bind.types.mixed-storage-classes",
+      "semanticCaseId": "type.mixed_sort",
+      "status": "todo",
+      "shapes": ["typed-columns"],
+      "expect": "each row reports the storage class it actually holds, not the declared affinity"
+    },
+    {
+      "id": "bind.null.three-valued-result",
+      "semanticCaseId": "null.comparison_eq",
+      "status": "todo",
+      "shapes": ["typed-columns", "prepared-parameters"],
+      "params": [null],
+      "expect": "a comparison against a bound null yields no row rather than an error"
+    },
+    {
+      "id": "bind.boundary.many-tables",
+      "semanticCaseId": "boundary.many_tables",
+      "status": "todo",
+      "shapes": ["exec-multi-statement", "transaction"],
+      "expect": "a script creating sixty tables commits all of them before the final count"
+    }
+  ]
+}

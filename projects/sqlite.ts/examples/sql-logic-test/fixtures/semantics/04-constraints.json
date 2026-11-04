@@ -1,0 +1,190 @@
+{
+  "category": "constraints",
+  "cases": [
+    {
+      "id": "pk.integer_rowid_alias",
+      "setup": [
+        "CREATE TABLE p(a INTEGER PRIMARY KEY, b TEXT)",
+        "INSERT INTO p VALUES (1, 'x')"
+      ],
+      "sql": "SELECT a, rowid FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "pk.integer_duplicate",
+      "setup": [
+        "CREATE TABLE p(a INTEGER PRIMARY KEY, b TEXT)",
+        "INSERT INTO p VALUES (1, 'x')"
+      ],
+      "sql": "INSERT INTO p VALUES (1, 'y')",
+      "expect": {
+        "kind": "error",
+        "oracle": "UNIQUE constraint failed: p.a"
+      }
+    },
+    {
+      "id": "pk.text_alias",
+      "setup": [
+        "CREATE TABLE p(id TEXT PRIMARY KEY, b TEXT)",
+        "INSERT INTO p VALUES ('k', 'x')"
+      ],
+      "sql": "SELECT id, b FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "k",
+            "x"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "not_null.ok",
+      "setup": [
+        "CREATE TABLE n(a INTEGER NOT NULL, b INTEGER)",
+        "INSERT INTO n VALUES (1, 2)"
+      ],
+      "sql": "SELECT a, b FROM n",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "not_null.violation",
+      "setup": [
+        "CREATE TABLE n(a INTEGER NOT NULL, b INTEGER)"
+      ],
+      "sql": "INSERT INTO n VALUES (NULL, 2)",
+      "expect": {
+        "kind": "error",
+        "oracle": "NOT NULL constraint failed: n.a"
+      }
+    },
+    {
+      "id": "unique.ok",
+      "setup": [
+        "CREATE TABLE u(a INTEGER UNIQUE)",
+        "INSERT INTO u VALUES (1), (2)"
+      ],
+      "sql": "SELECT a FROM u ORDER BY a",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "unique.violation",
+      "setup": [
+        "CREATE TABLE u(a INTEGER UNIQUE)",
+        "INSERT INTO u VALUES (1)"
+      ],
+      "sql": "INSERT INTO u VALUES (1)",
+      "expect": {
+        "kind": "error",
+        "oracle": "UNIQUE constraint failed: u.a"
+      }
+    },
+    {
+      "id": "unique.index_on_duplicates",
+      "setup": [
+        "CREATE TABLE d(a INTEGER)",
+        "INSERT INTO d VALUES (1), (1)"
+      ],
+      "sql": "CREATE UNIQUE INDEX d_a ON d(a)",
+      "expect": {
+        "kind": "error",
+        "oracle": "UNIQUE constraint failed: d.a"
+      }
+    },
+    {
+      "id": "default.integer",
+      "setup": [
+        "CREATE TABLE d(a INTEGER DEFAULT 7, b INTEGER)",
+        "INSERT INTO d(b) VALUES (1)"
+      ],
+      "sql": "SELECT a, b FROM d",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            7,
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "default.text",
+      "setup": [
+        "CREATE TABLE d(a TEXT DEFAULT 'n/a', b INTEGER)",
+        "INSERT INTO d(b) VALUES (1)"
+      ],
+      "sql": "SELECT a, b FROM d",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "n/a",
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "default.null",
+      "setup": [
+        "CREATE TABLE d(a INTEGER DEFAULT NULL, b INTEGER)",
+        "INSERT INTO d(b) VALUES (1)"
+      ],
+      "sql": "SELECT a, b FROM d",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            null,
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "default.with_not_null",
+      "setup": [
+        "CREATE TABLE d(a INTEGER NOT NULL DEFAULT 5, b INTEGER)",
+        "INSERT INTO d(b) VALUES (1)"
+      ],
+      "sql": "SELECT a, b FROM d",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            5,
+            1
+          ]
+        ]
+      }
+    }
+  ]
+}
