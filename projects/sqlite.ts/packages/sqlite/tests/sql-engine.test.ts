@@ -656,6 +656,36 @@ test("is true and is false follow sqlite truthiness", () => {
   assert.deepEqual(engine.execute("select null is false, null is not false").rows, [[0, 1]]);
 });
 
+// `||` binds tighter than `*` in SQLite, is left-associative, and yields TEXT.
+test("concat operator follows sqlite precedence", () => {
+  const engine = createEngine(4096);
+  assert.deepEqual(engine.execute("select 1 || 2 * 3").rows, [[36]]);
+  assert.deepEqual(engine.execute("select 1 || 2 + 3").rows, [[15]]);
+  assert.deepEqual(engine.execute("select 2 + 3 || 4").rows, [[36]]);
+  assert.deepEqual(engine.execute("select 'a' || 'b' = 'ab'").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 1 << 2 || 3").rows, [[8388608]]);
+  assert.deepEqual(engine.execute("select 1 || 2 || 3").rows, [["123"]]);
+  assert.deepEqual(engine.execute("select -1 || 2").rows, [["-12"]]);
+  assert.deepEqual(engine.execute("select 1 || 2, typeof(1 || 2)").rows, [["12", "text"]]);
+  assert.deepEqual(engine.execute("select 1.5 || 'x', 2.0 || '', 1e-5 || ''").rows, [["1.5x", "2.0", "1.0e-05"]]);
+  assert.deepEqual(engine.execute("select null || 'x', 'x' || null").rows, [[null, null]]);
+  assert.deepEqual(engine.execute("select x'6162' || 'c'").rows, [["abc"]]);
+  // A lone `|` has no SQLite meaning and stays a syntax error.
+  assert.equal(engine.tryExecute("select 1 | 2").error?.code, "syntax");
+});
+
+// Arithmetic, casts, `IS TRUE` and aggregates share the longest numeric prefix.
+test("numeric prefix conversion matches sqlite", () => {
+  const engine = createEngine(4096);
+  assert.deepEqual(engine.execute("select '2abc' + 1, 'abc' + 1, ' 12abc' * 2").rows, [[3, 1, 24]]);
+  assert.deepEqual(engine.execute("select x'31' + 1, cast(x'31' as integer), cast(x'312e35' as numeric)").rows, [[2, 1, 1.5]]);
+  assert.deepEqual(engine.execute("select cast('2abc' as numeric), cast(0.30000000000000004 as text)").rows, [[2, "0.3"]]);
+  assert.deepEqual(engine.execute("select '2abc' is true, '0abc' is true, '2abc' = 2").rows, [[1, 0, 0]]);
+  engine.execute("create table v(x)");
+  engine.execute("insert into v values ('2abc'), ('10'), (null), (x'31')");
+  assert.deepEqual(engine.execute("select sum(x), avg(x), typeof(sum(x)) from v").rows, [[13, 13 / 3, "real"]]);
+});
+
 // `INSERT ... DEFAULT VALUES` inserts one row built purely from the defaults.
 test("insert default values fills every column default", () => {
   const engine = createEngine(4096);
