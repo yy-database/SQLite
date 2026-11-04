@@ -18,6 +18,8 @@ CORPUS_DIR = Path(__file__).resolve().parents[2] / "sqlite.ts" / "tests"
 def decode(cell):
     if cell is None:
         return None
+    if not isinstance(cell, dict):
+        return cell
     if "i" in cell:
         return int(cell["i"])
     if "r" in cell:
@@ -44,7 +46,7 @@ def run_case(case):
         outcomes = []
         for step in case["steps"]:
             try:
-                cursor = connection.execute(step["sql"], step.get("params", []))
+                cursor = connection.execute(step["sql"], [decode(cell) for cell in step.get("params", [])])
                 outcomes.append({"rows": [list(row) for row in cursor.fetchall()]})
             except sqlite3.Error as error:
                 outcomes.append({"error": str(error)})

@@ -10,8 +10,8 @@ import { join } from "node:path";
 import { emit, execFile, nativeModulePath, repoPath, type CliOptions } from "./util.ts";
 import { platformStages } from "../stages/stages.mjs";
 
-const TS_FLOOR = Number(process.env.TS_TEST_FLOOR ?? 331);
-const PY_FLOOR = Number(process.env.PY_TEST_FLOOR ?? 296);
+const TS_FLOOR = Number(process.env.TS_TEST_FLOOR ?? 335);
+const PY_FLOOR = Number(process.env.PY_TEST_FLOOR ?? 300);
 
 const EXTERNAL_CALLS = ["better-sqlite3", "integrity_check", "sqlite3.connect"];
 
