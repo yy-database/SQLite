@@ -16,10 +16,6 @@
     "scripts": {
         "typecheck": "tsc --noEmit -p tsconfig.json"
     },
-    "devDependencies": {
-        "better-sqlite3": "^12.2.0",
-        "sql.js": "^1.15.2"
-    },
     "optionalDependencies": {
         "@yydb/sqlite-node-darwin-arm64": "workspace:*",
         "@yydb/sqlite-node-darwin-x64": "workspace:*",
