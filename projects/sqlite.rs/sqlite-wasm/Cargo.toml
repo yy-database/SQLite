@@ -1,0 +1,26 @@
+[package]
+name = "sqlite-wasm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "In-memory SQLite format-3 database for WebAssembly (no file I/O)"
+readme = "readme.md"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sqlite = { workspace = true }
+wasm-bindgen = { workspace = true }
+# `yydb-types` (pulled in by `sqlite-storage`) depends on `uuid`. Enabling the
+# `js` randomness source here unifies `uuid` features for the wasm graph, where
+# the default `v4` source cannot exist.
+uuid = { version = "1", features = ["js"] }
+
+[package.metadata.wasm-pack.profile.release]
+# `wasm-opt` is not installed in this environment; sizes are reported post
+# `cargo build --release` plus `wasm-bindgen` glue generation.
+wasm-opt = false
