@@ -206,3 +206,25 @@ test("the snapshot written after SQL execution opens in an external engine", () 
     workspaceHandle.dispose();
   }
 });
+
+test("one hundred sequentially created tables stay writable and readable", () => {
+  // Regression: `sqlite_master` lives in page 1, which also owns the 100-byte
+  // database header. The writer used to pack its cells as if the whole page
+  // were b-tree space, so the 50th schema row overlapped the cell pointer
+  // array and every later statement failed with a "content boundary" error.
+  const engine = createEngine(4096);
+  for (let index = 1; index <= 100; index += 1) {
+    engine.execute(`create table t${index}(a integer, b integer, x varchar)`);
+    const inserted = engine.execute(`insert into t${index} values (${index}, ${index * 2}, 'v${index}')`);
+    assert.equal(inserted.affected, 1);
+
+    const selected = engine.execute(`select a, b, x from t${index}`);
+    assert.deepEqual(selected.rows, [[index, index * 2, `v${index}`]]);
+  }
+
+  // The schema b-tree grew past page 1; earlier tables must still resolve.
+  for (const index of [1, 41, 49, 50, 51, 100]) {
+    const selected = engine.execute(`select a, b, x from t${index}`);
+    assert.deepEqual(selected.rows, [[index, index * 2, `v${index}`]]);
+  }
+});
