@@ -6,18 +6,24 @@
     "license": "MPL-2.0",
     "type": "module",
     "bin": {
-        "sqlite-harness": "./cli.mjs"
+        "sqlite-harness": "bin/cli.mjs"
     },
     "scripts": {
-        "test": "node cli.mjs test",
-        "bench": "node cli.mjs bench",
-        "conformance": "node cli.mjs conformance",
-        "fixtures": "node cli.mjs fixtures",
-        "oracle": "node cli.mjs oracle"
+        "test": "node bin/cli.mjs test",
+        "bench": "node bin/cli.mjs bench",
+        "conformance": "node bin/cli.mjs conformance",
+        "fixtures": "node bin/cli.mjs fixtures",
+        "oracle": "node bin/cli.mjs oracle"
     },
     "devDependencies": {
         "@sqlite/sqlite": "workspace:*",
         "better-sqlite3": "^12.2.0",
         "sql.js": "^1.15.2"
+    },
+    "optionalDependencies": {
+        "@sqlite/sqlite-darwin-arm64": "workspace:*",
+        "@sqlite/sqlite-darwin-x64": "workspace:*",
+        "@sqlite/sqlite-linux-x64": "workspace:*",
+        "@sqlite/sqlite-win32-x64": "workspace:*"
     }
 }

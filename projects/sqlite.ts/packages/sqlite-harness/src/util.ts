@@ -3,9 +3,12 @@
 // default and the same data as JSON when `--json` is passed.
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+const require = createRequire(import.meta.url);
 
 export const HARNESS_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 export const REPO_ROOT = join(HARNESS_ROOT, "..", "..", "..", "..");
@@ -14,16 +17,37 @@ export function repoPath(...parts: string[]): string {
   return join(REPO_ROOT, ...parts);
 }
 
-// The native binding is produced by `scripts/build-napi.mjs`. The TypeScript
-// package's default path was written for the pre-monorepo layout, so the
-// harness resolves the built artefact itself and passes it through
-// `SQLITE_NATIVE`.
+export type PlatformKey = "win32-x64" | "linux-x64" | "darwin-x64" | "darwin-arm64";
+
+/** Map Node platform and arch to the optionalDependency package suffix. */
+export function platformKey(platform = process.platform, arch = process.arch): PlatformKey | null {
+  if (platform === "win32" && arch === "x64") return "win32-x64";
+  if (platform === "linux" && arch === "x64") return "linux-x64";
+  if (platform === "darwin" && arch === "x64") return "darwin-x64";
+  if (platform === "darwin" && arch === "arm64") return "darwin-arm64";
+  return null;
+}
+
+// The binding lives in `projects/sqlite.ts/platforms/<pkg>/lib` and is created by
+// `scripts/build-napi.mjs`. Resolve it through the platform package entry so a
+// missing build fails with a platform message instead of a bare `MODULE_NOT_FOUND`.
 export function nativeModulePath(): string {
-  const candidates = [
-    repoPath("projects", "sqlite.rs", "sqlite-napi", "sqlite.node"),
-    repoPath("projects", "sqlite.rs", "target", "release", "sqlite.node"),
-  ];
-  return process.env.SQLITE_NATIVE ?? candidates.find((path) => existsSync(path)) ?? candidates[0];
+  const fromEnv = process.env.SQLITE_NATIVE?.trim();
+  if (fromEnv) {
+    return resolve(fromEnv);
+  }
+  const key = platformKey();
+  if (!key) {
+    throw new Error(`SQLite native binding not available for ${process.platform}-${process.arch}`);
+  }
+  const libDir = join(dirname(require.resolve(`@sqlite/sqlite-${key}`)), "lib");
+  const fileName = existsSync(libDir)
+    ? readdirSync(libDir).find((entry) => entry.endsWith(".node"))
+    : undefined;
+  if (!fileName) {
+    throw new Error(`Missing .node binary in ${libDir}. Run pnpm build:napi from the repo root.`);
+  }
+  return join(libDir, fileName);
 }
 
 export interface CommandResult {
