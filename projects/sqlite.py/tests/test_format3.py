@@ -485,9 +485,7 @@ class Format3Test(unittest.TestCase):
             self.assertEqual(native, sorted(f"{kind}:{name}" for kind, name in external))
             rows = native_rows(path, "base")
             self.assertEqual([row["columns"][1]["value"] for row in rows], ["strict-row"])
-            with self.assertRaises(RuntimeError) as view_error:
-                native_rows(path, "v")
-            self.assertIn("view", str(view_error.exception).lower())
+            self.assertEqual([row["columns"][1]["value"] for row in native_rows(path, "v")], ["strict-row"])
             with self.assertRaises(RuntimeError) as virtual_error:
                 native_rows(path, "vt")
             self.assertIn("virtual", str(virtual_error.exception).lower())
