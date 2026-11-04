@@ -1,0 +1,410 @@
+{
+  "group": "dml",
+  "cases": [
+    {
+      "source": "sql.rs::select_reads_rows_with_filter_and_ordering",
+      "note": "VOS `i64` maps to `integer`, `utf8` to `text`, `bool` to `integer` (0/1), `@@account_id` to `primary key`.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id, email from Account where score >= 20 order by score desc" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "2" }, { "t": "linus@example.test" }], [{ "i": "3" }, { "t": "grace@example.test" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::select_star_returns_every_stored_column",
+      "note": "`select *` column order follows the DDL declaration order, and `bool` is stored as `integer` 0/1.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select * from Account where account_id = 1" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [
+              { "i": "1" },
+              { "t": "ada@example.test" },
+              { "t": "t1" },
+              { "i": "10" },
+              { "i": "1" }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::positional_parameters_bind_in_declaration_order",
+      "note": "The rust test also asserts `?1`/`?2` parameter names, which is lowering metadata, so only the bound result is observable.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where tenant = ? and score > ?", "params": ["t1", 20] }
+      ],
+      "expect": [{ "rows": [[{ "i": "2" }]] }]
+    },
+    {
+      "source": "sql.rs::insert_update_delete_round_trip",
+      "note": "`active` is `bool` in VOS and `integer` 0/1 in SQLite, so `active = false` matches the stored 0.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set score = 99, email = 'ada@new.test' where account_id = 1" },
+        { "sql": "select score, email from Account where account_id = 1" },
+        { "sql": "delete from Account where active = false" },
+        { "sql": "select account_id from Account" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "99" }, { "t": "ada@new.test" }]] },
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::delete_without_where_clears_the_table",
+      "note": "The rust test asserts the affected-row count and the internal record map, so a follow-up select makes the cleared table observable.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "delete from Account" },
+        { "sql": "select account_id from Account" }
+      ],
+      "expect": [{ "rows": [] }, { "rows": [] }]
+    },
+    {
+      "source": "sql.rs::update_rejects_primary_key_reassignment",
+      "note": "Divergence: yydb rejects primary-key reassignment; SQLite allows updating a primary key column, so the update succeeds here.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set account_id = 9 where account_id = 1" }
+      ],
+      "expect": [{ "rows": [] }]
+    },
+    {
+      "source": "sql.rs::update_without_where_affects_every_row",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set score = 0" },
+        { "sql": "select account_id, score from Account order by account_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        {
+          "rows": [
+            [{ "i": "1" }, { "i": "0" }],
+            [{ "i": "2" }, { "i": "0" }],
+            [{ "i": "3" }, { "i": "0" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::update_with_zero_affected_rows_still_succeeds",
+      "note": "The rust test asserts that the internal record map still holds three rows, so a follow-up select reads them back instead.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set score = 99 where account_id = 9999" },
+        { "sql": "select account_id, score from Account order by account_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        {
+          "rows": [
+            [{ "i": "1" }, { "i": "10" }],
+            [{ "i": "2" }, { "i": "30" }],
+            [{ "i": "3" }, { "i": "20" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::update_self_reference_arithmetic_increments_row",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set score = score + 1 where account_id = 1" },
+        { "sql": "select account_id, score from Account order by account_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        {
+          "rows": [
+            [{ "i": "1" }, { "i": "11" }],
+            [{ "i": "2" }, { "i": "30" }],
+            [{ "i": "3" }, { "i": "20" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::update_arithmetic_with_parameter_slot",
+      "note": "The step carries no bound parameter despite the name, so this case covers the compound arithmetic expression only.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set score = score * score + 2 where account_id = 1" },
+        { "sql": "select account_id, score from Account where account_id = 1" }
+      ],
+      "expect": [{ "rows": [] }, { "rows": [[{ "i": "1" }, { "i": "102" }]] }]
+    },
+    {
+      "source": "sql.rs::update_arithmetic_with_bound_parameter",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set score = score + ? where account_id = 2", "params": [5] },
+        { "sql": "select score from Account where account_id = 2" }
+      ],
+      "expect": [{ "rows": [] }, { "rows": [[{ "i": "35" }]] }]
+    },
+    {
+      "source": "sql.rs::insert_i64_boundary_values",
+      "note": "`i64` maps to `integer`. sql.js converts 64-bit integers to JavaScript numbers, so dumping these ids raw disagrees with `better-sqlite3` and `node:sqlite`; the magnitudes are verified with comparison expressions that yield 0/1. yydb requires the literal to fit `i64::MAX` after unary minus, so it inserts `-9223372036854775807` rather than `i64::MIN`.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "steps": [
+        {
+          "sql": "insert into Account (account_id, email, tenant, score, active) values (9223372036854775807, 'max@test', 't', 0, 1)"
+        },
+        {
+          "sql": "insert into Account (account_id, email, tenant, score, active) values (-9223372036854775807, 'min@test', 't', 0, 0)"
+        },
+        {
+          "sql": "insert into Account (account_id, email, tenant, score, active) values (-42, 'neg@test', 't', -100, 1)"
+        },
+        {
+          "sql": "select account_id = 9223372036854775807, account_id = -9223372036854775807, account_id = -42 from Account order by account_id"
+        }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [] },
+        { "rows": [] },
+        {
+          "rows": [
+            [{ "i": "0" }, { "i": "1" }, { "i": "0" }],
+            [{ "i": "0" }, { "i": "0" }, { "i": "1" }],
+            [{ "i": "1" }, { "i": "0" }, { "i": "0" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_empty_string_and_special_chars",
+      "note": "yydb passes quote-bearing strings as bound parameters because its SQL literal parser has no doubled-quote escaping, so the second insert binds `o'brien@test` and `it's`.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, tenant, score, active) values (10, '', '', 0, 1)" },
+        {
+          "sql": "insert into Account (account_id, email, tenant, score, active) values (?, ?, ?, 0, 1)",
+          "params": [11, "o'brien@test", "it's"]
+        },
+        { "sql": "select account_id, email, tenant from Account where account_id >= 10 order by account_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [] },
+        {
+          "rows": [
+            [{ "i": "10" }, { "t": "" }, { "t": "" }],
+            [{ "i": "11" }, { "t": "o'brien@test" }, { "t": "it's" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_unicode_text",
+      "note": "`utf8` maps to `text`, which stores the multi-byte email and tenant unchanged.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "steps": [
+        {
+          "sql": "insert into Account (account_id, email, tenant, score, active) values (12, '邮件@测试.中文', '租户', 0, 1)"
+        },
+        { "sql": "select email, tenant from Account where account_id = 12" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "t": "邮件@测试.中文" }, { "t": "租户" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_and_filter_with_boolean_values",
+      "note": "`bool` maps to `integer` 0/1, and `IS TRUE` / `IS FALSE` treat 1 / 0 as the matching boolean.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "steps": [
+        {
+          "sql": "insert into Account (account_id, email, tenant, score, active) values (20, 'a@t', 'x', 0, 1)"
+        },
+        {
+          "sql": "insert into Account (account_id, email, tenant, score, active) values (21, 'b@t', 'x', 0, 0)"
+        },
+        { "sql": "select account_id from Account where active is true order by account_id" },
+        { "sql": "select account_id from Account where active is false order by account_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [] },
+        { "rows": [[{ "i": "20" }]] },
+        { "rows": [[{ "i": "21" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::update_multiple_fields_then_read_all_back",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "update Account set score = 500, email = 'changed@test', tenant = 'zzz' where account_id = 3"
+        },
+        { "sql": "select score, email, tenant from Account where account_id = 3" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "500" }, { "t": "changed@test" }, { "t": "zzz" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::delete_then_insert_same_row_preserves_visibility",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "delete from Account where account_id = 1" },
+        {
+          "sql": "insert into Account (account_id, email, tenant, score, active) values (1, 'ada.2@new.test', 't99', 42, 0)"
+        },
+        { "sql": "select email, tenant, score, active from Account where account_id = 1" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [] },
+        { "rows": [[{ "t": "ada.2@new.test" }, { "t": "t99" }, { "i": "42" }, { "i": "0" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::select_with_is_null_on_populated_column_yields_empty",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [{ "sql": "select account_id from Account where email is null" }],
+      "expect": [{ "rows": [] }]
+    },
+    {
+      "source": "sql.rs::update_can_set_null_on_nullable_column",
+      "note": "VOS `utf8` is non-nullable in general, but yydb allows `NULL` here, which maps to plain SQLite `text` with no `not null` constraint.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set tenant = null where account_id = 1" },
+        { "sql": "select tenant from Account where account_id = 1" },
+        { "sql": "select account_id from Account where tenant is null" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[null]] },
+        { "rows": [[{ "i": "1" }]] }
+      ]
+    }
+  ]
+}
