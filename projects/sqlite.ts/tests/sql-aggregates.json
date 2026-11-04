@@ -1,0 +1,637 @@
+{
+  "group": "aggregates",
+  "cases": [
+    {
+      "source": "sql.rs::aggregates_skip_null_values_and_reject_an_all_null_sum",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). The seed also NULLs ada's tenant, matching `seed_with_null_tenant`.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', NULL, 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set score = NULL where account_id = 1" },
+        {
+          "sql": "select sum(score) as total, avg(score) as mean, min(tenant) as min_tenant, max(tenant) as max_tenant from Account"
+        },
+        { "sql": "update Account set score = NULL" },
+        { "sql": "select sum(score) as total from Account" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "50" }, { "i": "25" }, { "t": "t1" }, { "t": "t2" }]] },
+        { "rows": [] },
+        { "rows": [[null]] }
+      ]
+    },
+    {
+      "source": "sql.rs::aggregate_count_star_global",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [{ "sql": "select count(*) as c from Account" }],
+      "expect": [{ "rows": [[{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::aggregate_count_expr_skips_null",
+      "note": "COUNT(*) still sees the row whose tenant became NULL, COUNT(tenant) skips it.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set tenant = NULL where account_id = 1" },
+        { "sql": "select count(*) as c_all, count(tenant) as c_nonnull from Account" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "3" }, { "i": "2" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::aggregate_sum_global",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [{ "sql": "select sum(score) as s from Account" }],
+      "expect": [{ "rows": [[{ "i": "60" }]] }]
+    },
+    {
+      "source": "sql.rs::aggregate_avg_global",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [{ "sql": "select avg(score) as a from Account" }],
+      "expect": [{ "rows": [[{ "i": "20" }]] }]
+    },
+    {
+      "source": "sql.rs::aggregate_avg_with_null_yields_null",
+      "note": "AVG divides by the non-NULL count, and a group with no non-NULL input is NULL.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set score = NULL where account_id = 1" },
+        { "sql": "select avg(score) as a from Account where tenant = 't1'" },
+        { "sql": "select avg(score) as a from Account where score is null" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "30" }]] },
+        { "rows": [[null]] }
+      ]
+    },
+    {
+      "source": "sql.rs::aggregate_count_sum_avg_group_by",
+      "note": "No GROUP BY means one group. GROUP BY orders rows here because of ORDER BY tenant.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select tenant, count(*) as c, sum(score) as s, avg(score) as a from Account group by tenant order by tenant" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "t": "t1" }, { "i": "2" }, { "i": "40" }, { "i": "20" }],
+            [{ "t": "t2" }, { "i": "1" }, { "i": "20" }, { "i": "20" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::aggregate_count_over_an_empty_input_reports_zero",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select count(*) as c from Account where account_id > 9000" },
+        { "sql": "select count(email) as c from Account where account_id > 9000" },
+        { "sql": "select count(distinct email) as c from Account where account_id > 9000" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "0" }]] },
+        { "rows": [[{ "i": "0" }]] },
+        { "rows": [[{ "i": "0" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::aggregate_sum_and_avg_over_an_empty_input_yield_null",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select sum(score) as s, avg(score) as a from Account where account_id > 9000" }
+      ],
+      "expect": [{ "rows": [[null, null]] }]
+    },
+    {
+      "source": "sql.rs::aggregate_group_by_over_an_empty_input_yields_no_rows",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select tenant, count(*) as c from Account where account_id > 9000 group by tenant" }
+      ],
+      "expect": [{ "rows": [] }]
+    },
+    {
+      "source": "sql.rs::aggregate_mix_over_an_empty_input_keeps_every_column",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select count(*) as c, sum(score) as s from Account where account_id > 9000" }
+      ],
+      "expect": [{ "rows": [[{ "i": "0" }, null]] }]
+    },
+    {
+      "source": "sql.rs::aggregate_over_an_empty_table_matches_a_filtered_empty_input",
+      "note": "First half of the Rust test: the aggregate runs over a table with no rows at all.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "steps": [
+        { "sql": "select count(*) as c, sum(score) as s from Account" }
+      ],
+      "expect": [{ "rows": [[{ "i": "0" }, null]] }]
+    },
+    {
+      "source": "sql.rs::aggregate_over_an_empty_table_matches_a_filtered_empty_input",
+      "note": "Second half of the Rust test: same aggregate over rows that the predicate drops, keeping the same shape as the empty table.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select count(*) as c, sum(score) as s from Account where account_id > 9000" }
+      ],
+      "expect": [{ "rows": [[{ "i": "0" }, null]] }]
+    },
+    {
+      "source": "sql.rs::aggregate_count_is_zero_and_sum_is_null_for_an_all_null_column",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set score = NULL where account_id > 0" },
+        {
+          "sql": "select count(*) as c_all, count(score) as c_nonnull, sum(score) as s, avg(score) as a from Account"
+        }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "3" }, { "i": "0" }, null, null]] }
+      ]
+    },
+    {
+      "source": "sql.rs::aggregate_min_and_max_over_an_integer_column",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select min(score) as lo, max(score) as hi from Account" },
+        { "sql": "select min(score), max(score) from Account" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "10" }, { "i": "30" }]] },
+        { "rows": [[{ "i": "10" }, { "i": "30" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::aggregate_min_and_max_keep_text_values_unconverted",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select min(email) as lo, max(email) as hi from Account" }
+      ],
+      "expect": [{ "rows": [[{ "t": "ada@example.test" }, { "t": "linus@example.test" }]] }]
+    },
+    {
+      "source": "sql.rs::aggregate_min_and_max_skip_null_inputs",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set score = 1 where account_id = 1" },
+        { "sql": "update Account set score = NULL where account_id = 2" },
+        { "sql": "update Account set score = 3 where account_id = 3" },
+        { "sql": "select count(*) as c, min(score) as lo, max(score) as hi from Account" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [] },
+        { "rows": [] },
+        { "rows": [[{ "i": "3" }, { "i": "1" }, { "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::aggregate_min_and_max_are_null_for_an_all_null_column",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set score = NULL where account_id > 0" },
+        { "sql": "select count(*) as c, min(score) as lo, max(score) as hi from Account" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "3" }, null, null]] }
+      ]
+    },
+    {
+      "source": "sql.rs::aggregate_min_and_max_over_an_empty_input_yield_null",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select count(*) as c, min(score) as lo, max(score) as hi from Account where account_id > 9000" }
+      ],
+      "expect": [{ "rows": [[{ "i": "0" }, null, null]] }]
+    },
+    {
+      "source": "sql.rs::aggregate_min_and_max_group_by",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select tenant, min(score) as lo, max(score) as hi from Account group by tenant order by tenant" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "t": "t1" }, { "i": "10" }, { "i": "30" }],
+            [{ "t": "t2" }, { "i": "20" }, { "i": "20" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::aggregate_min_and_max_reject_a_wrong_argument_count",
+      "note": "First half of the Rust test: `MIN()` with zero arguments is an error in SQLite too, though the message differs.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [{ "sql": "select min() as m from Account" }],
+      "expect": [{ "error": true }]
+    },
+    {
+      "source": "sql.rs::aggregate_min_and_max_reject_a_wrong_argument_count",
+      "note": "Second half of the Rust test. yydb rejects `MAX(score, tenant)` with a one-argument rule, but SQLite defines `max(a, b)` as a scalar function, so the statement succeeds and yields one row per input row.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [{ "sql": "select max(score, tenant) as m from Account" }],
+      "expect": [{ "rows": [[{ "t": "t1" }], [{ "t": "t1" }], [{ "t": "t2" }]] }]
+    },
+    {
+      "source": "sql.rs::select_distinct_count_collapses_duplicate_values",
+      "note": "yydb treats `SELECT DISTINCT COUNT(score)` as `COUNT(DISTINCT score)`, so it reports 2 once two rows share a score. SQLite applies DISTINCT to the single aggregate row, so COUNT stays 3.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select distinct count(score) as c from Account" },
+        { "sql": "update Account set score = 10 where account_id = 2" },
+        { "sql": "select distinct count(score) as c from Account" },
+        { "sql": "select count(score) as c from Account" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "3" }]] },
+        { "rows": [] },
+        { "rows": [[{ "i": "3" }]] },
+        { "rows": [[{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::select_distinct_count_skips_null_values",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set score = NULL where account_id in (1, 2)" },
+        { "sql": "select distinct count(score) as c from Account" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::select_distinct_count_star_is_rejected",
+      "note": "yydb rejects `SELECT DISTINCT COUNT(*)` as ambiguous at lowering time. SQLite has no such ambiguity: it counts all three rows.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [{ "sql": "select distinct count(*) as c from Account" }],
+      "expect": [{ "rows": [[{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::select_distinct_does_not_change_plain_sum",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [{ "sql": "select distinct sum(score) as s from Account" }],
+      "expect": [{ "rows": [[{ "i": "60" }]] }]
+    },
+    {
+      "source": "sql.rs::case_when_projection_first_matching_branch_wins",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select account_id, case when score > 20 then 'high' when score > 10 then 'mid' else 'low' end as bucket from Account order by account_id"
+        }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, { "t": "low" }],
+            [{ "i": "2" }, { "t": "high" }],
+            [{ "i": "3" }, { "t": "mid" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::case_when_without_else_yields_null",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id, case when score > 25 then 'top' end as t from Account order by account_id" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, null],
+            [{ "i": "2" }, { "t": "top" }],
+            [{ "i": "3" }, null]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::case_when_nested_inside_then_branch",
+      "note": "bool maps to integer(0/1) in SQLite, and a bare 0/1 condition is false/true there, matching the Rust truthiness.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select account_id, case when active then case when score > 20 then 'active-high' else 'active-low' end else 'inactive' end as label from Account order by account_id"
+        }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, { "t": "active-low" }],
+            [{ "i": "2" }, { "t": "inactive" }],
+            [{ "i": "3" }, { "t": "active-low" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::cast_integer_to_text_and_back",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select cast(account_id as text) as id_text, cast(score as real) as score_r from Account where account_id = 1" }
+      ],
+      "expect": [{ "rows": [[{ "t": "1" }, { "i": "10" }]] }]
+    },
+    {
+      "source": "sql.rs::cast_text_to_integer_succeeds_for_valid_number",
+      "note": "The Rust test binds parameters with `Value::Bool(true)` for `active`; SQLite stores bool as integer(0/1), so the bound value is 1.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "steps": [
+        {
+          "sql": "insert into Account (account_id, email, tenant, score, active) values (?, ?, ?, ?, ?)",
+          "params": [5, "cast@test", "42", 0, 1]
+        },
+        { "sql": "select cast(tenant as integer) as tenant_int from Account where account_id = 5" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "42" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::cast_text_to_integer_non_numeric_is_error",
+      "note": "yydb raises a diagnostic for non-numeric text cast to INTEGER. SQLite never fails a CAST at runtime: 't1' becomes the integer 0.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [{ "sql": "select cast(tenant as integer) as ti from Account where account_id = 1" }],
+      "expect": [{ "rows": [[{ "i": "0" }]] }]
+    },
+    {
+      "source": "sql.rs::cast_null_preserves_null",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set tenant = NULL where account_id = 1" },
+        { "sql": "select cast(tenant as text) as t from Account where account_id = 1" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[null]] }
+      ]
+    },
+    {
+      "source": "sql.rs::cast_bool_to_integer_and_back",
+      "note": "bool is stored as integer(0/1) in SQLite, so CAST is an identity here rather than a conversion.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id, cast(active as integer) as a_int from Account order by account_id" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, { "i": "1" }],
+            [{ "i": "2" }, { "i": "0" }],
+            [{ "i": "3" }, { "i": "1" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::unsupported_oak_sql_clauses_are_rejected_with_their_own_message",
+      "note": "yydb rejects `INSERT ... SELECT DISTINCT` as an unsupported clause. SQLite accepts it, so the empty source inserts no rows and the statement succeeds.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "steps": [
+        {
+          "sql": "insert into Account (account_id, email, tenant, score, active) select distinct account_id, email, tenant, score, active from Account"
+        }
+      ],
+      "expect": [{ "rows": [] }]
+    }
+  ]
+}
