@@ -17,6 +17,7 @@ projects/sqlite.rs/.cargo/config.toml
 .cargo/config.toml
 projects/sqlite.rs/sqlite-napi/sqlite.node
 node_modules
+pnpm-lock.yaml
 *.tsbuildinfo
 __pycache__/
 *.pyc
