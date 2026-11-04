@@ -7,19 +7,16 @@
 // Every probe runs in a temporary directory. Temporary directories are left in
 // place and printed, so nothing in them can be lost behind a cleanup command.
 
-import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { packAndInstall, preparePython, run, stagingDirectory } from "./prepare.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../../../..");
 const corpusRoot = resolve(here, "../corpus");
 const corpusTest = resolve(corpusRoot, "test");
-const packageRoot = resolve(repoRoot, "projects/sqlite.ts/packages/sqlite");
-const platformRoot = resolve(repoRoot, `projects/sqlite.ts/platforms/sqlite-${process.platform}-${process.arch}`);
-const pythonRoot = resolve(repoRoot, "projects/sqlite.py/packages/sqlite");
 
 function argument(name, fallback = "") {
   const at = process.argv.indexOf(`--${name}`);
@@ -36,50 +33,13 @@ const requested = argument("files", "")
   .filter(Boolean);
 const files = requested.length > 0 ? requested.map((name) => `${name}.test`) : readdirSync(corpusTest).filter((name) => name.endsWith(".test")).sort();
 
-function run(command, cwd, timeout = 600_000) {
-  const result = spawnSync(command, { cwd, shell: true, encoding: "utf8", timeout, maxBuffer: 256 * 1024 * 1024 });
-  return { status: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "", error: result.error };
-}
-
-function requireOk(label, result) {
-  if (result.status !== 0) {
-    throw new Error(`${label} failed\n${(result.stdout + result.stderr).trim().slice(-4000)}`);
-  }
-  return result;
-}
-
 function corpusCommit() {
   const rev = run("git rev-parse HEAD", corpusRoot, 60_000);
   return rev.status === 0 ? rev.stdout.trim() : "unknown";
 }
 
-const staging = mkdtempSync(join(tmpdir(), "sqlite-sqllogictest-"));
-const tarballs = join(staging, "tarballs");
-const install = join(staging, "install");
-mkdirSync(tarballs, { recursive: true });
-
-const packed = [];
-for (const directory of [packageRoot, platformRoot]) {
-  requireOk(`pnpm pack in ${directory}`, run(`pnpm pack --pack-destination "${tarballs}"`, directory, 300_000));
-}
-for (const entry of readdirSync(tarballs)) {
-  if (entry.endsWith(".tgz")) {
-    packed.push(join(tarballs, entry));
-  }
-}
-if (packed.length < 2) {
-  throw new Error(`expected two tarballs, found ${packed.join(", ")}`);
-}
-
-mkdirSync(install, { recursive: true });
-writeFileSync(join(install, "package.json"), JSON.stringify({ name: "slt-probe", private: true, type: "module" }, null, 2));
-requireOk(
-  "npm install",
-  run(`npm install --no-audit --no-fund --omit=optional ${packed.map((entry) => `"${entry}"`).join(" ")}`, install, 300_000),
-);
-const importProbe = run(`node -e "import('@yydb/sqlite').then((m)=>{const e=m.createEngine();e.execute('CREATE TABLE t(a INTEGER)');console.log(e.execute('SELECT count(*) FROM t').rows[0][0])})"`, install, 60_000);
-requireOk("plain Node import of @yydb/sqlite", importProbe);
-
+const staging = stagingDirectory("sqlite-sqllogictest-");
+const { install, packed } = packAndInstall(repoRoot, staging);
 cpSync(resolve(here, "../runner"), join(install, "runner"), { recursive: true });
 const runnerCommit = run("git rev-parse HEAD", repoRoot, 60_000);
 
@@ -114,17 +74,7 @@ function runRunner(file, source) {
 
 let pythonExe = "python";
 if (only !== "ts") {
-  const wheels = join(staging, "wheels");
-  const venv = join(staging, "venv");
-  mkdirSync(wheels, { recursive: true });
-  requireOk("maturin build", run("python -m maturin build --release --out \"" + wheels + "\"", pythonRoot, 600_000));
-  requireOk("venv", run(`python -m venv "${venv}"`, staging, 300_000));
-  pythonExe = join(venv, process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
-  requireOk(
-    "pip install sqlite-format3",
-    run(`"${pythonExe}" -m pip install --quiet --no-index --find-links "${wheels}" sqlite-format3`, staging, 300_000),
-  );
-  requireOk("python import", run(`"${pythonExe}" -c "import sqlite_format3;print(sqlite_format3.SqliteEngine.create().ping())"`, staging, 60_000));
+  pythonExe = preparePython(repoRoot, staging);
 }
 
 const PER_FILE_FIELDS = ["records", "pass", "unsupported", "resultMismatch", "errorMismatch", "runnerError", "filtered"];
