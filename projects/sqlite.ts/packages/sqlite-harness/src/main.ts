@@ -33,16 +33,16 @@ export async function main(argv: string[]): Promise<number> {
     return 1;
   }
 
-  // The TypeScript package reads `SQLITE_NATIVE` when it is imported, so the
-  // built artefact is resolved before any subcommand module is loaded.
-  process.env.SQLITE_NATIVE = nativeModulePath();
-
+  // `bench` reads the binding when it is imported, so it resolves the artefact
+  // first. `test` builds the module itself, so it must not resolve a path that
+  // does not exist on a fresh checkout yet.
   switch (command) {
     case "test": {
       const { commandTest } = await import("./test.ts");
       return commandTest(options);
     }
     case "bench": {
+      process.env.SQLITE_NATIVE = nativeModulePath();
       const { commandBench } = await import("./bench.ts");
       return commandBench(options);
     }
