@@ -1,0 +1,345 @@
+{
+  "group": "expressions",
+  "cases": [
+    {
+      "source": "sql.rs::select_with_is_not_null_filters_out_missing_rows",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where email is not null" }
+      ],
+      "expect": [{ "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::select_with_is_not_true_on_bool_column",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where active is not true" }
+      ],
+      "expect": [{ "rows": [[{ "i": "2" }]] }]
+    },
+    {
+      "source": "sql.rs::select_with_is_not_false_on_bool_column",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where active is not false" }
+      ],
+      "expect": [{ "rows": [[{ "i": "1" }], [{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::select_with_in_multi_element_list",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where tenant in ('t1', 't2')" }
+      ],
+      "expect": [{ "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::select_with_in_single_element_list",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where tenant in ('t2')" }
+      ],
+      "expect": [{ "rows": [[{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::select_with_not_in_excludes_matches",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where tenant not in ('t1')" }
+      ],
+      "expect": [{ "rows": [[{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::select_with_between_numeric_range",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where score between 15 and 25 order by score" }
+      ],
+      "expect": [{ "rows": [[{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::select_with_between_inclusive_endpoints",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where score between 10 and 30 order by score" }
+      ],
+      "expect": [{ "rows": [[{ "i": "1" }], [{ "i": "3" }], [{ "i": "2" }]] }]
+    },
+    {
+      "source": "sql.rs::select_with_not_between_excludes_range",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where score not between 10 and 25" }
+      ],
+      "expect": [{ "rows": [[{ "i": "2" }]] }]
+    },
+    {
+      "source": "sql.rs::is_null_accepts_scalar_expression_on_the_left",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where length(email) is null" },
+        { "sql": "select account_id from Account where length(email) is not null order by account_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::between_accepts_scalar_expression_on_the_left",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where score + 1 between 11 and 21 order by score" }
+      ],
+      "expect": [{ "rows": [[{ "i": "1" }], [{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::in_list_accepts_scalar_expression_on_the_left",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where upper(email) in ('ADA@EXAMPLE.TEST', 'GRACE@EXAMPLE.TEST') order by account_id" },
+        { "sql": "select account_id from Account where upper(email) not in ('ADA@EXAMPLE.TEST') order by account_id" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "3" }]] },
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::select_with_between_reversed_endpoints_is_semantically_empty",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where score between 30 and 10" }
+      ],
+      "expect": [{ "rows": [] }]
+    },
+    {
+      "source": "sql.rs::select_with_compound_and_of_comparisons",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where tenant = 't1' and score > 15" }
+      ],
+      "expect": [{ "rows": [[{ "i": "2" }]] }]
+    },
+    {
+      "source": "sql.rs::select_with_or_of_comparisons",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where account_id = 1 or account_id = 3 order by account_id" }
+      ],
+      "expect": [{ "rows": [[{ "i": "1" }], [{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::select_with_nested_and_or_logic",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where tenant = 't1' and (score = 30 or score = 10) order by score" }
+      ],
+      "expect": [{ "rows": [[{ "i": "1" }], [{ "i": "2" }]] }]
+    },
+    {
+      "source": "sql.rs::select_with_not_grouped_predicate",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where not (tenant = 't1')" }
+      ],
+      "expect": [{ "rows": [[{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::select_with_not_single_comparison",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where not (active is true)" }
+      ],
+      "expect": [{ "rows": [[{ "i": "2" }]] }]
+    },
+    {
+      "source": "sql.rs::select_with_limit_zero_returns_no_rows",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account limit 0" }
+      ],
+      "expect": [{ "rows": [] }]
+    },
+    {
+      "source": "sql.rs::select_with_offset_larger_than_result_returns_empty",
+      "note": "SQLite requires LIMIT before OFFSET, so the standalone OFFSET form is expressed as LIMIT -1 OFFSET 99.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account order by account_id limit -1 offset 99" }
+      ],
+      "expect": [{ "rows": [] }]
+    },
+    {
+      "source": "sql.rs::select_with_standalone_offset_skips_rows_without_limiting",
+      "note": "SQLite requires LIMIT before OFFSET, so the standalone OFFSET form is expressed as LIMIT -1 OFFSET 1.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account order by account_id limit -1 offset 1" }
+      ],
+      "expect": [{ "rows": [[{ "i": "2" }], [{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::select_with_limit_and_offset_skips_then_takes",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account order by account_id limit 1 offset 1" }
+      ],
+      "expect": [{ "rows": [[{ "i": "2" }]] }]
+    }
+  ]
+}
