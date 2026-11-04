@@ -20,3 +20,10 @@ node_modules
 *.tsbuildinfo
 __pycache__/
 *.pyc
+
+# Platform build artifacts
+platforms/node/out/
+platforms/wasm/pkg/
+platforms/wasm/out/
+platforms/python/wheels/
+platforms/python/.venv/
