@@ -541,6 +541,23 @@ test("rowid, _rowid_ and oid expose the implicit primary key", () => {
   assert.deepEqual(engine.execute("select rowid from shadow").rows, [[7]]);
 });
 
+// Casts follow SQLite's conversion rules for all five target types.
+test("cast follows sqlite conversions", () => {
+  const engine = createEngine(4096);
+  assert.deepEqual(engine.execute("select cast('1.5' as integer)").rows, [[1]]);
+  assert.deepEqual(engine.execute("select cast('abc' as integer)").rows, [[0]]);
+  assert.deepEqual(engine.execute("select cast('1e3' as integer)").rows, [[1]]);
+  assert.deepEqual(engine.execute("select cast(' 12abc' as integer)").rows, [[12]]);
+  assert.deepEqual(engine.execute("select cast(1.9 as integer)").rows, [[1]]);
+  assert.deepEqual(engine.execute("select cast(-1.9 as integer)").rows, [[-1]]);
+  assert.deepEqual(engine.execute("select cast('3.7' as real)").rows, [[3.7]]);
+  assert.deepEqual(engine.execute("select cast(null as integer)").rows, [[null]]);
+  assert.deepEqual(engine.execute("select cast(1 as text)").rows, [["1"]]);
+  assert.deepEqual(engine.execute("select cast(123 as blob)").rows, [[{ $blob: "313233" }]]);
+  assert.deepEqual(engine.execute("select cast('1e3' as numeric)").rows, [[1000]]);
+  assert.equal(engine.tryExecute("select cast(1 as fancytype)").error?.code, "unsupported-type");
+});
+
 // SQLite gives every set operator the same precedence, so `(A UNION B)
 // INTERSECT C` is `3`; `A UNION (B INTERSECT C)` would return `1, 2, 3`.
 test("compound select folds left to right", () => {
