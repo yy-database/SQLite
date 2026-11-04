@@ -202,17 +202,13 @@ test("set operators follow SQLite multiplicity and NULL deduplication", () => {
   // UNION ALL keeps every occurrence on both sides.
   assert.equal(engine.execute("select x from l union all select y from r").rows.length, 10);
 
-  // INTERSECT keeps one copy; INTERSECT ALL keeps min(left, right) copies.
+  // INTERSECT keeps one copy; SQLite has no `INTERSECT ALL`.
   assert.deepEqual(engine.execute("select x from l intersect select y from r order by 1").rows, [[null], [2]]);
-  assert.deepEqual(engine.execute("select x from l intersect all select y from r order by 1").rows, [
-    [null],
-    [2],
-    [2],
-  ]);
+  assert.equal(engine.tryExecute("select x from l intersect all select y from r").error?.code, "syntax");
 
-  // EXCEPT subtracts a presence; EXCEPT ALL subtracts occurrences.
+  // EXCEPT subtracts a presence; SQLite has no `EXCEPT ALL`.
   assert.deepEqual(engine.execute("select x from l except select y from r order by 1").rows, [[1], [3]]);
-  assert.deepEqual(engine.execute("select x from l except all select y from r order by 1").rows, [[1], [2], [3]]);
+  assert.equal(engine.tryExecute("select x from l except all select y from r").error?.code, "syntax");
 
   // The result takes its labels from the leftmost core.
   assert.deepEqual(engine.execute("select x from l union select y from r").columns, ["x"]);

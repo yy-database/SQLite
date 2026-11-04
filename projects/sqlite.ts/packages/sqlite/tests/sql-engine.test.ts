@@ -552,3 +552,40 @@ test("compound select folds left to right", () => {
   ).rows;
   assert.deepEqual(rows, [[3]]);
 });
+
+// SQLite projects literals directly when a `SELECT` has no `FROM` clause.
+test("select without from projects literals and applies limit", () => {
+  const engine = createEngine(4096);
+  assert.deepEqual(engine.execute("select 1").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 1, 2 + 3").rows, [[1, 5]]);
+  assert.deepEqual(engine.execute("select 1 as a").columns, ["a"]);
+  assert.deepEqual(engine.execute("select 1 limit 0").rows, []);
+  assert.deepEqual(engine.execute("select 1 limit -1").rows, [[1]]);
+});
+
+// Without `FROM` a bare column is `no such column`, never a silent `NULL`.
+test("select without from rejects column references", () => {
+  const engine = createEngine(4096);
+  assert.equal(engine.tryExecute("select missing").error?.code, "unknown-column");
+  assert.equal(engine.tryExecute("select *").error?.code, "no-tables");
+});
+
+// Set operators share one precedence over constant cores, and `ALL` only
+// follows `UNION` in SQLite.
+test("compound select without from matches sqlite", () => {
+  const engine = createEngine(4096);
+  assert.deepEqual(engine.execute("select 1 union select 2").rows, [[1], [2]]);
+  assert.deepEqual(engine.execute("select 1 union all select 1").rows, [[1], [1]]);
+  assert.deepEqual(engine.execute("select 1 intersect select 1").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 1 except select 2").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 1 union select 2 intersect select 2").rows, [[2]]);
+  assert.equal(engine.tryExecute("select 1 intersect all select 1").error?.code, "syntax");
+  assert.equal(engine.tryExecute("select 1 except all select 1").error?.code, "syntax");
+});
+
+// `FROM (SELECT 1)` binds a one-row derived table without an alias.
+test("derived table without alias projects its row", () => {
+  const engine = createEngine(4096);
+  assert.deepEqual(engine.execute("select * from (select 1)").rows, [[1]]);
+  assert.deepEqual(engine.execute("select 1 from (select 1)").rows, [[1]]);
+});
