@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = [
+    "sqlite-napi",
+]
+default-members = ["sqlite-napi"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Yggdrasill Team <192607617@qq.com>"]
+license = "MPL-2.0"
+repository = "https://github.com/yy-database/SQLite"
+
+[workspace.dependencies]
+# Sole aggregated core dependency ¡ª the `sqlite` facade. Pin full 40-char rev.
+# Local absolute path overrides belong in `.cargo/config.toml`.
+sqlite = { git = "https://github.com/oovm/database.rs.git", rev = "224941598608759e33dc38bf61b4682d921f9b29" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+napi = { version = "3.14.2", default-features = false, features = ["napi4", "napi6"] }
+napi-derive = "3.6.12"
+napi-build = "2.6"

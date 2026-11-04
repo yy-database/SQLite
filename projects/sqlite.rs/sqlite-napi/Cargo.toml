@@ -1,0 +1,27 @@
+[package]
+name = "sqlite-napi"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Node-API bindings for SQLite format-3 snapshot read/write (independent of YYDB)"
+readme = "readme.md"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "sqlite_napi"
+
+[dependencies]
+napi = { workspace = true }
+napi-derive = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlite = { workspace = true }
+
+[build-dependencies]
+napi-build = { workspace = true }
+
+[package.metadata.napi]
+name = "sqlite"
