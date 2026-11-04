@@ -340,6 +340,190 @@
         { "sql": "select account_id from Account order by account_id limit 1 offset 1" }
       ],
       "expect": [{ "rows": [[{ "i": "2" }]] }]
+    },
+    {
+      "source": "sql.rs::select_projects_column_arithmetic",
+      "note": "VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id + score as total from Account order by account_id" }
+      ],
+      "expect": [{ "rows": [[{ "i": "11" }], [{ "i": "32" }], [{ "i": "23" }]] }]
+    },
+    {
+      "source": "sql.rs::select_projects_arithmetic_with_operator_precedence",
+      "note": "VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select score * 2 - 1 as bumped from Account order by account_id" }
+      ],
+      "expect": [{ "rows": [[{ "i": "19" }], [{ "i": "59" }], [{ "i": "39" }]] }]
+    },
+    {
+      "source": "sql.rs::select_projects_parenthesised_arithmetic",
+      "note": "VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select ((score + 10) * (2 + 0)) as doubled from Account order by account_id" }
+      ],
+      "expect": [{ "rows": [[{ "i": "40" }], [{ "i": "80" }], [{ "i": "60" }]] }]
+    },
+    {
+      "source": "sql.rs::select_arithmetic_promotes_to_real_when_any_operand_is_real",
+      "note": "VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。SQLite 的 `20 / 4.0` 是 REAL 5.0，三个 JS 引擎读回整数值的浮点数后按 number 编码成 `{ i: 5 }`。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select score / 4 as int_quotient, score / 4.0 as real_quotient, score + 0.5 as shifted from Account order by account_id" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "2" }, { "r": "2.5" }, { "r": "10.5" }],
+            [{ "i": "7" }, { "r": "7.5" }, { "r": "30.5" }],
+            [{ "i": "5" }, { "i": "5" }, { "r": "20.5" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::select_projects_arithmetic_over_literals",
+      "note": "VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select 10 / 4 as integer_value, 10 / 4.0 as real_value from Account where account_id = 1" }
+      ],
+      "expect": [{ "rows": [[{ "i": "2" }, { "r": "2.5" }]] }]
+    },
+    {
+      "source": "sql.rs::select_arithmetic_combines_with_where_and_order_by",
+      "note": "VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。`active = true` 在 SQLite 中按 `active = 1` 求值。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id, score + 1 as bumped from Account where active = true order by score desc" }
+      ],
+      "expect": [{ "rows": [[{ "i": "3" }, { "i": "21" }], [{ "i": "1" }, { "i": "11" }]] }]
+    },
+    {
+      "source": "sql.rs::select_aggregates_an_arithmetic_argument",
+      "note": "VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select sum(score + 1) as total from Account" },
+        { "sql": "select tenant, sum(score * 2) as total from Account group by tenant order by tenant" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "63" }]] },
+        { "rows": [[{ "t": "t1" }, { "i": "80" }], [{ "t": "t2" }, { "i": "40" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::select_arithmetic_propagates_a_null_operand",
+      "note": "VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。UPDATE 无结果集，记为空 rows。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "update Account set score = null where account_id = 1" },
+        { "sql": "select account_id, score + 1 as bumped from Account order by account_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }, null], [{ "i": "2" }, { "i": "31" }], [{ "i": "3" }, { "i": "21" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::select_division_by_zero_yields_null",
+      "note": "VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select score / 0 as quotient, score % 0 as remainder from Account order by account_id" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [null, null],
+            [null, null],
+            [null, null]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::select_rejects_arithmetic_over_text",
+      "note": "yydb 要求数值操作数，文本列参与 `+` 会报错，SQLite 把非数值文本 `'t1'` 转成 0 后返回 1，因此该用例被判为结果而非错误。VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select tenant + 1 as bumped from Account" }
+      ],
+      "expect": [{ "rows": [[{ "i": "1" }], [{ "i": "1" }], [{ "i": "1" }]] }]
     }
   ]
 }
