@@ -44,6 +44,8 @@ export interface ColumnSpec {
   defaultValue?: string | null;
   primaryKey?: boolean;
   unique?: boolean;
+  /** `PRIMARY KEY AUTOINCREMENT` on an INTEGER rowid alias. */
+  autoincrement?: boolean;
 }
 
 /** One executed cell: native JSON scalars, with blobs tagged as `{ $blob }`. */
