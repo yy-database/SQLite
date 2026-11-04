@@ -1,0 +1,746 @@
+{
+  "group": "types",
+  "cases": [
+    {
+      "source": "sql.rs::comparison_with_null_is_unknown_instead_of_true",
+      "note": "VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。三值逻辑在 SQLite 中同构：`NULL = NULL`、`NULL <> NULL` 与 `NOT (x = NULL)` 都保持 unknown。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)",
+        "update Account set tenant = null where account_id = 1"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where tenant = null" },
+        { "sql": "select account_id from Account where tenant <> null" },
+        { "sql": "select account_id from Account where not (tenant = null)" },
+        { "sql": "select account_id from Account where tenant is null" },
+        { "sql": "select account_id from Account where tenant is not null order by account_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [] },
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }]] },
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::and_or_and_not_propagate_unknown",
+      "note": "VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。`unknown AND TRUE` 仍为 unknown，`unknown OR TRUE` 为 TRUE，`NOT unknown` 仍为 unknown。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)",
+        "update Account set tenant = null where account_id = 1"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where tenant = 't1' and score = 10" },
+        { "sql": "select account_id from Account where tenant = 't1' or score = 10 order by account_id" },
+        { "sql": "select account_id from Account where not (tenant = 't1')" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }]] },
+        { "rows": [[{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::in_list_with_null_follows_three_valued_logic",
+      "note": "VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。`IN` 列表含 NULL 时，未命中为 unknown，因此 `NOT IN` 也丢掉所有行。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)",
+        "update Account set tenant = null where account_id = 1"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where tenant in ('t1', null)" },
+        { "sql": "select account_id from Account where tenant in ('t1', 't2', null) order by account_id" },
+        { "sql": "select account_id from Account where tenant not in ('t1', null)" },
+        { "sql": "select account_id from Account where tenant not in ('t1', 't2')" },
+        { "sql": "select account_id from Account where tenant in (null)" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "2" }]] },
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }]] },
+        { "rows": [] },
+        { "rows": [] },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::between_with_null_operands_is_unknown",
+      "note": "VOS `i64`→`integer`、`utf8`→`text`、`bool`→`integer`（1/0）。端点含 NULL 的 `BETWEEN` 为 unknown。`NOT BETWEEN` 的差异在第三个 step：SQLite 展开为 `NOT (score >= NULL AND score <= 5)`，第二个比较为 FALSE 使合取为 FALSE，取反后为 TRUE，三行全过；yydb 把整个谓词当 unknown，因此丢掉所有行。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)",
+        "update Account set tenant = null where account_id = 1"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where score between null and 100" },
+        { "sql": "select account_id from Account where score between 0 and null" },
+        { "sql": "select account_id from Account where score not between null and 5 order by account_id" },
+        { "sql": "select account_id from Account where tenant between 'a' and 'z' order by account_id" },
+        { "sql": "select account_id from Account where score not between 1 and 5 order by account_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] },
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }]] },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::is_true_and_is_not_true_are_decided_for_null",
+      "note": "VOS `bool`→`integer`（1/0）。`IS TRUE` / `IS NOT TRUE` / `IS FALSE` / `IS NOT FALSE` 对 NULL 有定论，而 `active = true` 仍是 unknown（SQLite 按 `active = 1` 求值）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)",
+        "update Account set active = null where account_id = 1"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where active is true" },
+        { "sql": "select account_id from Account where active is not true order by account_id" },
+        { "sql": "select account_id from Account where active is false" },
+        { "sql": "select account_id from Account where active is not false order by account_id" },
+        { "sql": "select account_id from Account where active = true" },
+        { "sql": "select account_id from Account where not (active = true)" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "3" }]] },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }]] },
+        { "rows": [[{ "i": "2" }]] },
+        { "rows": [[{ "i": "1" }], [{ "i": "3" }]] },
+        { "rows": [[{ "i": "3" }]] },
+        { "rows": [[{ "i": "2" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::aggregates_skip_null_values_and_reject_an_all_null_sum",
+      "note": "VOS `i64`→`integer`、`utf8`→`text`。聚合跳过 NULL，全为 NULL 的 `SUM` 返回 NULL。`AVG` 的整数值 25.0 被三个 JS 引擎读成 number 并编码为 `{ i: 25 }`。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)",
+        "update Account set tenant = null where account_id = 1",
+        "update Account set score = null where account_id = 1"
+      ],
+      "steps": [
+        { "sql": "select sum(score) as total, avg(score) as mean, min(tenant) as min_tenant, max(tenant) as max_tenant from Account" },
+        { "sql": "update Account set score = null" },
+        { "sql": "select sum(score) as total from Account" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "50" }, { "i": "25" }, { "t": "t1" }, { "t": "t2" }]] },
+        { "rows": [] },
+        { "rows": [[null]] }
+      ]
+    },
+    {
+      "source": "sql.rs::real_literal_matches_integer_column_through_numeric_promotion",
+      "note": "VOS `i64`→`integer`。实数比较把整数一侧提升为 f64，`20 = 20.0` 命中。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where score = 20.0" }
+      ],
+      "expect": [{ "rows": [[{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::real_literal_orders_against_integer_column",
+      "note": "VOS `i64`→`integer`。实数范围谓词按数值顺序比较整数列。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where score > 10.5 order by account_id" }
+      ],
+      "expect": [{ "rows": [[{ "i": "2" }], [{ "i": "3" }]] }]
+    },
+    {
+      "source": "sql.rs::real_literal_never_matches_a_text_column",
+      "note": "yydb 认为 REAL 与 TEXT 没有共同比较域。SQLite 走列亲和：`text` 列把 1.5 转成文本 `'1.5'` 再比较，结果同样不命中，但机制不同。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where tenant = 1.5" }
+      ],
+      "expect": [{ "rows": [] }]
+    },
+    {
+      "source": "sql.rs::negative_real_literal_keeps_its_sign_and_f64_precision",
+      "note": "VOS `i64`→`integer`。负数实数保留符号，显式 `CAST` 到 TEXT 得到 `-3.14`。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select cast(-3.14 as text) as text_value, cast(3.14 as real) as real_value from Account where account_id = 1" }
+      ],
+      "expect": [{ "rows": [[{ "t": "-3.14" }, { "r": "3.14" }]] }]
+    },
+    {
+      "source": "sql.rs::insert_rejects_real_number_in_integer_column",
+      "note": "yydb 拒绝把 REAL 写入 `integer` 列。SQLite 的 INTEGER 亲和只在无损时才转整数，3.14 因此按 REAL 存储，语句成功。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, tenant, score, active) values (1, 'x', 't', 3.14, true)" },
+        { "sql": "select account_id, score from Account where account_id = 1" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }, { "r": "3.14" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::real_column_round_trips_exact_values",
+      "note": "VOS `f64`→`real`，`i64`→`integer`。整数 3 写入 REAL 列被提升为 3.0，读回时整数值的浮点数按 number 编码为 `{ i: 3 }`。",
+      "schema": [
+        "create table Metric (metric_id integer primary key, label text, ratio real)"
+      ],
+      "seed": [
+        "insert into Metric (metric_id, label, ratio) values (1, 'a', 1.5)",
+        "insert into Metric (metric_id, label, ratio) values (2, 'b', -2.25)",
+        "insert into Metric (metric_id, label, ratio) values (3, 'c', 3)"
+      ],
+      "steps": [
+        { "sql": "select metric_id, ratio from Metric order by metric_id" },
+        { "sql": "select ratio from Metric where metric_id = 1" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }, { "r": "1.5" }], [{ "i": "2" }, { "r": "-2.25" }], [{ "i": "3" }, { "i": "3" }]] },
+        { "rows": [[{ "r": "1.5" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::real_column_keeps_shortest_round_trip_precision",
+      "note": "VOS `f64`→`real`。SQLite 存储 IEEE-754 双精度，最短往返表示与 yydb 一致（`0.0000001` 读回后按 JS number 编码为 `1e-7`）。",
+      "schema": [
+        "create table Metric (metric_id integer primary key, label text, ratio real)"
+      ],
+      "steps": [
+        { "sql": "insert into Metric (metric_id, label, ratio) values (1, 'a', 0.1)" },
+        { "sql": "insert into Metric (metric_id, label, ratio) values (2, 'b', 0.0000001)" },
+        { "sql": "select ratio from Metric order by metric_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [] },
+        { "rows": [[{ "r": "0.1" }], [{ "r": "1e-7" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::real_column_supports_comparison_ordering_and_aggregates",
+      "note": "VOS `f64`→`real`。比较、排序与聚合都按数值语义工作。",
+      "schema": [
+        "create table Metric (metric_id integer primary key, label text, ratio real)"
+      ],
+      "seed": [
+        "insert into Metric (metric_id, label, ratio) values (1, 'a', 1.5)",
+        "insert into Metric (metric_id, label, ratio) values (2, 'b', -2.25)",
+        "insert into Metric (metric_id, label, ratio) values (3, 'c', 3)"
+      ],
+      "steps": [
+        { "sql": "select metric_id from Metric where ratio > 1.0 order by metric_id" },
+        { "sql": "select metric_id from Metric order by ratio desc" },
+        { "sql": "select sum(ratio) as total, avg(ratio) as mean from Metric" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "3" }]] },
+        { "rows": [[{ "i": "3" }], [{ "i": "1" }], [{ "i": "2" }]] },
+        { "rows": [[{ "r": "2.25" }, { "r": "0.75" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::real_value_is_rejected_by_a_text_column",
+      "note": "yydb 拒绝把 REAL 写入 `utf8` 列。SQLite 的 TEXT 亲和把 2.5 转成文本 `'2.5'` 存储，语句成功。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, tenant, score, active) values (1, 'x', 2.5, 1, true)" },
+        { "sql": "select tenant from Account where account_id = 1" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "t": "2.5" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::real_column_rejects_text_and_boolean_literals",
+      "note": "子用例 `'one'`。yydb 拒绝非数值字面量写入 `f64` 列。SQLite 的 REAL 亲和无法转换 `'one'`，按 TEXT 原样存入。",
+      "schema": [
+        "create table Metric (metric_id integer primary key, label text, ratio real)"
+      ],
+      "steps": [
+        { "sql": "insert into Metric (metric_id, label, ratio) values (1, 'a', 'one')" },
+        { "sql": "select ratio from Metric where metric_id = 1" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "t": "one" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::real_column_rejects_text_and_boolean_literals",
+      "note": "子用例 `true`。yydb 拒绝 BOOLEAN 写入 `f64` 列。SQLite 把 `true` 求值为整数 1，再按 REAL 亲和提升为 1.0 存储。",
+      "schema": [
+        "create table Metric (metric_id integer primary key, label text, ratio real)"
+      ],
+      "steps": [
+        { "sql": "insert into Metric (metric_id, label, ratio) values (1, 'a', true)" },
+        { "sql": "select ratio from Metric where metric_id = 1" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::uuid_column_round_trip_through_sql_parameters",
+      "note": "VOS `uuid`→`text`。yydb 要求 UUID 经参数绑定（无 UUID 字面量语法），SQLite 只保存规范小写文本。",
+      "schema": [
+        "create table User (user_id text primary key, user_name text, active integer)"
+      ],
+      "steps": [
+        { "sql": "insert into User (user_id, user_name, active) values ('550e8400-e29b-41d4-a716-446655440000', 'ada', true)" },
+        { "sql": "select user_id, user_name from User where user_name = 'ada'" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "t": "550e8400-e29b-41d4-a716-446655440000" }, { "t": "ada" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::uuid_column_projects_compares_and_sorts_as_a_uuid",
+      "note": "VOS `uuid`→`text`。yydb 按 UUID 标量排序并验证存储中的类型标签，SQLite 只有文本，排序为文本序（`1111…` 在 `550e…` 之前，结果相同）。",
+      "schema": [
+        "create table User (user_id text primary key, user_name text, active integer)"
+      ],
+      "seed": [
+        "insert into User (user_id, user_name, active) values ('550e8400-e29b-41d4-a716-446655440000', 'ada', true)",
+        "insert into User (user_id, user_name, active) values ('11111111-1111-1111-1111-111111111111', 'linus', true)"
+      ],
+      "steps": [
+        { "sql": "select user_id from User order by user_id" },
+        { "sql": "select user_name from User where user_id = '550e8400-e29b-41d4-a716-446655440000'" }
+      ],
+      "expect": [
+        { "rows": [[{ "t": "11111111-1111-1111-1111-111111111111" }], [{ "t": "550e8400-e29b-41d4-a716-446655440000" }]] },
+        { "rows": [[{ "t": "ada" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::uuid_column_rejects_text_and_numbers_that_are_not_uuids",
+      "note": "子用例 `'not-a-uuid'`。yydb 校验 UUID 标量文本并拒绝，SQLite 的 TEXT 列原样保存。",
+      "schema": [
+        "create table User (user_id text primary key, user_name text, active integer)"
+      ],
+      "steps": [
+        { "sql": "insert into User (user_id, user_name, active) values ('not-a-uuid', 'ada', true)" },
+        { "sql": "select user_id from User where user_name = 'ada'" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "t": "not-a-uuid" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::uuid_column_rejects_text_and_numbers_that_are_not_uuids",
+      "note": "子用例数值 7。yydb 按类型族拒绝，SQLite 的 TEXT 亲和把整数 7 转成文本 `'7'`。这里写成字面量而不是参数：`sql.js` 把数值参数按 REAL 绑定，会得到 `'7.0'` 并与另两个引擎不一致，参数形式无法三方对齐。",
+      "schema": [
+        "create table User (user_id text primary key, user_name text, active integer)"
+      ],
+      "steps": [
+        { "sql": "insert into User (user_id, user_name, active) values (7, 'ada', true)" },
+        { "sql": "select user_id from User where user_name = 'ada'" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "t": "7" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::update_uuid_column_via_parameter_binding",
+      "note": "harness 没有 `affected` 通道，命中与否通过表内容回读。SQLite 的 `user_id = ?` 是文本等值比较。",
+      "schema": [
+        "create table User (user_id text primary key, user_name text, active integer)"
+      ],
+      "steps": [
+        { "sql": "insert into User (user_id, user_name, active) values (?, ?, true)", "params": ["11111111-1111-1111-1111-111111111111", "first"] },
+        { "sql": "update User set user_name = 'renamed' where user_id = ?", "params": ["11111111-1111-1111-1111-111111111111"] },
+        { "sql": "select user_name from User where active is true" },
+        { "sql": "update User set user_name = 'ghost' where user_id = ?", "params": ["22222222-2222-2222-2222-222222222222"] },
+        { "sql": "select user_name from User" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [] },
+        { "rows": [[{ "t": "renamed" }]] },
+        { "rows": [] },
+        { "rows": [[{ "t": "renamed" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::large_text_values_round_trip",
+      "note": "VOS `utf8`→`text`。500 字符邮箱与 200 次 `tenant-` 前缀的长文本原样往返。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, tenant, score, active) values (?, ?, ?, 0, true)", "params": [9001, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-"] },
+        { "sql": "select email, tenant from Account where account_id = 9001" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "t": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, { "t": "tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-tenant-" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_explicit_null_literal",
+      "note": "VOS `utf8` 且无 `@@` 的列可写 NULL 字面量。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "steps": [
+        { "sql": "insert into Account (account_id, email, tenant, score, active) values (9100, null, 't', 0, true)" },
+        { "sql": "select email from Account where account_id = 9100" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[null]] }
+      ]
+    },
+    {
+      "source": "sql.rs::blob_column_round_trips_raw_bytes_verbatim",
+      "note": "VOS `[]u8`→`blob`。yydb 经参数绑定写入，SQLite 用 `x'00FF1080'` 字节字面量；NUL 与非 UTF-8 字节都原样保存。",
+      "schema": [
+        "create table Asset (asset_id integer primary key, label text, payload blob)"
+      ],
+      "steps": [
+        { "sql": "insert into Asset (asset_id, label, payload) values (1, 'bin', x'00FF1080')" },
+        { "sql": "select payload from Asset where asset_id = 1" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "b": "00ff1080" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::blob_length_counts_bytes_while_char_length_counts_characters",
+      "note": "SQLite 没有 `char_length`，这里用 `length(text)`（按字符计数）等价表达；BLOB 仍按字节计数。",
+      "schema": [
+        "create table Asset (asset_id integer primary key, label text, payload blob)"
+      ],
+      "steps": [
+        { "sql": "insert into Asset (asset_id, label, payload) values (1, '😀', x'F09F9880')" },
+        { "sql": "select length(payload) as payload_len, length(label) as label_chars from Asset where asset_id = 1" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "4" }, { "i": "1" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::blob_equality_and_ordering_compare_raw_bytes",
+      "note": "VOS `[]u8`→`blob`。参数绑定改为 `x'…'` 字节字面量，等价；BLOB 按字节序列比较。",
+      "schema": [
+        "create table Asset (asset_id integer primary key, label text, payload blob)"
+      ],
+      "seed": [
+        "insert into Asset (asset_id, label, payload) values (1, 'a', x'0102')",
+        "insert into Asset (asset_id, label, payload) values (2, 'b', x'0103')",
+        "insert into Asset (asset_id, label, payload) values (3, 'c', x'FF')"
+      ],
+      "steps": [
+        { "sql": "select asset_id from Asset where payload = x'0102'" },
+        { "sql": "select asset_id from Asset order by payload" },
+        { "sql": "select asset_id from Asset where payload > x'0102' order by asset_id" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }]] },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] },
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::blob_and_text_never_compare_equal",
+      "note": "yydb 要求 BLOB 与 TEXT 没有共同比较域。SQLite 按存储类排序（TEXT < BLOB），因此文本永不等于 BLOB，结果同为空。",
+      "schema": [
+        "create table Asset (asset_id integer primary key, label text, payload blob)"
+      ],
+      "seed": [
+        "insert into Asset (asset_id, label, payload) values (1, 'ab', x'6162')"
+      ],
+      "steps": [
+        { "sql": "select asset_id from Asset where payload = 'ab'" }
+      ],
+      "expect": [{ "rows": [] }]
+    },
+    {
+      "source": "sql.rs::blob_column_rejects_a_text_literal_instead_of_encoding_it",
+      "note": "yydb 拒绝 TEXT 字面量写入 `bytes` 列。SQLite 的 BLOB 列无亲和转换，文本按 TEXT 原样存入。",
+      "schema": [
+        "create table Asset (asset_id integer primary key, label text, payload blob)"
+      ],
+      "steps": [
+        { "sql": "insert into Asset (asset_id, label, payload) values (1, 'a', 'text')" },
+        { "sql": "select payload from Asset where asset_id = 1" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "t": "text" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::blob_value_is_rejected_by_a_text_column",
+      "note": "yydb 拒绝 BLOB 写入 `utf8` 列。SQLite 的 TEXT 亲和不转换 BLOB，`label` 按 BLOB 存储；这里用 `x'6C6162656C'` 表达原始参数字节。",
+      "schema": [
+        "create table Asset (asset_id integer primary key, label text, payload blob)"
+      ],
+      "steps": [
+        { "sql": "insert into Asset (asset_id, label, payload) values (1, x'6C6162656C', x'01')" },
+        { "sql": "select label, payload from Asset where asset_id = 1" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "b": "6c6162656c" }, { "b": "01" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::char_length_rejects_a_blob_argument",
+      "note": "yydb 要求 `CHAR_LENGTH` 只接受文本并拒绝 BLOB。SQLite 没有 `char_length` 函数，三个引擎都在此处报错（原因不同，结果一致）。",
+      "schema": [
+        "create table Asset (asset_id integer primary key, label text, payload blob)"
+      ],
+      "seed": [
+        "insert into Asset (asset_id, label, payload) values (1, 'a', x'61')"
+      ],
+      "steps": [
+        { "sql": "select char_length(payload) as n from Asset" }
+      ],
+      "expect": [{ "error": true }]
+    },
+    {
+      "source": "sql.rs::length_rejects_a_non_text_non_blob_argument",
+      "note": "yydb 要求 `LENGTH` 只接受文本或 BLOB 并拒绝整数。SQLite 把整数当作文本 `'1'`，返回字符数 1，语句成功。",
+      "schema": [
+        "create table Asset (asset_id integer primary key, label text, payload blob)"
+      ],
+      "seed": [
+        "insert into Asset (asset_id, label, payload) values (1, 'a', x'61')"
+      ],
+      "steps": [
+        { "sql": "select length(asset_id) as n from Asset" }
+      ],
+      "expect": [{ "rows": [[{ "i": "1" }]] }]
+    },
+    {
+      "source": "sql.rs::explicit_cast_text_to_blob_is_the_only_text_to_blob_conversion",
+      "note": "VOS `[]u8`→`blob`。显式 `CAST(text AS BLOB)` 是唯一文本到 BLOB 的转换，长度按字节计。",
+      "schema": [
+        "create table Asset (asset_id integer primary key, label text, payload blob)"
+      ],
+      "seed": [
+        "insert into Asset (asset_id, label, payload) values (1, 'a', x'')"
+      ],
+      "steps": [
+        { "sql": "select cast('ab' as blob) as payload, length(cast('ab' as blob)) as payload_len from Asset where asset_id = 1" }
+      ],
+      "expect": [{ "rows": [[{ "b": "6162" }, { "i": "2" }]] }]
+    },
+    {
+      "source": "sql.rs::typed_columns_project_exact_scalars",
+      "note": "VOS `date`/`time`/`datetime`/`Decimal<12,2>` 一律映射为 `text`。yydb 投影类型化标量，SQLite 投影原文本；这里断言引擎真值。",
+      "schema": [
+        "create table Event (event_id integer primary key, label text, happened_on text, at_time text, created_at text, amount text)"
+      ],
+      "seed": [
+        "insert into Event (event_id, label, happened_on, at_time, created_at, amount) values (1, 'leap', '2024-02-29', '12:00:00', '2024-02-29T12:00:00Z', '1.50'), (2, 'old', '1999-12-31', '23:59:59', '2024-06-01T00:00:00Z', '10.00'), (3, 'new', '2024-01-01', '00:00:00', '2023-12-31T23:59:59Z', '-2.25')"
+      ],
+      "steps": [
+        { "sql": "select happened_on, at_time, created_at, amount from Event where event_id = 1" }
+      ],
+      "expect": [
+        { "rows": [[{ "t": "2024-02-29" }, { "t": "12:00:00" }, { "t": "2024-02-29T12:00:00Z" }, { "t": "1.50" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::typed_columns_compare_and_sort_by_their_exact_scalar",
+      "note": "VOS 的 date/time/datetime/decimal 在 SQLite 中是 `text`，比较退化为文本序。日期、时间与 ISO 时间戳的文本序恰好与标量序一致；`amount < '2'` 则因文本序把 `'10.00'` 也算作小于 `'2'`，与 yydb 的十进制比较不同。",
+      "schema": [
+        "create table Event (event_id integer primary key, label text, happened_on text, at_time text, created_at text, amount text)"
+      ],
+      "seed": [
+        "insert into Event (event_id, label, happened_on, at_time, created_at, amount) values (1, 'leap', '2024-02-29', '12:00:00', '2024-02-29T12:00:00Z', '1.50'), (2, 'old', '1999-12-31', '23:59:59', '2024-06-01T00:00:00Z', '10.00'), (3, 'new', '2024-01-01', '00:00:00', '2023-12-31T23:59:59Z', '-2.25')"
+      ],
+      "steps": [
+        { "sql": "select event_id from Event order by happened_on" },
+        { "sql": "select event_id from Event order by at_time" },
+        { "sql": "select event_id from Event order by created_at" },
+        { "sql": "select event_id from Event order by amount" },
+        { "sql": "select event_id from Event where created_at > ? order by event_id", "params": ["2024-01-01T00:00:00Z"] },
+        { "sql": "select event_id from Event where at_time < ? order by event_id", "params": ["23:00:00"] },
+        { "sql": "select event_id from Event where happened_on >= ? order by event_id", "params": ["2024-01-01"] },
+        { "sql": "select event_id from Event where amount < ? order by event_id", "params": ["2"] }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }], [{ "i": "1" }]] },
+        { "rows": [[{ "i": "3" }], [{ "i": "1" }], [{ "i": "2" }]] },
+        { "rows": [[{ "i": "3" }], [{ "i": "1" }], [{ "i": "2" }]] },
+        { "rows": [[{ "i": "3" }], [{ "i": "1" }], [{ "i": "2" }]] },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }]] },
+        { "rows": [[{ "i": "1" }], [{ "i": "3" }]] },
+        { "rows": [[{ "i": "1" }], [{ "i": "3" }]] },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::decimal_comparison_is_exact_across_declared_scales",
+      "note": "yydb 的十进制按数值比较，因此 `1.5` 与存储的 `1.50` 相等。SQLite 中 `amount` 是 `text`，按文本比较，`'1.5'` 不等于 `'1.50'`，两条都无命中。",
+      "schema": [
+        "create table Event (event_id integer primary key, label text, happened_on text, at_time text, created_at text, amount text)"
+      ],
+      "seed": [
+        "insert into Event (event_id, label, happened_on, at_time, created_at, amount) values (1, 'leap', '2024-02-29', '12:00:00', '2024-02-29T12:00:00Z', '1.50'), (2, 'old', '1999-12-31', '23:59:59', '2024-06-01T00:00:00Z', '10.00'), (3, 'new', '2024-01-01', '00:00:00', '2023-12-31T23:59:59Z', '-2.25')"
+      ],
+      "steps": [
+        { "sql": "select event_id from Event where amount = ?", "params": ["1.5"] },
+        { "sql": "select event_id from Event where amount = ?", "params": ["1.51"] }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::typed_columns_never_compare_equal_to_text_or_numbers",
+      "note": "yydb 的类型化列与文本/数字没有共同比较域。SQLite 中这些列是 `text`，同拼写的文本字面量会命中（前四个子用例），而数字 2 被文本亲和转成 `'2'` 后不命中任何 `amount`。",
+      "schema": [
+        "create table Event (event_id integer primary key, label text, happened_on text, at_time text, created_at text, amount text)"
+      ],
+      "seed": [
+        "insert into Event (event_id, label, happened_on, at_time, created_at, amount) values (1, 'leap', '2024-02-29', '12:00:00', '2024-02-29T12:00:00Z', '1.50'), (2, 'old', '1999-12-31', '23:59:59', '2024-06-01T00:00:00Z', '10.00'), (3, 'new', '2024-01-01', '00:00:00', '2023-12-31T23:59:59Z', '-2.25')"
+      ],
+      "steps": [
+        { "sql": "select event_id from Event where happened_on = '2024-02-29'" },
+        { "sql": "select event_id from Event where at_time = '12:00:00'" },
+        { "sql": "select event_id from Event where created_at = '2024-02-29T12:00:00Z'" },
+        { "sql": "select event_id from Event where amount = '1.50'" },
+        { "sql": "select event_id from Event where amount = 2" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }]] },
+        { "rows": [[{ "i": "1" }]] },
+        { "rows": [[{ "i": "1" }]] },
+        { "rows": [[{ "i": "1" }]] },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::typed_column_writes_reject_values_outside_the_declared_scalar",
+      "note": "子用例 `happened_on = '2024-02-30'`。yydb 按 ISO 日期解析并拒绝非法日期，SQLite 的 `text` 列原样保存。",
+      "schema": [
+        "create table Event (event_id integer primary key, label text, happened_on text, at_time text, created_at text, amount text)"
+      ],
+      "steps": [
+        { "sql": "insert into Event (event_id, label, happened_on, at_time, created_at, amount) values (1, 'bad', '2024-02-30', '00:00:00', '2024-01-01T00:00:00Z', '1.00')" },
+        { "sql": "select happened_on from Event where event_id = 1" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "t": "2024-02-30" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::typed_column_writes_reject_values_outside_the_declared_scalar",
+      "note": "子用例 `at_time = '25:00:00'`。yydb 拒绝越界时间，SQLite 的 `text` 列原样保存。",
+      "schema": [
+        "create table Event (event_id integer primary key, label text, happened_on text, at_time text, created_at text, amount text)"
+      ],
+      "steps": [
+        { "sql": "insert into Event (event_id, label, happened_on, at_time, created_at, amount) values (1, 'bad', '2024-01-01', '25:00:00', '2024-01-01T00:00:00Z', '1.00')" },
+        { "sql": "select at_time from Event where event_id = 1" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "t": "25:00:00" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::typed_column_writes_reject_values_outside_the_declared_scalar",
+      "note": "子用例 `created_at = '2024-01-01T00:00:00+08:00'`。yydb 只接受 UTC `Z` 时间戳，SQLite 的 `text` 列原样保存带偏移的文本。",
+      "schema": [
+        "create table Event (event_id integer primary key, label text, happened_on text, at_time text, created_at text, amount text)"
+      ],
+      "steps": [
+        { "sql": "insert into Event (event_id, label, happened_on, at_time, created_at, amount) values (1, 'bad', '2024-01-01', '00:00:00', '2024-01-01T00:00:00+08:00', '1.00')" },
+        { "sql": "select created_at from Event where event_id = 1" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "t": "2024-01-01T00:00:00+08:00" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::typed_column_writes_reject_values_outside_the_declared_scalar",
+      "note": "子用例 `amount = '1.234'`。yydb 按 `Decimal<12,2>` 拒绝超出声明标度的小数，SQLite 的 `text` 列原样保存。",
+      "schema": [
+        "create table Event (event_id integer primary key, label text, happened_on text, at_time text, created_at text, amount text)"
+      ],
+      "steps": [
+        { "sql": "insert into Event (event_id, label, happened_on, at_time, created_at, amount) values (1, 'bad', '2024-01-01', '00:00:00', '2024-01-01T00:00:00Z', '1.234')" },
+        { "sql": "select amount from Event where event_id = 1" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "t": "1.234" }]] }
+      ]
+    }
+  ]
+}
