@@ -295,43 +295,20 @@ fn json_string(value: &str) -> String {
 mod tests {
     use super::*;
 
+    // The only Rust-side test. It proves the crate compiles, a database opens
+    // and one create/insert/select round trip returns the row it wrote. The
+    // published host contract is judged by the `sqlite.ts` platform stage.
     #[test]
-    fn inserts_and_reads_back_through_sql() {
-        let mut engine = Engine::new(Some(4096)).expect("open");
+    fn opens_and_round_trips_one_row() {
+        let mut engine = Engine::new(None).expect("open");
         let results = engine
             .execute(
-                "create table t (id integer primary key, label text not null); \
-                 insert into t (label) values ('alpha'); \
-                 select count(*) from t; \
-                 select * from t;",
+                "create table smoke (id integer primary key, label text not null); \
+                 insert into smoke (label) values ('alpha'); \
+                 select * from smoke;",
             )
             .expect("execute");
-        assert_eq!(results.len(), 4);
-        assert_eq!(results[2].rows, vec![vec![Cell::Integer(1)]]);
-        assert_eq!(results[3].rows, vec![vec![Cell::Integer(1), Cell::Text("alpha".to_string())]]);
-    }
-
-    #[test]
-    fn rejects_unknown_tables_and_arity_mismatch() {
-        let mut engine = Engine::new(None).expect("open");
-        let error = engine.execute("insert into missing values (1)").expect_err("reject");
-        assert!(error.contains("unknown table"), "{error}");
-        engine.execute("create table t (id integer primary key, label text)").expect("create");
-        let error = engine.execute("insert into t values (1)").expect_err("reject");
-        assert!(error.contains("expects 2 values"), "{error}");
-    }
-
-    #[test]
-    fn serializes_rows_as_json() {
-        let mut engine = Engine::new(None).expect("open");
-        engine
-            .execute("create table t (id integer primary key, label text); insert into t (label) values ('a')")
-            .expect("execute");
-        let results = engine.execute("select * from t").expect("select");
-        let json = results_json(&results);
-        assert_eq!(
-            json,
-            r#"[{"statement":"select","affected":0,"columns":["id","label"],"rows":[[1,"a"]]}]"#
-        );
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[2].rows, vec![vec![Cell::Integer(1), Cell::Text("alpha".to_string())]]);
     }
 }

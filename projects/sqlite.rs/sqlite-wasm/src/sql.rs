@@ -650,26 +650,3 @@ impl Parser {
 fn describe_expected(token: &Token) -> String {
     token.describe()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_supported_statements() {
-        let statements = parse("create table t (id integer primary key, label text); insert into t (label) values ('a'); select count(*) from t")
-            .expect("parse");
-        assert_eq!(statements.len(), 3);
-        assert!(matches!(&statements[0], Statement::CreateTable { name, .. } if name == "t"));
-        assert!(matches!(&statements[1], Statement::Insert { rows, .. } if rows.len() == 1));
-        assert!(matches!(&statements[2], Statement::Select { items: SelectItems::CountAll, .. }));
-    }
-
-    #[test]
-    fn rejects_unsupported_statements() {
-        let error = parse("delete from t").expect_err("reject");
-        assert!(error.contains("unsupported statement"), "{error}");
-        let error = parse("select * from t order by id").expect_err("reject");
-        assert!(error.contains("unsupported `SELECT` clause"), "{error}");
-    }
-}
