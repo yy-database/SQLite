@@ -120,7 +120,7 @@ function externalCheck(): { ok: boolean; missing: string[]; used: string[] } {
   const used = EXTERNAL_CALLS.filter((name) => text.includes(name));
   const missing = EXTERNAL_CALLS.filter((name) => !text.includes(name));
   // Two independent external implementations are the minimum for a
-  // self-checked assertion, so two of the four is enough to pass.
+  // self-checked assertion, so two of the three is enough to pass.
   return { ok: used.length >= 2, missing, used };
 }
 
