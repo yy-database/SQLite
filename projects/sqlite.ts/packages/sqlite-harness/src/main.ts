@@ -5,7 +5,7 @@ import { nativeModulePath, parseOptions } from "./util.ts";
 
 const USAGE = `sqlite-harness
 
-  node projects/sqlite.ts/packages/sqlite-harness/cli.mjs <command> [--json]
+  node projects/sqlite.ts/packages/sqlite-harness/bin/cli.mjs <command> [--json]
 
 Commands
   test         build the native module, run the TypeScript and Python suites, then all platform smokes
