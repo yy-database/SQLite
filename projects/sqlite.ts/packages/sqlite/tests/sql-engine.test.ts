@@ -541,6 +541,27 @@ test("rowid, _rowid_ and oid expose the implicit primary key", () => {
   assert.deepEqual(engine.execute("select rowid from shadow").rows, [[7]]);
 });
 
+// SQLite keeps text and composite primary keys as rowid tables; the key is
+// materialized as an automatic unique index instead of a clustered layout.
+test("text and composite primary keys are automatic unique indexes", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table tp(k text primary key, v integer)");
+  engine.execute("insert into tp values ('a', 1), ('b', 2)");
+  assert.deepEqual(engine.execute("select k, v from tp").rows, [["a", 1], ["b", 2]]);
+  assert.deepEqual(engine.execute("select rowid from tp").rows, [[1], [2]]);
+  assert.equal(engine.tryExecute("insert into tp values ('a', 3)").error?.code, "storage");
+
+  engine.execute("create table pkab(a integer, b integer, primary key (a, b))");
+  engine.execute("insert into pkab values (1, 1), (2, 2)");
+  assert.deepEqual(engine.execute("select a, b from pkab").rows, [[1, 1], [2, 2]]);
+  assert.equal(engine.tryExecute("insert into pkab values (1, 1)").error?.code, "storage");
+
+  // A lone declared INTEGER key stays the rowid alias.
+  engine.execute("create table ta(a integer, primary key (a))");
+  engine.execute("insert into ta values (5)");
+  assert.deepEqual(engine.execute("select rowid, a from ta").rows, [[5, 5]]);
+});
+
 // Casts follow SQLite's conversion rules for all five target types.
 test("cast follows sqlite conversions", () => {
   const engine = createEngine(4096);
