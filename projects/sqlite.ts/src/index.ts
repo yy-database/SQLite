@@ -69,6 +69,7 @@ export interface NativeDatabase {
   table(name: string, limits?: ReadLimits): DecodedRow[];
   tableRaw(name: string, limits?: ReadLimits): RawRow[];
   tableWithoutRowid(name: string, limits?: ReadLimits): RecordValue[][];
+  index(name: string, limits?: ReadLimits): DecodedRow[];
   pages(): Buffer;
 }
 

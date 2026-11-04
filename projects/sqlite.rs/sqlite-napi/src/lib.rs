@@ -4,7 +4,7 @@ use napi::bindgen_prelude::{BigInt, Buffer};
 use napi_derive::napi;
 use sqlite::{
     RecordLimits, RecordValue, SchemaObjectKind, TableLimits, TextEncoding, decode_library_version, decode_record,
-    read_named_table, read_named_without_rowid, read_schema, validate_database,
+    read_named_index, read_named_table, read_named_without_rowid, read_schema, validate_database,
 };
 
 /// Optional resource bounds for each schema or table scan.
@@ -160,6 +160,23 @@ fn build_decoded_payloads(bytes: &[u8], payloads: Vec<Vec<u8>>, limits: TableLim
             decode_record(&payload, encoding, record_limits)
                 .map(|columns| columns.into_iter().map(record_value).collect())
                 .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+        .collect()
+}
+
+fn build_index_rows(bytes: &[u8], payloads: Vec<Vec<u8>>, limits: TableLimits) -> napi::Result<Vec<SqliteDecodedRow>> {
+    let encoding = detect_encoding(bytes)?;
+    let record_limits = RecordLimits { max_columns: 1024, max_payload_bytes: limits.max_payload_bytes.max(1_048_576) };
+    payloads
+        .into_iter()
+        .map(|payload| {
+            let mut columns = decode_record(&payload, encoding, record_limits).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            let trailing = columns.pop().ok_or_else(|| napi::Error::from_reason("sqlite index record has no rowid column"))?;
+            let rowid = match trailing {
+                RecordValue::Integer(rowid) => rowid,
+                _ => return Err(napi::Error::from_reason("sqlite index record rowid is not an integer")),
+            };
+            Ok(SqliteDecodedRow { rowid: BigInt::from(rowid), columns: columns.into_iter().map(record_value).collect() })
         })
         .collect()
 }
@@ -349,6 +366,14 @@ impl SqliteDatabase {
         let payloads =
             read_named_without_rowid(&self.bytes, &name, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
         build_decoded_payloads(&self.bytes, payloads, resolved)
+    }
+
+    /// Reads decoded typed entries from a secondary index in key order.
+    #[napi]
+    pub fn index(&self, name: String, limits: Option<SqliteReadLimits>) -> napi::Result<Vec<SqliteDecodedRow>> {
+        let resolved = SqliteReadLimits::resolve(limits);
+        let payloads = read_named_index(&self.bytes, &name, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        build_index_rows(&self.bytes, payloads, resolved)
     }
 
     /// Reads raw records (undecoded payload) from an ordinary rowid table.
