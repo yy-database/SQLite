@@ -1,0 +1,148 @@
+{
+  "$comment": "Every suite case must name the external engine that judges it. Self-comparison alone is not capability evidence. `direction` is `both`, `write-to-external` or `external-to-read`. A capability must be covered in both directions across its cases unless `externalOnly` explains why.",
+  "sources": ["python-sqlite3", "better-sqlite3", "integrity-check"],
+  "directions": ["both", "write-to-external", "external-to-read"],
+  "capabilities": {
+    "page-header": {},
+    "leaf-split": {},
+    "overflow": {},
+    "serial-types": {},
+    "real-affinity": {},
+    "rowid-alias": {},
+    "sqlite-master": {},
+    "mutation": {},
+    "index-btree": {},
+    "wal": {
+      "externalOnly": "The writer never emits WAL frames or a -wal sidecar, so only external-written WAL can be read back."
+    },
+    "journal": {
+      "externalOnly": "The writer never leaves a hot rollback journal, so only external-crashed journals can be replayed."
+    }
+  },
+  "suites": {
+    "sqlite.ts": {
+      "page header and page size survive the writer": {
+        "sources": ["better-sqlite3", "integrity-check"],
+        "direction": "both",
+        "capability": "page-header"
+      },
+      "leaf splits and dividers keep rowid order across external readers": {
+        "sources": ["better-sqlite3", "integrity-check"],
+        "direction": "both",
+        "capability": "leaf-split"
+      },
+      "overflow payloads round trip through better-sqlite3": {
+        "sources": ["better-sqlite3", "integrity-check"],
+        "direction": "both",
+        "capability": "overflow"
+      },
+      "serial types preserve storage class before and after external readers": {
+        "sources": ["better-sqlite3", "integrity-check"],
+        "direction": "both",
+        "capability": "serial-types"
+      },
+      "declared REAL columns apply real affinity": {
+        "sources": ["better-sqlite3"],
+        "direction": "both",
+        "capability": "real-affinity"
+      },
+      "INTEGER PRIMARY KEY stays a rowid alias": {
+        "sources": ["better-sqlite3"],
+        "direction": "both",
+        "capability": "rowid-alias"
+      },
+      "sqlite_master and index listing match external pragma": {
+        "sources": ["better-sqlite3"],
+        "direction": "both",
+        "capability": "sqlite-master"
+      },
+      "update delete and rollback stay externally consistent": {
+        "sources": ["better-sqlite3", "integrity-check"],
+        "direction": "both",
+        "capability": "mutation"
+      },
+      "WITHOUT ROWID rows are read from the primary-key index b-tree": {
+        "sources": ["better-sqlite3"],
+        "direction": "external-to-read",
+        "capability": "index-btree"
+      },
+      "secondary index scans match external INDEXED BY order in both directions": {
+        "sources": ["better-sqlite3", "integrity-check"],
+        "direction": "both",
+        "capability": "index-btree"
+      },
+      "committed WAL frames are visible without a checkpoint": {
+        "sources": ["better-sqlite3"],
+        "direction": "external-to-read",
+        "capability": "wal"
+      },
+      "hot rollback journal rolls partially written pages back": {
+        "sources": ["better-sqlite3", "integrity-check"],
+        "direction": "external-to-read",
+        "capability": "journal"
+      }
+    },
+    "sqlite.py": {
+      "test_page_header_and_page_size": {
+        "sources": ["python-sqlite3", "integrity-check"],
+        "direction": "both",
+        "capability": "page-header"
+      },
+      "test_leaf_split_divider_and_rowid_order": {
+        "sources": ["python-sqlite3", "integrity-check"],
+        "direction": "both",
+        "capability": "leaf-split"
+      },
+      "test_overflow_payload_round_trip": {
+        "sources": ["python-sqlite3", "integrity-check"],
+        "direction": "both",
+        "capability": "overflow"
+      },
+      "test_serial_types_preserve_storage_class": {
+        "sources": ["python-sqlite3", "integrity-check"],
+        "direction": "both",
+        "capability": "serial-types"
+      },
+      "test_real_affinity_on_numeric_text": {
+        "sources": ["python-sqlite3"],
+        "direction": "both",
+        "capability": "real-affinity"
+      },
+      "test_integer_primary_key_is_rowid_alias": {
+        "sources": ["python-sqlite3"],
+        "direction": "both",
+        "capability": "rowid-alias"
+      },
+      "test_sqlite_master_index_and_autoindex": {
+        "sources": ["python-sqlite3"],
+        "direction": "both",
+        "capability": "sqlite-master"
+      },
+      "test_update_delete_rollback": {
+        "sources": ["python-sqlite3", "integrity-check"],
+        "direction": "both",
+        "capability": "mutation"
+      },
+      "test_without_rowid_rows_are_read_in_key_order": {
+        "sources": ["python-sqlite3"],
+        "direction": "external-to-read",
+        "capability": "index-btree"
+      },
+      "test_secondary_index_matches_external_indexed_by": {
+        "sources": ["python-sqlite3", "integrity-check"],
+        "direction": "both",
+        "capability": "index-btree"
+      },
+      "test_committed_wal_frames_are_visible": {
+        "sources": ["python-sqlite3"],
+        "direction": "external-to-read",
+        "capability": "wal"
+      },
+      "test_hot_journal_rolls_partial_pages_back": {
+        "sources": ["python-sqlite3", "integrity-check"],
+        "direction": "external-to-read",
+        "capability": "journal"
+      }
+    }
+  }
+}
