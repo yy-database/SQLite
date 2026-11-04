@@ -207,6 +207,106 @@ test("the snapshot written after SQL execution opens in an external engine", () 
   }
 });
 
+test("comma-separated tables produce a Cartesian product", () => {
+  const engine = createEngine();
+  engine.execute("create table lefts (id integer primary key, label text)");
+  engine.execute("create table rights (id integer primary key, tag text)");
+  engine.executeBatch([
+    "insert into lefts (label) values ('a')",
+    "insert into lefts (label) values ('b')",
+    "insert into rights (tag) values ('x')",
+    "insert into rights (tag) values ('y')",
+    "insert into rights (tag) values ('z')",
+  ]);
+
+  const product = engine.execute("select * from lefts, rights");
+  // Rows are the product of both sides; columns are concatenated in `FROM` order.
+  assert.equal(product.rows.length, 6);
+  assert.deepEqual(product.columns, ["id", "label", "id", "tag"]);
+  assert.deepEqual(product.rows, [
+    [1, "a", 1, "x"],
+    [1, "a", 2, "y"],
+    [1, "a", 3, "z"],
+    [2, "b", 1, "x"],
+    [2, "b", 2, "y"],
+    [2, "b", 3, "z"],
+  ]);
+
+  assert.deepEqual(engine.execute("select count(*) from lefts, rights").rows, [[6]]);
+  assert.deepEqual(engine.execute("select count(*) from lefts, rights where rights.tag = 'y'").rows, [[2]]);
+  assert.deepEqual(engine.execute("select * from lefts, rights limit 4").rows.length, 4);
+});
+
+test("an empty source empties the Cartesian product", () => {
+  const engine = createEngine();
+  engine.execute("create table one (id integer primary key, label text)");
+  engine.execute("create table none (id integer primary key, label text)");
+  engine.executeBatch(["insert into one (label) values ('a')", "insert into one (label) values ('b')"]);
+
+  assert.deepEqual(engine.execute("select * from one, none").rows, []);
+  assert.deepEqual(engine.execute("select * from none, one").rows, []);
+  assert.deepEqual(engine.execute("select count(*) from one, none").rows, [[0]]);
+  assert.deepEqual(engine.execute("select count(*) from none, one").rows, [[0]]);
+});
+
+test("table aliases resolve qualified columns", () => {
+  const engine = createEngine();
+  engine.execute("create table users (id integer primary key, name text)");
+  engine.execute("create table tags (id integer primary key, tag text)");
+  engine.executeBatch([
+    "insert into users (name) values ('ada')",
+    "insert into users (name) values ('bob')",
+    "insert into tags (tag) values ('red')",
+    "insert into tags (tag) values ('blue')",
+  ]);
+
+  const aliased = engine.execute("select u.name, g.tag from users as u, tags g where g.tag = 'red'");
+  assert.deepEqual(aliased.columns, ["name", "tag"]);
+  assert.deepEqual(aliased.rows, [
+    ["ada", "red"],
+    ["bob", "red"],
+  ]);
+
+  // A bare column that only one source defines resolves the same way.
+  const bare = engine.execute("select name, tag from users, tags where tag = 'red'");
+  assert.deepEqual(bare.columns, ["name", "tag"]);
+  assert.deepEqual(bare.rows, aliased.rows);
+
+  // Qualified and bare references agree on a single table too.
+  const qualified = engine.execute("select users.name from users order by name");
+  assert.deepEqual(qualified.rows, engine.execute("select name from users order by name").rows);
+});
+
+test("multi-table select rejects ambiguous, unknown and duplicate names", () => {
+  const engine = createEngine();
+  engine.execute("create table lefts (id integer primary key, label text)");
+  engine.execute("create table rights (id integer primary key, tag text)");
+
+  const ambiguous = engine.tryExecute("select id from lefts, rights");
+  assert.equal(ambiguous.ok, false);
+  assert.equal(ambiguous.error?.code, "ambiguous-column");
+  assert.match(ambiguous.error?.message ?? "", /ambiguous column `id`/);
+
+  const unknownSource = engine.tryExecute("select * from lefts, ghosts");
+  assert.equal(unknownSource.ok, false);
+  assert.equal(unknownSource.error?.code, "unknown-table");
+  assert.match(unknownSource.error?.message ?? "", /unknown table `ghosts`/);
+
+  const unknownQualifier = engine.tryExecute("select nope.id from lefts, rights");
+  assert.equal(unknownQualifier.ok, false);
+  assert.equal(unknownQualifier.error?.code, "unknown-table");
+  assert.match(unknownQualifier.error?.message ?? "", /unknown table `nope` in the `FROM` clause/);
+
+  const shadowed = engine.tryExecute("select lefts.id from lefts as l");
+  assert.equal(shadowed.ok, false);
+  assert.equal(shadowed.error?.code, "unknown-table");
+
+  const duplicate = engine.tryExecute("select * from lefts as l, rights l");
+  assert.equal(duplicate.ok, false);
+  assert.equal(duplicate.error?.code, "duplicate-alias");
+  assert.match(duplicate.error?.message ?? "", /`l` is used more than once in `FROM`/);
+});
+
 test("one hundred sequentially created tables stay writable and readable", () => {
   // Regression: `sqlite_master` lives in page 1, which also owns the 100-byte
   // database header. The writer used to pack its cells as if the whole page
@@ -226,5 +326,89 @@ test("one hundred sequentially created tables stay writable and readable", () =>
   for (const index of [1, 41, 49, 50, 51, 100]) {
     const selected = engine.execute(`select a, b, x from t${index}`);
     assert.deepEqual(selected.rows, [[index, index * 2, `v${index}`]]);
+  }
+});
+
+test("bracketed column types keep SQLite affinity and the declared text", () => {
+  const engine = createEngine();
+  engine.execute(
+    "create table typed (id integer primary key, name varchar(30), price decimal(10,2), code char(4), ratio double precision)",
+  );
+  engine.execute("insert into typed (name, price, code, ratio) values (7, '2.5', 3, 4)");
+
+  // VARCHAR/CHAR carry TEXT affinity, DECIMAL carries NUMERIC, DOUBLE PRECISION
+  // carries REAL, so the stored values change storage class exactly as upstream.
+  const selected = engine.execute("select * from typed");
+  assert.deepEqual(selected.columns, ["id", "name", "price", "code", "ratio"]);
+  assert.deepEqual(selected.rows, [[1, "7", 2.5, "3", 4]]);
+
+  const workspaceHandle = workspace();
+  try {
+    writeFileSync(workspaceHandle.path, engine.snapshot());
+    const external = new BetterSqlite(workspaceHandle.path);
+    try {
+      assert.equal(external.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+      const types = external
+        .prepare("SELECT typeof(name) AS nameType, typeof(price) AS priceType, typeof(ratio) AS ratioType FROM typed")
+        .get() as unknown as Record<string, string>;
+      assert.deepEqual(types, { nameType: "text", priceType: "real", ratioType: "real" });
+      // The declared type, parentheses included, survives in sqlite_master.
+      const schema = external.prepare("SELECT sql FROM sqlite_master WHERE name = 'typed'").get() as unknown as { sql: string };
+      assert.match(schema.sql, /varchar\(30\)/i);
+      assert.match(schema.sql, /decimal\(10,2\)/i);
+    } finally {
+      external.close();
+    }
+  } finally {
+    workspaceHandle.dispose();
+  }
+});
+
+test("create index accepts single, composite, unique and if not exists forms", () => {
+  const engine = createEngine();
+  engine.exec(
+    "create table t8 (a8 integer, b8 integer, c8 text); \
+     create index t8i0 on t8(a8); \
+     create index t8all on t8(c8 desc, b8 asc, a8 desc); \
+     create unique index t8u on t8(a8)",
+  );
+
+  assert.throws(() => engine.execute("create index t8i0 on t8(a8)"), /index `t8i0` already exists/);
+  const repeated = engine.execute("create index if not exists t8i0 on t8(a8)");
+  assert.equal(repeated.statement, "create-index");
+  assert.equal(repeated.affected, 0);
+
+  const tableConflict = engine.tryExecute("create index t8 on t8(a8)");
+  assert.equal(tableConflict.error?.code, "table-exists");
+  assert.match(tableConflict.error?.message ?? "", /there is already a table named `t8`/);
+  assert.equal(engine.tryExecute("create index on_missing on ghosts(a8)").error?.code, "unknown-table");
+  assert.equal(engine.tryExecute("create index on_column on t8(ghost)").error?.code, "unknown-column");
+  // Partial indexes are rejected closed instead of half-built.
+  assert.equal(engine.tryExecute("create index partial on t8(a8) where a8 > 0").error?.code, "unsupported-clause");
+
+  // The unique index is enforced by later inserts.
+  engine.execute("insert into t8 values (1, 2, 'x')");
+  assert.throws(() => engine.execute("insert into t8 values (1, 3, 'y')"), /UNIQUE constraint failed/i);
+
+  // SQLite also rejects building a unique index over existing duplicates.
+  engine.exec("create table dup (a integer, b text); insert into dup values (1, 'x'); insert into dup values (1, 'y')");
+  const duplicateKey = engine.tryExecute("create unique index dup_a on dup(a)");
+  assert.equal(duplicateKey.error?.code, "unique-constraint");
+  assert.match(duplicateKey.error?.message ?? "", /UNIQUE constraint failed: dup.a/);
+
+  // Index pages are rebuilt after inserts, so the exported image stays valid.
+  const workspaceHandle = workspace();
+  try {
+    writeFileSync(workspaceHandle.path, engine.snapshot());
+    const external = new BetterSqlite(workspaceHandle.path);
+    try {
+      assert.equal(external.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+      const names = external.prepare("SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name").all() as unknown as Array<{ name: string }>;
+      assert.deepEqual(names.map((row) => row.name), ["t8all", "t8i0", "t8u"]);
+    } finally {
+      external.close();
+    }
+  } finally {
+    workspaceHandle.dispose();
   }
 });
