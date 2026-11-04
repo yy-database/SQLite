@@ -1,0 +1,433 @@
+{
+  "group": "errors",
+  "cases": [
+    {
+      "source": "sql.rs::select_rejects_arithmetic_over_text",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). yydb rejects arithmetic over text, while SQLite coerces non-numeric text to 0, so `'t1' + 1` is 1 for every row.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select tenant + 1 as bumped from Account" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "1" }], [{ "i": "1" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::select_rejects_integer_arithmetic_overflow",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). yydb rejects integer overflow instead of wrapping, while SQLite promotes the overflowing product to floating point.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select score * 9223372036854775807 as blown from Account" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "r": "9.223372036854776e+19" }],
+            [{ "r": "2.7670116110564327e+20" }],
+            [{ "r": "1.844674407370955e+20" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::aggregate_rejects_a_non_numeric_argument",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). yydb rejects SUM and AVG over a non-numeric argument, while SQLite reads non-numeric text as 0.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select SUM(email) as total from Account" },
+        { "sql": "select AVG(email) as average from Account" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "0" }]] },
+        { "rows": [[{ "i": "0" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::scalar_functions_reject_wrong_argument_counts_at_prepare_time",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). Eight of the nine arities yydb rejects are rejected by SQLite too, but `CONCAT(email)` succeeds because SQLite's `concat()` is variadic. SQLite also has no `CHAR_LENGTH`, so both `CHAR_LENGTH` steps error as `no such function` in all three engines.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "SELECT LOWER() AS v FROM Account" },
+        { "sql": "SELECT LOWER(email, email) AS v FROM Account" },
+        { "sql": "SELECT SUBSTR(email) AS v FROM Account" },
+        { "sql": "SELECT CONCAT(email) AS v FROM Account" },
+        { "sql": "SELECT CHAR_LENGTH() AS v FROM Account" },
+        { "sql": "SELECT CHAR_LENGTH(email, email) AS v FROM Account" },
+        { "sql": "SELECT REPLACE(email) AS v FROM Account" },
+        { "sql": "SELECT REPLACE(email, 'a') AS v FROM Account" },
+        { "sql": "SELECT COALESCE() AS v FROM Account" }
+      ],
+      "expect": [
+        { "error": true },
+        { "error": true },
+        { "error": true },
+        {
+          "rows": [
+            [{ "t": "ada@example.test" }],
+            [{ "t": "linus@example.test" }],
+            [{ "t": "grace@example.test" }]
+          ]
+        },
+        { "error": true },
+        { "error": true },
+        { "error": true },
+        { "error": true },
+        { "error": true }
+      ]
+    },
+    {
+      "source": "sql.rs::substr_rejects_ambiguous_positions",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). yydb rejects a start of 0 and a negative length, while SQLite treats start 0 as the first character and a negative length as an empty result.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "SELECT SUBSTR('abc', 0) AS v FROM Account" },
+        { "sql": "SELECT SUBSTR('abc', 1, -1) AS v FROM Account" }
+      ],
+      "expect": [
+        { "rows": [[{ "t": "abc" }], [{ "t": "abc" }], [{ "t": "abc" }]] },
+        { "rows": [[{ "t": "" }], [{ "t": "" }], [{ "t": "" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::select_rejects_star_mixed_with_projected_columns",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). yydb rejects mixing `*` with another projected column, while SQLite accepts it. The second `email` is aliased `email_dup` because `better-sqlite3` collapses duplicate result-column names.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select *, email as email_dup from Account" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [
+              { "i": "1" },
+              { "t": "ada@example.test" },
+              { "t": "t1" },
+              { "i": "10" },
+              { "i": "1" },
+              { "t": "ada@example.test" }
+            ],
+            [
+              { "i": "2" },
+              { "t": "linus@example.test" },
+              { "t": "t1" },
+              { "i": "30" },
+              { "i": "0" },
+              { "t": "linus@example.test" }
+            ],
+            [
+              { "i": "3" },
+              { "t": "grace@example.test" },
+              { "t": "t2" },
+              { "i": "20" },
+              { "i": "1" },
+              { "t": "grace@example.test" }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::select_rejects_arithmetic_on_rhs_of_predicate",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). yydb rejects arithmetic on the right-hand side of a predicate, while SQLite evaluates `1 + 1` and no seeded score equals 2.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "SELECT * FROM Account WHERE score = 1 + 1" }
+      ],
+      "expect": [
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::select_rejects_like_operator",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). yydb rejects `LIKE`, while SQLite supports it and every seeded email matches the pattern.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "SELECT * FROM Account WHERE email LIKE '%@example.test'" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, { "t": "ada@example.test" }, { "t": "t1" }, { "i": "10" }, { "i": "1" }],
+            [{ "i": "2" }, { "t": "linus@example.test" }, { "t": "t1" }, { "i": "30" }, { "i": "0" }],
+            [{ "i": "3" }, { "t": "grace@example.test" }, { "t": "t2" }, { "i": "20" }, { "i": "1" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::select_rejects_without_from_clause",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). yydb rejects a projection without `FROM`, while SQLite allows `SELECT 1` and returns a single row.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "SELECT 1" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::select_with_boolean_literal_always_true_predicate",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). SQLite accepts the `true` literal as 1, so every row passes the predicate.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "SELECT account_id FROM Account WHERE true" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::select_with_boolean_literal_always_false_predicate",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). SQLite accepts the `false` literal as 0, so no row passes the predicate.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "SELECT account_id FROM Account WHERE false" }
+      ],
+      "expect": [
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::bare_bool_column_reference_as_predicate_is_rejected_by_parser",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). yydb's parser rejects a bare column as a `WHERE` predicate, while SQLite treats a non-zero value as true and keeps the `active = 1` rows.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "SELECT * FROM Account WHERE active" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, { "t": "ada@example.test" }, { "t": "t1" }, { "i": "10" }, { "i": "1" }],
+            [{ "i": "3" }, { "t": "grace@example.test" }, { "t": "t2" }, { "i": "20" }, { "i": "1" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::select_rejects_column_to_column_comparison_on_rhs",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). The Rust test only inspected lowering (`Pred::FieldCmpField`). SQLite executes the self-comparison and every row matches itself.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "SELECT * FROM Account WHERE account_id = account_id" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, { "t": "ada@example.test" }, { "t": "t1" }, { "i": "10" }, { "i": "1" }],
+            [{ "i": "2" }, { "t": "linus@example.test" }, { "t": "t1" }, { "i": "30" }, { "i": "0" }],
+            [{ "i": "3" }, { "t": "grace@example.test" }, { "t": "t2" }, { "i": "20" }, { "i": "1" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_rejects_missing_column_list",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). yydb requires an explicit column list, while SQLite accepts positional `VALUES` (`true` becomes 1) and inserts the row without producing a result set.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "steps": [
+        { "sql": "INSERT INTO Account VALUES (1, 'x', 't', 0, true)" }
+      ],
+      "expect": [
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_rejects_column_value_count_mismatch",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). Both yydb and SQLite reject a column list that does not match the value count.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "steps": [
+        { "sql": "INSERT INTO Account (account_id, email) VALUES (1)" }
+      ],
+      "expect": [
+        { "error": true }
+      ]
+    },
+    {
+      "source": "sql.rs::insert_lowers_every_values_row_into_one_insert_op",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). The Rust assertion was lowering-internal (one insert op holding two rows), so the ported case checks the observable behaviour: both rows are inserted and read back.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "steps": [
+        {
+          "sql": "INSERT INTO Account (account_id, email, tenant, score, active) VALUES (1, 'a', 't', 0, true), (2, 'b', 't', 1, false)"
+        },
+        { "sql": "SELECT account_id, email FROM Account ORDER BY account_id" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }, { "t": "a" }], [{ "i": "2" }, { "t": "b" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::unsupported_oak_sql_clauses_are_rejected_with_their_own_message",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). yydb rejects `INSERT ... SELECT DISTINCT` as an unsupported clause, while SQLite accepts it and the empty source inserts no rows.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "steps": [
+        {
+          "sql": "INSERT INTO Account (account_id, email, tenant, score, active) SELECT DISTINCT account_id, email, tenant, score, active FROM Account"
+        }
+      ],
+      "expect": [
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::select_division_by_zero_yields_null",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). This test sits just outside the requested line ranges but matches the listed division-by-zero semantics. yydb raises a division-by-zero diagnostic, while SQLite yields NULL for both `/ 0` and `% 0`.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "SELECT score / 0 AS quotient, score % 0 AS remainder FROM Account ORDER BY account_id" }
+      ],
+      "expect": [
+        { "rows": [[null, null], [null, null], [null, null]] }
+      ]
+    },
+    {
+      "source": "sql.rs::coalesce_rejects_nested_aggregates",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). This test sits just outside the requested line ranges but matches the listed nested-aggregate semantics. yydb rejects an aggregate nested inside `COALESCE`, while SQLite evaluates both calls.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "SELECT COALESCE(SUM(score), 0) AS v FROM Account" },
+        { "sql": "SELECT COALESCE(0, AVG(score)) AS v FROM Account" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "60" }]] },
+        { "rows": [[{ "i": "0" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::aggregate_calls_nested_in_another_call_are_rejected",
+      "note": "VOS schema mapped to SQLite DDL: i64->integer, utf8->text, bool->integer(0/1). This test sits just outside the requested line ranges but matches the listed nested-aggregate semantics. SQLite rejects `SUM(AVG(...))` and `COUNT(SUM(...))` as aggregate misuse, but allows `LOWER(SUM(score))`, which renders the sum as text `'60'`.",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "SELECT SUM(AVG(score)) AS v FROM Account" },
+        { "sql": "SELECT COUNT(SUM(score)) AS v FROM Account" },
+        { "sql": "SELECT LOWER(SUM(score)) AS v FROM Account" }
+      ],
+      "expect": [
+        { "error": true },
+        { "error": true },
+        { "rows": [[{ "t": "60" }]] }
+      ]
+    }
+  ]
+}
