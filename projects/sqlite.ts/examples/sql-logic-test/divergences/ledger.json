@@ -78,7 +78,7 @@
     },
     {
       "id": "syntax.table-primary-key-multi",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [],
       "sql": "CREATE TABLE pkab(a INTEGER, b INTEGER, PRIMARY KEY (a, b))",
       "sqlite": {
@@ -86,11 +86,8 @@
         "rows": []
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "syntax",
-        "clause": null,
-        "message": "expected a numeric type parameter but found `a`"
+        "kind": "rows",
+        "rows": []
       },
       "class": "missing-feature",
       "evidence": {
@@ -468,7 +465,7 @@
     },
     {
       "id": "syntax.like",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [],
       "sql": "SELECT 'abc' LIKE 'A%'",
       "sqlite": {
@@ -480,11 +477,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "syntax",
-        "clause": null,
-        "message": "expected `,` or `FROM` in the projection but found `LIKE`"
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -1037,7 +1035,7 @@
     },
     {
       "id": "semantics.text-primary-key",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [
         "CREATE TABLE tp(k TEXT PRIMARY KEY, v INTEGER)",
         "INSERT INTO tp VALUES ('a', 1)"
@@ -1053,11 +1051,13 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "setup",
-        "code": "storage",
-        "clause": null,
-        "message": "unsupported: sqlite non-INTEGER PRIMARY KEY is not supported"
+        "kind": "rows",
+        "rows": [
+          [
+            "a",
+            1
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
