@@ -12,6 +12,8 @@
         "report:fixtures:ts": "node scripts/run-fixtures.mjs --only ts",
         "fixtures:lock": "python scripts/gen-fixtures.py --write",
         "fixtures:verify": "python scripts/gen-fixtures.py --verify",
+        "divergences:write": "node scripts/gen-divergences.mjs --write",
+        "divergences:verify": "node scripts/gen-divergences.mjs --verify",
         "typecheck": "node ../../../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json"
     }
 }
