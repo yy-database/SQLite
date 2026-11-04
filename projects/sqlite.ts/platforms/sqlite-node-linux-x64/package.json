@@ -1,5 +1,5 @@
 {
-    "name": "@sqlite/sqlite-linux-x64",
+    "name": "@yydb/sqlite-node-linux-x64",
     "version": "0.1.0",
     "private": true,
     "description": "Node-API binding for Linux x64",

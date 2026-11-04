@@ -2,7 +2,7 @@
 //
 // The stages live under `projects/sqlite.ts/packages/sqlite-harness/stages`,
 // so the repository root is five levels up and the wasm artifacts belong to
-// the `sqlite-unknown-wasm32` platform package.
+// the `sqlite-wasm` platform package.
 
 import { createRequire } from "node:module";
 import { existsSync, readdirSync } from "node:fs";
@@ -14,7 +14,7 @@ const require = createRequire(import.meta.url);
 export const stagesDir = dirname(fileURLToPath(import.meta.url));
 export const repository = resolve(stagesDir, "../../../../..");
 export const tsProject = resolve(repository, "projects/sqlite.ts");
-export const wasmPlatform = resolve(tsProject, "platforms/sqlite-unknown-wasm32");
+export const wasmPlatform = resolve(tsProject, "platforms/sqlite-wasm");
 
 export function platformKey(platform = process.platform, arch = process.arch) {
   if (platform === "win32" && arch === "x64") return "win32-x64";
@@ -30,7 +30,7 @@ export function nativeBindingPath() {
   if (fromEnv) return resolve(fromEnv);
   const key = platformKey();
   if (!key) throw new Error(`SQLite native binding not available for ${process.platform}-${process.arch}`);
-  const libDir = join(dirname(require.resolve(`@sqlite/sqlite-${key}`)), "lib");
+  const libDir = join(dirname(require.resolve(`@yydb/sqlite-node-${key}`)), "lib");
   const fileName = existsSync(libDir)
     ? readdirSync(libDir).find((entry) => entry.endsWith(".node"))
     : undefined;
