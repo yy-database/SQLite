@@ -420,6 +420,8 @@ struct WriterColumnJson {
     primary_key: Option<bool>,
     #[serde(default)]
     unique: Option<bool>,
+    #[serde(default)]
+    autoincrement: Option<bool>,
 }
 
 fn json_to_write_value(json: &serde_json::Value) -> napi::Result<sqlite::WriteValue> {
@@ -490,7 +492,8 @@ impl SqliteWriter {
     }
 
     /// Creates a table; `columnsJson` is `[{name, declaredType, notNull,
-    /// defaultValue, primaryKey, unique}]` with SQLite semantics.
+    /// defaultValue, primaryKey, unique, autoincrement}]` with SQLite
+    /// semantics.
     #[napi]
     pub fn createTable(&mut self, name: String, columns_json: String) -> napi::Result<()> {
         let columns: Vec<WriterColumnJson> = serde_json::from_str(&columns_json)
@@ -507,6 +510,7 @@ impl SqliteWriter {
                 },
                 primary_key: column.primary_key.unwrap_or(false),
                 unique: column.unique.unwrap_or(false),
+                autoincrement: column.autoincrement.unwrap_or(false),
             });
         }
         self.writer.create_table(&name, &specs).map_err(|e| napi::Error::from_reason(e.to_string()))
