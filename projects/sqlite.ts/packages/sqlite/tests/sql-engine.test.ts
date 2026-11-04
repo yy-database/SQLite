@@ -262,6 +262,10 @@ test("table aliases resolve qualified columns", () => {
 
   const aliased = engine.execute("select u.name, g.tag from users as u, tags g where g.tag = 'red'");
   assert.deepEqual(aliased.columns, ["name", "tag"]);
+
+  // `*` over aliased sources keeps each declared column name, duplicates included.
+  const starred = engine.execute("select * from users as u, tags g where g.tag = 'red'");
+  assert.deepEqual(starred.columns, ["id", "name", "id", "tag"]);
   assert.deepEqual(aliased.rows, [
     ["ada", "red"],
     ["bob", "red"],

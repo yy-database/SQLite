@@ -18,6 +18,9 @@ test("projection arithmetic follows SQLite integer and overflow rules", () => {
 
   const arithmetic = engine.execute("select a+b, a-b, a*b, a/b from v where id = 1");
   assert.deepEqual(arithmetic.columns, ["a+b", "a-b", "a*b", "a/b"]);
+
+  // Qualifiers resolve references but never leak into the result header.
+  assert.deepEqual(engine.execute("select v.a, v.a + 1 from v where id = 1").columns, ["a", "a+1"]);
   assert.deepEqual(arithmetic.rows, [[9, 5, 14, 3]]);
 
   // Integer division truncates toward zero instead of producing a real.
@@ -54,6 +57,7 @@ test("scalar functions cover the supported set and reject bad arity", () => {
     ["integer", "real", "text"],
   ]);
   assert.deepEqual(engine.execute("select typeof(a) from v where id = 3").rows, [["null"]]);
+  assert.deepEqual(engine.execute("select typeof(a) from v where id = 1").columns, ["typeof(a)"]);
   assert.deepEqual(engine.execute("select lower(s), upper(s) from v where id = 1").rows, [["abc", "ABC"]]);
   assert.deepEqual(engine.execute("select substr(s, 2, 2), substr(s, -2), substr(s, 3) from v where id = 1").rows, [
     ["bC", "bC", "C"],
@@ -87,6 +91,9 @@ test("CASE supports searched, simple and missing-ELSE forms", () => {
     "select case when a > 0 then 'pos' when a < 0 then 'neg' else 'unknown' end from v order by id",
   );
   assert.deepEqual(searched.rows, [["pos"], ["neg"], ["unknown"]]);
+  assert.deepEqual(searched.columns, [
+    "CASE WHEN a>0 THEN 'pos' WHEN a<0 THEN 'neg' ELSE 'unknown' END",
+  ]);
 
   // The simple form compares the operand with each WHEN value.
   const simple = engine.execute("select case b when 2 then 'two' when 0 then 'zero' end from v order by id");
