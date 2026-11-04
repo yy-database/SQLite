@@ -16,7 +16,7 @@
         "stage": "sql",
         "code": "syntax",
         "clause": null,
-        "message": "expected `,` or `FROM` in the projection but found `INTERSECT`"
+        "message": "expected `select` but found `ALL`"
       },
       "class": "none",
       "evidence": {
@@ -41,7 +41,7 @@
         "stage": "sql",
         "code": "syntax",
         "clause": null,
-        "message": "expected `,` or `FROM` in the projection but found `EXCEPT`"
+        "message": "expected `select` but found `ALL`"
       },
       "class": "none",
       "evidence": {
@@ -175,9 +175,9 @@
       "ours": {
         "kind": "error",
         "stage": "sql",
-        "code": "syntax",
-        "clause": null,
-        "message": "expected `,` or `FROM` in the projection but found `UNION`"
+        "code": "unsupported-clause",
+        "clause": "WITH",
+        "message": "`WITH RECURSIVE` is not supported: CTE `cnt` references itself, and this engine evaluates each CTE once"
       },
       "class": "missing-feature",
       "evidence": {
@@ -188,7 +188,7 @@
     },
     {
       "id": "syntax.derived-table-without-alias",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [],
       "sql": "SELECT * FROM (SELECT 1)",
       "sqlite": {
@@ -200,11 +200,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "syntax",
-        "clause": null,
-        "message": "expected `,` or `FROM` in the projection but found `)`"
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -385,7 +386,7 @@
     },
     {
       "id": "syntax.cast",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [],
       "sql": "SELECT CAST('12' AS INTEGER)",
       "sqlite": {
@@ -397,11 +398,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "syntax",
-        "clause": null,
-        "message": "expected `,` or `)` in the argument list but found `AS`"
+        "kind": "rows",
+        "rows": [
+          [
+            12
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -828,7 +830,7 @@
     },
     {
       "id": "semantics.compound-associativity",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [],
       "sql": "SELECT 1 UNION SELECT 2 INTERSECT SELECT 2",
       "sqlite": {
@@ -840,11 +842,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "syntax",
-        "clause": null,
-        "message": "expected `,` or `FROM` in the projection but found `UNION`"
+        "kind": "rows",
+        "rows": [
+          [
+            2
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -856,7 +859,7 @@
     },
     {
       "id": "semantics.integer-division",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [],
       "sql": "SELECT 7 / 2",
       "sqlite": {
@@ -868,11 +871,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "syntax",
-        "clause": null,
-        "message": "select projection is incomplete"
+        "kind": "rows",
+        "rows": [
+          [
+            3
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -883,7 +887,7 @@
     },
     {
       "id": "semantics.integer-overflow",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [],
       "sql": "SELECT 9223372036854775807 + 1",
       "sqlite": {
@@ -895,11 +899,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "syntax",
-        "clause": null,
-        "message": "select projection is incomplete"
+        "kind": "rows",
+        "rows": [
+          [
+            9223372036854776000
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
