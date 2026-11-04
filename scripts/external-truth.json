@@ -17,6 +17,12 @@
     },
     "journal": {
       "externalOnly": "The writer never leaves a hot rollback journal, so only external-crashed journals can be replayed."
+    },
+    "text-encoding": {
+      "externalOnly": "The writer always emits UTF-8 databases, so a UTF-16 database can only be produced by an external engine."
+    },
+    "schema-objects": {
+      "externalOnly": "Views, virtual tables and STRICT tables are produced by an external engine. This reader inspects and rejects them rather than creating them."
     }
   },
   "suites": {
@@ -75,6 +81,21 @@
         "sources": ["better-sqlite3"],
         "direction": "external-to-read",
         "capability": "wal"
+      },
+      "rotated WAL checkpoints keep the snapshot consistent": {
+        "sources": ["better-sqlite3"],
+        "direction": "external-to-read",
+        "capability": "wal"
+      },
+      "external UTF-16 databases decode text through the declared encoding": {
+        "sources": ["better-sqlite3"],
+        "direction": "external-to-read",
+        "capability": "text-encoding"
+      },
+      "external views virtual tables and STRICT tables stay inspectable but not row-scannable": {
+        "sources": ["better-sqlite3"],
+        "direction": "external-to-read",
+        "capability": "schema-objects"
       },
       "hot rollback journal rolls partially written pages back": {
         "sources": ["better-sqlite3", "integrity-check"],
@@ -137,6 +158,21 @@
         "sources": ["python-sqlite3"],
         "direction": "external-to-read",
         "capability": "wal"
+      },
+      "test_rotated_wal_checkpoints": {
+        "sources": ["python-sqlite3"],
+        "direction": "external-to-read",
+        "capability": "wal"
+      },
+      "test_utf16_database_decodes_declared_encoding": {
+        "sources": ["python-sqlite3"],
+        "direction": "external-to-read",
+        "capability": "text-encoding"
+      },
+      "test_views_virtual_and_strict_tables": {
+        "sources": ["python-sqlite3"],
+        "direction": "external-to-read",
+        "capability": "schema-objects"
       },
       "test_hot_journal_rolls_partial_pages_back": {
         "sources": ["python-sqlite3", "integrity-check"],

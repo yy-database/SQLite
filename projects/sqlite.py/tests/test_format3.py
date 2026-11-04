@@ -8,6 +8,7 @@ external engine, and bytes an external engine writes are read by our reader.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import unittest
 
@@ -444,6 +445,81 @@ class Format3Test(unittest.TestCase):
                 [(int(row["rowid"]), row["columns"][0]["value"]) for row in mirrored],
                 [(rowid, label) for rowid, label in expected],
             )
+
+    def test_utf16_database_decodes_declared_encoding(self) -> None:
+        with Workspace("utf16") as space:
+            path = space.path.parent / "utf16.sqlite3"
+            connection = sqlite3.connect(path)
+            try:
+                connection.execute("pragma encoding = 'UTF-16le'")
+                connection.execute("create table u (id integer primary key, label text)")
+                connection.execute("insert into u (label) values (?)", ("案例-明",))
+                connection.commit()
+                declared = connection.execute("pragma encoding").fetchone()[0]
+            finally:
+                connection.close()
+
+            self.assertEqual(declared.upper(), "UTF-16LE")
+            meta = call("meta", {"path": str(path)})
+            self.assertEqual(meta["encoding"], "utf16le")
+            self.assertEqual(meta["textEncoding"], 2)
+            rows = native_rows(path, "u")
+            self.assertEqual([row["columns"][1]["value"] for row in rows], ["案例-明"])
+
+    def test_views_virtual_and_strict_tables(self) -> None:
+        with Workspace("objects") as space:
+            path = space.path.parent / "objects.sqlite3"
+            connection = sqlite3.connect(path)
+            try:
+                connection.execute("create table base (id integer primary key, label text) strict")
+                connection.execute("insert into base (label) values ('strict-row')")
+                connection.execute("create view v as select id, label from base")
+                connection.execute("create virtual table vt using fts5(body)")
+                connection.execute("insert into vt (body) values ('virtual-row')")
+                connection.commit()
+                external = connection.execute("select type, name from sqlite_master order by name").fetchall()
+            finally:
+                connection.close()
+
+            native = sorted(f"{item['kind']}:{item['name']}" for item in native_schema(path))
+            self.assertEqual(native, sorted(f"{kind}:{name}" for kind, name in external))
+            rows = native_rows(path, "base")
+            self.assertEqual([row["columns"][1]["value"] for row in rows], ["strict-row"])
+            with self.assertRaises(RuntimeError) as view_error:
+                native_rows(path, "v")
+            self.assertIn("view", str(view_error.exception).lower())
+            with self.assertRaises(RuntimeError) as virtual_error:
+                native_rows(path, "vt")
+            self.assertIn("virtual", str(virtual_error.exception).lower())
+
+    def test_rotated_wal_checkpoints(self) -> None:
+        with Workspace("wal-rotate") as space:
+            connection = sqlite3.connect(space.path)
+            try:
+                connection.execute("pragma journal_mode = wal")
+                connection.execute("create table r (id integer primary key, label text)")
+                connection.executemany("insert into r (label) values (?)", [(f"first-{i}",) for i in range(1, 21)])
+                connection.commit()
+                connection.execute("pragma wal_checkpoint(TRUNCATE)")
+                connection.executemany("insert into r (label) values (?)", [(f"second-{i}",) for i in range(1, 21)])
+                connection.commit()
+                connection.execute("pragma wal_checkpoint(PASSIVE)")
+
+                wal_path = f"{space.path}-wal"
+                self.assertTrue(os.path.exists(wal_path))
+                self.assertGreater(os.path.getsize(wal_path), 32)
+                self.assertTrue(os.path.exists(f"{space.path}-shm"))
+
+                external_count = connection.execute("select count(*) from r").fetchone()[0]
+                rows = native_rows(space.path, "r")
+                self.assertEqual(len(rows), external_count)
+                self.assertEqual([row["columns"][1]["value"] for row in rows][-1], "second-20")
+
+                connection.execute("pragma wal_checkpoint(TRUNCATE)")
+                self.assertEqual(os.path.getsize(wal_path), 0)
+                self.assertEqual(len(native_rows(space.path, "r")), external_count)
+            finally:
+                connection.close()
 
 
 if __name__ == "__main__":

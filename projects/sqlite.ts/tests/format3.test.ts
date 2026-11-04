@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -604,6 +604,98 @@ test("secondary index scans match external INDEXED BY order in both directions",
       mirrored.map((row) => [Number(row.rowid), row.columns[0].valueText]),
       expected.map((row) => [Number(row.rid), row.label]),
     );
+  } finally {
+    space.dispose();
+  }
+});
+
+test("external UTF-16 databases decode text through the declared encoding", () => {
+  const space = workspace("utf16");
+  try {
+    const path = join(space.path, "..", "utf16.sqlite3");
+    const seed = new BetterSqlite(path);
+    seed.pragma("encoding = 'UTF-16le'");
+    seed.exec("create table u (id integer primary key, label text)");
+    seed.prepare("insert into u (label) values (?)").run("案例-明");
+    const declared = seed.prepare("pragma encoding").get() as { encoding: string };
+    seed.close();
+
+    const reader = openDatabase(path);
+    assert.equal(declared.encoding.toUpperCase(), "UTF-16LE");
+    assert.equal(reader.encoding(), "utf16le");
+    assert.equal(reader.pages().readUInt32BE(56), 2);
+    assert.deepEqual(
+      reader.table("u").map((row) => row.columns[1].valueText),
+      ["案例-明"],
+    );
+  } finally {
+    space.dispose();
+  }
+});
+
+test("external views virtual tables and STRICT tables stay inspectable but not row-scannable", () => {
+  const space = workspace("objects");
+  try {
+    const path = join(space.path, "..", "objects.sqlite3");
+    const seed = new BetterSqlite(path);
+    seed.exec("create table base (id integer primary key, label text) strict");
+    seed.prepare("insert into base (label) values (?)").run("strict-row");
+    seed.exec("create view v as select id, label from base");
+    seed.exec("create virtual table vt using fts5(body)");
+    seed.prepare("insert into vt (body) values (?)").run("virtual-row");
+    const external = seed.prepare("select type, name from sqlite_master order by name").all() as {
+      type: string;
+      name: string;
+    }[];
+    seed.close();
+
+    const reader = openDatabase(path);
+    assert.deepEqual(
+      reader
+        .schema()
+        .map((object) => `${object.kind}:${object.name}`)
+        .sort(),
+      external.map((row) => `${row.type}:${row.name}`).sort(),
+    );
+    assert.deepEqual(
+      reader.table("base").map((row) => row.columns[1].valueText),
+      ["strict-row"],
+    );
+    assert.throws(() => reader.table("v"), /view|unsupported/i);
+    assert.throws(() => reader.table("vt"), /virtual|unsupported/i);
+  } finally {
+    space.dispose();
+  }
+});
+
+test("rotated WAL checkpoints keep the snapshot consistent", () => {
+  const space = workspace("wal-rotate");
+  try {
+    const seed = new BetterSqlite(space.path);
+    seed.pragma("journal_mode = wal");
+    seed.exec("create table r (id integer primary key, label text)");
+    const insert = seed.prepare("insert into r (label) values (?)");
+    for (let index = 1; index <= 20; index += 1) insert.run(`first-${index}`);
+    seed.pragma("wal_checkpoint(TRUNCATE)");
+    for (let index = 1; index <= 20; index += 1) insert.run(`second-${index}`);
+    seed.pragma("wal_checkpoint(PASSIVE)");
+
+    assert.ok(existsSync(`${space.path}-wal`), "a committed WAL sidecar must exist");
+    assert.ok(readFileSync(`${space.path}-wal`).length > 32);
+    assert.ok(existsSync(`${space.path}-shm`), "an open connection keeps the shared-memory index");
+
+    const externalCount = seed.prepare("select count(*) c from r").get() as { c: number };
+    const reader = openDatabase(space.path);
+    assert.equal(reader.table("r").length, Number(externalCount.c));
+    assert.deepEqual(
+      reader.table("r").map((row) => row.columns[1].valueText).slice(-1),
+      ["second-20"],
+    );
+
+    seed.pragma("wal_checkpoint(TRUNCATE)");
+    assert.ok(!readFileSync(`${space.path}-wal`).length, "a truncating checkpoint empties the sidecar");
+    assert.equal(reader.table("r").length, Number(externalCount.c));
+    seed.close();
   } finally {
     space.dispose();
   }
