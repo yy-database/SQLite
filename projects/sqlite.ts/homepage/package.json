@@ -1,0 +1,8 @@
+{
+    "name": "@yydb/sqlite-homepage",
+    "version": "0.1.0",
+    "description": "SQLite product homepage and user documentation",
+    "license": "MPL-2.0",
+    "private": true,
+    "type": "module"
+}
