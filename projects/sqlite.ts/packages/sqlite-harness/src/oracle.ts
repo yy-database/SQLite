@@ -32,7 +32,11 @@ export interface Engine {
   run(steps: Step[]): Promise<StepOutcome[]>;
 }
 
-const requireFromTs = createRequire(repoPath("projects", "sqlite.ts", "packages", "sqlite", "package.json"));
+// The external engines are harness dependencies, so resolve them from the
+// harness package instead of relying on a hoisted layout at the repository
+// root. Both `better-sqlite3` and `sql.js` live in this package's
+// `devDependencies`.
+const requireFromTs = createRequire(repoPath("projects", "sqlite.ts", "packages", "sqlite-harness", "package.json"));
 const PYTHON = process.platform === "win32" ? "python" : "python3";
 
 type BetterSqliteStatic = new (path: string) => {

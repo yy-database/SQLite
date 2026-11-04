@@ -29,4 +29,4 @@ if (!existsSync(venv)) {
 const venvPython = resolve(venv, process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
 
 run(venvPython, ["-m", "pip", "install", "--quiet", "--force-reinstall", "--no-index", "--find-links", wheels, "sqlite-format3"]);
-run(venvPython, ["-m", "unittest", "test_features", "-v"], { cwd: resolve(stagesDir, "python") });
+run(venvPython, ["test_features.py"], { cwd: resolve(stagesDir, "python") });
