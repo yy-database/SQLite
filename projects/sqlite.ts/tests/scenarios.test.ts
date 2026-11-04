@@ -6,8 +6,8 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createWriter, openDatabase, writeSlots } from "../src/index.ts";
-import type { DecodedRow, RecordValue } from "../src/index.ts";
+import { createWriter, openDatabase, writeSlots } from "../packages/sqlite/src/index.ts";
+import type { DecodedRow, RecordValue } from "../packages/sqlite/src/index.ts";
 
 const require = createRequire(import.meta.url);
 const ROWS = 1000;

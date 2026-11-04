@@ -7,9 +7,9 @@ never re-implements page logic.
 ## Build
 
 ```powershell
-python -m maturin build --release --manifest-path projects/sqlite.rs/sqlite-pyo3/Cargo.toml --out platforms/python/wheels
-python -m venv platforms/python/.venv
-platforms/python/.venv/Scripts/python -m pip install --no-index --find-links platforms/python/wheels sqlite-format3
+python -m maturin build --release --out projects/sqlite.rs/target/wheels --manifest-path projects/sqlite.rs/sqlite-pyo3/Cargo.toml
+python -m venv .venv
+.venv/Scripts/python -m pip install --no-index --find-links projects/sqlite.rs/target/wheels sqlite-format3
 ```
 
 ## Surface

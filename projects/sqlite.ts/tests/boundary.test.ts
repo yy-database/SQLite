@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { bindings, createWriter, openSnapshot, writeSlots } from "../src/index.ts";
+import { bindings, createWriter, openSnapshot, writeSlots } from "../packages/sqlite/src/index.ts";
 
 // External truth for this file: `better-sqlite3` writes the reference files and
 // every assertion that matters is cross-checked with `PRAGMA integrity_check`.
@@ -17,7 +17,7 @@ const BetterSqlite = require("better-sqlite3") as new (path: string) => {
   close(): void;
 };
 
-const BLANK = fileURLToPath(new URL("../../../tests/fixtures/blank.sqlite", import.meta.url));
+const BLANK = fileURLToPath(new URL("../packages/sqlite-fixtures/fixtures/blank.sqlite", import.meta.url));
 
 function workspace(label: string): { path: string; dispose: () => void } {
   const root = mkdtempSync(join(tmpdir(), `sqlite-boundary-${label}-`));

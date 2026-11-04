@@ -158,7 +158,7 @@ class EdgeCaseTest(unittest.TestCase):
 
     def test_rejects_non_sqlite_bytes_and_reads_the_blank_asset(self) -> None:
         root = Path(__file__).resolve().parents[3]
-        asset = root / "tests" / "fixtures" / "blank.sqlite"
+        asset = root / "projects" / "sqlite.ts" / "packages" / "sqlite-fixtures" / "fixtures" / "blank.sqlite"
         self.assertTrue(asset.exists())
         self.assertEqual(len(asset.read_bytes()), 4096)
         meta = call("meta", {"path": str(asset)})

@@ -3,16 +3,16 @@
 // The repository harness (`test` / `bench` / `conformance` / `fixtures` /
 // `oracle`) consumes `platformStages`, so the three bindings run through one
 // entry instead of separate scripts. Each stage keeps its own runner under
-// `platforms/<binding>` and reports the same floor and external truth contract
+// `stages/<binding>` and reports the same floor and external truth contract
 // as the `sqlite.ts` / `sqlite.py` suites.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const repository = resolve(here, "..");
+import { repository, stagesDir } from "./paths.mjs";
+
+const here = stagesDir;
 
 function count(text, pattern) {
   const match = text.match(pattern);
@@ -64,7 +64,7 @@ function runWasm() {
 }
 
 function runPython() {
-  const sources = readFileSync(join(here, "python", "tests", "test_features.py"), "utf8");
+  const sources = readFileSync(join(here, "python", "test_features.py"), "utf8");
   return summarize({
     name: "platforms/python",
     floor: 5,

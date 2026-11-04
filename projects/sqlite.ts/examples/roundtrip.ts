@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createWriter, openDatabase, type RecordValue } from "../src/index.ts";
+import { createWriter, openDatabase, type RecordValue } from "../packages/sqlite/src/index.ts";
 
 const PAGE_SIZE = 4096;
 const ROWS = 1000;
