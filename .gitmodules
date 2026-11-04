@@ -1,0 +1,3 @@
+[submodule "projects/sqlite.ts/examples/sql-logic-test/corpus"]
+	path = projects/sqlite.ts/examples/sql-logic-test/corpus
+	url = https://github.com/jzombie/sqlite-sqllogictest-corpus.git
