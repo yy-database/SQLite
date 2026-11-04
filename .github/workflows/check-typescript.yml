@@ -1,5 +1,7 @@
-name: Contract
+name: Check TypeScript
 
+# pnpm install, the merged TypeScript and platform gate, and the examples.
+# Python wheel: check-python.yml. Rust workspace: check-rust.yml.
 on:
   push:
     branches: [ dev, master ]
@@ -7,7 +9,8 @@ on:
     branches: [ dev, master ]
 
 jobs:
-  ts-py-contract:
+  typescript:
+    name: pnpm packages
     runs-on: ubuntu-latest
     steps:
       - run: git config --global core.autocrlf false
@@ -24,13 +27,16 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-bindgen-cli@0.2.127
+      # The platform stages build a wheel for the five case Python stage.
       - name: Install the wheel build tool
         run: python3 -m pip install --quiet maturin
       - name: Assert the checkout has no native artifact
         run: test ! -e projects/sqlite.rs/sqlite-napi/sqlite.node
       - name: Install SQLite test dependencies
         run: pnpm install --no-frozen-lockfile
-      - name: TS and PY contract gate
+      # One entry builds the native binding, then runs every suite and every
+      # platform stage: `sqlite.ts`, `sqlite.py`, node, wasm and python.
+      - name: TypeScript suite, Python suite and platform stages
         run: node scripts/check-test-floor.mjs
       - name: Downstream examples
         run: |
