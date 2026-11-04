@@ -21,9 +21,9 @@ node_modules
 __pycache__/
 *.pyc
 
-# Platform build artifacts
-platforms/node/out/
-platforms/wasm/pkg/
-platforms/wasm/out/
-platforms/python/wheels/
-platforms/python/.venv/
+# Build artifacts
+projects/sqlite.ts/packages/sqlite-harness/stages/node/out/
+projects/sqlite.ts/packages/sqlite-harness/stages/wasm/pkg/
+projects/sqlite.ts/packages/sqlite-harness/stages/python/wheels/
+projects/sqlite.ts/packages/sqlite-harness/stages/python/.venv/
+projects/sqlite.ts/platforms/sqlite-unknown-wasm32/pkg/
