@@ -13,10 +13,14 @@ SQL dialect over `.yydb` is **not** here; that surface is `yydb::sql::SqliteConn
 | Path | Role |
 |------|------|
 | `projects/sqlite.rs/` | Rust FFI workspace (`sqlite-napi` produces `sqlite.node`) |
-| `projects/sqlite.ts/` | TypeScript binding over `sqlite.node` plus the acceptance suite |
-| `projects/sqlite.py/` | Python bridge (`bridge.mjs`) over `sqlite.node` plus the acceptance suite |
-| `tests/fixtures/` | Shared binary fixtures (`blank.sqlite`) |
-| `harness/run.mjs` | One-command acceptance harness (build, run both suites, gate) |
+| `projects/sqlite.ts/` | TypeScript packages, platform packages, homepage and acceptance suite |
+| `projects/sqlite.ts/packages/sqlite/` | TypeScript binding over `sqlite.node` |
+| `projects/sqlite.ts/packages/sqlite-harness/` | Self-improvement toolbox: `test`, `bench`, `conformance`, `fixtures`, `oracle` |
+| `projects/sqlite.ts/packages/sqlite-fixtures/` | Binary fixtures written by external engines |
+| `projects/sqlite.ts/platforms/` | Node platform packages plus the WebAssembly package |
+| `projects/sqlite.ts/homepage/` | Capability and binding documents |
+| `projects/sqlite.py/packages/sqlite/` | PyO3 packaging metadata for the `sqlite-format3` wheel |
+| `projects/sqlite.py/` | Python suite over `bridge.mjs` |
 
 ```shell
 cargo check --manifest-path projects/sqlite.rs/Cargo.toml --workspace
@@ -30,15 +34,15 @@ in `projects/sqlite.rs/.cargo/config.toml` (see `config.example.toml`).
 ## Test entry points
 
 ```shell
-# build `sqlite.node`, run both suites, enforce the floor
-node harness/run.mjs
+# build `sqlite.node`, run both suites and all three platform smokes
+node projects/sqlite.ts/packages/sqlite-harness/cli.mjs test
 
 # one suite at a time
 cd projects/sqlite.ts && node --experimental-strip-types --test "tests/**/*.test.ts"
 cd projects/sqlite.py && python -m unittest discover -v -s tests -t tests
 ```
 
-`node scripts/check-test-floor.mjs` delegates to `harness/run.mjs`, so CI and local runs share one
+`node scripts/check-test-floor.mjs` delegates to `projects/sqlite.ts/packages/sqlite-harness`, so CI and local runs share one
 implementation. The harness fails when either suite reports a failure, executes fewer than 30 cases,
 or skips a case. It also reads the suite sources and fails if they stop calling a real external
 engine (`better-sqlite3`, Python `sqlite3`, `PRAGMA integrity_check`). There is no JSON metadata and
