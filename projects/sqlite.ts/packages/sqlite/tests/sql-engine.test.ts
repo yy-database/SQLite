@@ -111,12 +111,12 @@ test("unsupported clauses return a structured rejection", () => {
   const engine = createEngine();
   engine.execute("create table t (id integer primary key, label text)");
 
-  const groupBy = engine.tryExecute("select * from t group by id");
-  assert.equal(groupBy.ok, false);
-  assert.equal(groupBy.error?.code, "unsupported-clause");
-  assert.equal(groupBy.error?.statement, "select");
-  assert.equal(groupBy.error?.clause, "GROUP");
-  assert.equal(groupBy.error?.position, 16);
+  const rightJoin = engine.tryExecute("select * from t right join t as u on t.id = u.id");
+  assert.equal(rightJoin.ok, false);
+  assert.equal(rightJoin.error?.code, "unsupported-clause");
+  assert.equal(rightJoin.error?.statement, "select");
+  assert.equal(rightJoin.error?.clause, "JOIN");
+  assert.equal(rightJoin.error?.position, 16);
 
   const where = engine.tryExecute("select * from t where missing = 1");
   assert.equal(where.ok, false);
