@@ -6,33 +6,35 @@
 
 - 真实 SQLite：CPython 3.12.10 的 `sqlite3` 3.49.1
 - 本仓产物：@yydb/sqlite createEngine 引擎 3.45.0（Node v24.18.0），安装态运行
-- 用例：50 条，`status` 一律为 `open`
+- 用例：81 条，`status` 一律为 `open`
 
 ## 按 direction 计数
 
 | direction | 条数 |
 |-----------|------|
-| `none` | 40 |
-| `sqlite-accepts-ours-rejects` | 9 |
+| `none` | 74 |
+| `sqlite-accepts-ours-rejects` | 6 |
 | `same-statement-different-result` | 1 |
 
 ## 按 class 计数
 
 | class | 条数 |
 |-------|------|
+| `none` | 42 |
 | `missing-feature` | 37 |
-| `none` | 12 |
+| `intentional-divergence` | 1 |
 | `semantic-diff` | 1 |
 
 ## 按 direction × class 计数
 
 | direction | class | 条数 |
 |-----------|-------|------|
-| `none` | `missing-feature` | 27 |
-| `none` | `none` | 12 |
+| `none` | `missing-feature` | 31 |
+| `none` | `none` | 42 |
 | `none` | `semantic-diff` | 1 |
 | `same-statement-different-result` | `missing-feature` | 1 |
-| `sqlite-accepts-ours-rejects` | `missing-feature` | 9 |
+| `sqlite-accepts-ours-rejects` | `intentional-divergence` | 1 |
+| `sqlite-accepts-ours-rejects` | `missing-feature` | 5 |
 
 ## 明细
 
@@ -263,6 +265,42 @@
 - SQLite：`[[1]]`
 - 本仓：`[[1]]`
 
+### `syntax.join-full`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：`CREATE TABLE j1(a INTEGER, b INTEGER)`，`INSERT INTO j1 VALUES (1, 2), (2, 3)`，`CREATE TABLE j2(a INTEGER, c INTEGER)`，`INSERT INTO j2 VALUES (1, 4), (3, 5)`
+- sql：`SELECT j1.a FROM j1 FULL JOIN j2 ON j1.a = j2.a`
+- SQLite：`[[1],[2],[null]]`
+- 本仓：`[[1],[2],[null]]`
+
+### `syntax.join-natural`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：`CREATE TABLE j1(a INTEGER, b INTEGER)`，`INSERT INTO j1 VALUES (1, 2), (2, 3)`，`CREATE TABLE j2(a INTEGER, c INTEGER)`，`INSERT INTO j2 VALUES (1, 4), (3, 5)`
+- sql：`SELECT a FROM j1 NATURAL JOIN j2`
+- SQLite：`[[1]]`
+- 本仓：`[[1]]`
+
+### `syntax.join-right`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：`CREATE TABLE j1(a INTEGER, b INTEGER)`，`INSERT INTO j1 VALUES (1, 2), (2, 3)`，`CREATE TABLE j2(a INTEGER, c INTEGER)`，`INSERT INTO j2 VALUES (1, 4), (3, 5)`
+- sql：`SELECT j1.a FROM j1 RIGHT JOIN j2 ON j1.a = j2.a`
+- SQLite：`[[1],[null]]`
+- 本仓：`[[1],[null]]`
+
+### `syntax.join-using`
+
+- direction：`none`
+- class：`missing-feature`
+- setup：`CREATE TABLE j1(a INTEGER, b INTEGER)`，`INSERT INTO j1 VALUES (1, 2), (2, 3)`，`CREATE TABLE j2(a INTEGER, c INTEGER)`，`INSERT INTO j2 VALUES (1, 4), (3, 5)`
+- sql：`SELECT a FROM j1 JOIN j2 USING (a)`
+- SQLite：`[[1]]`
+- 本仓：`[[1]]`
+
 ### `syntax.like`
 
 - direction：`none`
@@ -300,6 +338,246 @@
 - SQLite：`[["c",100]]`
 - 本仓：`[["c",100]]`
 - 备注：显式写入更大值后 watermark 抬到 100
+
+### `implicit.join-chain`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE m1(a INTEGER, b INTEGER)`，`INSERT INTO m1 VALUES (1,2)`，`CREATE TABLE m2(a INTEGER, c INTEGER)`，`INSERT INTO m2 VALUES (1,3)`，`CREATE TABLE m3(b INTEGER, a INTEGER, d INTEGER)`，`INSERT INTO m3 VALUES (2,1,4)`
+- sql：`SELECT * FROM m1 JOIN m2 USING(a) JOIN m3 USING(a)`
+- SQLite：`[[1,2,3,2,4]]`
+- 本仓：`[[1,2,3,2,4]]`
+- 备注：链式 `USING` 把合并列继续传给下一次连接，左侧列按首次出现的表展开
+
+### `implicit.join-chain-right`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE m1(a INTEGER, b INTEGER)`，`INSERT INTO m1 VALUES (1,2)`，`CREATE TABLE m2(a INTEGER, c INTEGER)`，`INSERT INTO m2 VALUES (1,3)`，`CREATE TABLE m3(b INTEGER, a INTEGER, d INTEGER)`，`INSERT INTO m3 VALUES (2,1,4)`
+- sql：`SELECT * FROM m1 JOIN m2 USING(a) RIGHT JOIN m3 USING(a)`
+- SQLite：`[[1,2,3,2,4]]`
+- 本仓：`[[1,2,3,2,4]]`
+- 备注：链式中间换成 `RIGHT JOIN` 结果不变
+
+### `implicit.join-full-count`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE l(id INTEGER, lv TEXT)`，`INSERT INTO l VALUES (1,'a'),(2,'b')`，`CREATE TABLE r(id INTEGER, rv TEXT)`，`INSERT INTO r VALUES (2,'B'),(3,'C')`
+- sql：`SELECT count(*) FROM l FULL OUTER JOIN r USING(id)`
+- SQLite：`[[3]]`
+- 本仓：`[[3]]`
+- 备注：`count(*)` 与行数一致
+
+### `implicit.join-full-duplicate`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE d1(id INTEGER)`，`INSERT INTO d1 VALUES (1),(1)`，`CREATE TABLE d2(id INTEGER)`，`INSERT INTO d2 VALUES (1),(1)`
+- sql：`SELECT id FROM d1 FULL JOIN d2 USING(id)`
+- SQLite：`[[1],[1],[1],[1]]`
+- 本仓：`[[1],[1],[1],[1]]`
+- 备注：`FULL` 保留匹配重数：2×2 个匹配对共四行，不合并重复行
+
+### `implicit.join-full-multiplicity`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE f1(id INTEGER)`，`INSERT INTO f1 VALUES (1),(1)`，`CREATE TABLE f2(id INTEGER)`，`INSERT INTO f2 VALUES (1),(1),(2)`
+- sql：`SELECT id FROM f1 FULL JOIN f2 USING(id)`
+- SQLite：`[[1],[1],[1],[1],[2]]`
+- 本仓：`[[1],[1],[1],[1],[2]]`
+- 备注：`FULL` 保留重复行重数：4 条匹配对 + 1 条未匹配右行，共 5 行，不做整行去重
+
+### `implicit.join-full-order-by`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE l(id INTEGER, lv TEXT)`，`INSERT INTO l VALUES (1,'a'),(2,'b')`，`CREATE TABLE r(id INTEGER, rv TEXT)`，`INSERT INTO r VALUES (2,'B'),(3,'C')`
+- sql：`SELECT id, lv, rv FROM l FULL JOIN r USING(id) ORDER BY id DESC`
+- SQLite：`[[3,null,"C"],[2,"b","B"],[1,"a",null]]`
+- 本仓：`[[3,null,"C"],[2,"b","B"],[1,"a",null]]`
+- 备注：`FULL` 与 `ORDER BY` 组合按合并列排序，未匹配侧以 `NULL` 参与排序
+
+### `implicit.join-full-outer-using`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE l(id INTEGER, lv TEXT)`，`INSERT INTO l VALUES (1,'a'),(2,'b')`，`CREATE TABLE r(id INTEGER, rv TEXT)`，`INSERT INTO r VALUES (2,'B'),(3,'C')`
+- sql：`SELECT * FROM l FULL OUTER JOIN r USING(id)`
+- SQLite：`[[1,"a",null],[2,"b","B"],[3,null,"C"]]`
+- 本仓：`[[1,"a",null],[2,"b","B"],[3,null,"C"]]`
+- 备注：`FULL` 是匹配对与两侧未匹配行的并集，不做整行去重
+
+### `implicit.join-full-single`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE e1(id INTEGER)`，`INSERT INTO e1 VALUES (1),(1)`，`CREATE TABLE e2(id INTEGER)`，`INSERT INTO e2 VALUES (2)`
+- sql：`SELECT id FROM e1 FULL JOIN e2 USING(id)`
+- SQLite：`[[1],[1],[2]]`
+- 本仓：`[[1],[1],[2]]`
+- 备注：左表两条重复行都未匹配、右表一条未匹配：三行全部保留
+
+### `implicit.join-natural`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE l(id INTEGER, lv TEXT)`，`INSERT INTO l VALUES (1,'a'),(2,'b')`，`CREATE TABLE r(id INTEGER, rv TEXT)`，`INSERT INTO r VALUES (2,'B'),(3,'C')`
+- sql：`SELECT * FROM l NATURAL JOIN r`
+- SQLite：`[[2,"b","B"]]`
+- 本仓：`[[2,"b","B"]]`
+- 备注：`NATURAL` 只保留公共列一次；结果列为 `id,lv,rv`，未匹配行不出现
+
+### `implicit.join-natural-case`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE t(a INTEGER, b TEXT)`，`INSERT INTO t VALUES (1,'x')`，`CREATE TABLE u(A INTEGER, B TEXT, c TEXT)`，`INSERT INTO u VALUES (1,'x','y')`
+- sql：`SELECT * FROM t NATURAL JOIN u`
+- SQLite：`[[1,"x","y"]]`
+- 本仓：`[[1,"x","y"]]`
+- 备注：实测 3.49.1 中 `NATURAL` 公共列按大小写不敏感匹配，保留左表列名
+
+### `implicit.join-natural-columns`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE p(a INTEGER, b INTEGER, c TEXT)`，`INSERT INTO p VALUES (1,2,'p')`，`CREATE TABLE q(c TEXT, id INTEGER, b INTEGER, d TEXT)`，`INSERT INTO q VALUES ('p',9,2,'q')`
+- sql：`SELECT * FROM p NATURAL JOIN q`
+- SQLite：`[[1,2,"p",9,"q"]]`
+- 本仓：`[[1,2,"p",9,"q"]]`
+- 备注：`NATURAL` 公共列按大小写不敏感匹配；保留左表列序，右表非公共列按原序追加
+
+### `implicit.join-natural-left`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE l(id INTEGER, lv TEXT)`，`INSERT INTO l VALUES (1,'a'),(2,'b')`，`CREATE TABLE r(id INTEGER, rv TEXT)`，`INSERT INTO r VALUES (2,'B'),(3,'C')`
+- sql：`SELECT * FROM l NATURAL LEFT JOIN r`
+- SQLite：`[[1,"a",null],[2,"b","B"]]`
+- 本仓：`[[1,"a",null],[2,"b","B"]]`
+- 备注：`NATURAL LEFT` 保留未匹配左行，右侧补 NULL
+
+### `implicit.join-natural-product`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE n1(x INTEGER)`，`INSERT INTO n1 VALUES (1),(2)`，`CREATE TABLE n2(y INTEGER)`，`INSERT INTO n2 VALUES (10),(20)`
+- sql：`SELECT * FROM n1 NATURAL JOIN n2`
+- SQLite：`[[1,10],[1,20],[2,10],[2,20]]`
+- 本仓：`[[1,10],[1,20],[2,10],[2,20]]`
+- 备注：无公共列时 `NATURAL` 退化为笛卡尔积，两列四行
+
+### `implicit.join-natural-right`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE l(id INTEGER, lv TEXT)`，`INSERT INTO l VALUES (1,'a'),(2,'b')`，`CREATE TABLE r(id INTEGER, rv TEXT)`，`INSERT INTO r VALUES (2,'B'),(3,'C')`
+- sql：`SELECT * FROM l NATURAL RIGHT JOIN r`
+- SQLite：`[[2,"b","B"],[3,null,"C"]]`
+- 本仓：`[[2,"b","B"],[3,null,"C"]]`
+- 备注：`NATURAL RIGHT` 丢弃未匹配左行，未匹配右行左侧补 NULL
+
+### `implicit.join-right-no-on`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE l(id INTEGER, v TEXT)`，`INSERT INTO l VALUES (1,'a'),(2,'b')`，`CREATE TABLE r(id INTEGER, w TEXT)`，`INSERT INTO r VALUES (2,'B'),(1,'A')`
+- sql：`SELECT * FROM l RIGHT JOIN r`
+- SQLite：`[[1,"a",2,"B"],[1,"a",1,"A"],[2,"b",2,"B"],[2,"b",1,"A"]]`
+- 本仓：`[[1,"a",2,"B"],[1,"a",1,"A"],[2,"b",2,"B"],[2,"b",1,"A"]]`
+- 备注：缺 `ON`/`USING` 的 `RIGHT JOIN` 合法，退化为左表驱动的笛卡尔积
+
+### `implicit.join-right-order`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE l(id INTEGER, v TEXT)`，`INSERT INTO l VALUES (1,'a'),(2,'b')`，`CREATE TABLE r(id INTEGER, w TEXT)`，`INSERT INTO r VALUES (2,'B'),(1,'A')`
+- sql：`SELECT * FROM l RIGHT JOIN r ON l.id=r.id`
+- SQLite：`[[1,"a",1,"A"],[2,"b",2,"B"]]`
+- 本仓：`[[1,"a",1,"A"],[2,"b",2,"B"]]`
+- 备注：`RIGHT JOIN` 按左表驱动输出，未匹配右行追加在末尾，列序仍左表在前
+
+### `implicit.join-right-using-labels`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE l(id INTEGER, lv TEXT)`，`INSERT INTO l VALUES (1,'a'),(2,'b')`，`CREATE TABLE r(id INTEGER, rv TEXT)`，`INSERT INTO r VALUES (2,'B'),(3,'C')`
+- sql：`SELECT id, lv, rv FROM l RIGHT JOIN r USING(id)`
+- SQLite：`[[2,"b","B"],[3,null,"C"]]`
+- 本仓：`[[2,"b","B"],[3,null,"C"]]`
+- 备注：`USING` 列在结果里只出现一次且不带表前缀，列标签 `id,lv,rv`
+
+### `implicit.join-right-using-qualified`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE l(id INTEGER, lv TEXT)`，`INSERT INTO l VALUES (1,'a'),(2,'b')`，`CREATE TABLE r(id INTEGER, rv TEXT)`，`INSERT INTO r VALUES (2,'B'),(3,'C')`
+- sql：`SELECT l.id, r.id FROM l RIGHT JOIN r USING(id)`
+- SQLite：`[[2,2],[null,3]]`
+- 本仓：`[[2,2],[null,3]]`
+- 备注：带表前缀引用时两侧各自可寻址：左行未匹配时 `l.id` 为 NULL，`r.id` 仍是右值
+
+### `implicit.join-right-using-single`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE l(id INTEGER, lv TEXT)`，`INSERT INTO l VALUES (1,'a'),(2,'b')`，`CREATE TABLE r(id INTEGER, rv TEXT)`，`INSERT INTO r VALUES (2,'B'),(3,'C')`
+- sql：`SELECT id FROM l RIGHT JOIN r USING(id)`
+- SQLite：`[[2],[3]]`
+- 本仓：`[[2],[3]]`
+- 备注：未加前缀的 `USING` 列取合并值，未匹配右行显示右值
+
+### `implicit.join-right-using-star`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE l(id INTEGER, lv TEXT)`，`INSERT INTO l VALUES (1,'a'),(2,'b')`，`CREATE TABLE r(id INTEGER, rv TEXT)`，`INSERT INTO r VALUES (2,'B'),(3,'C')`
+- sql：`SELECT * FROM l RIGHT JOIN r USING(id)`
+- SQLite：`[[2,"b","B"],[3,null,"C"]]`
+- 本仓：`[[2,"b","B"],[3,null,"C"]]`
+- 备注：`SELECT *` 不重复输出 `USING` 列，右侧其余列按原序追加
+
+### `implicit.join-using-case-fold`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE t2(a INTEGER)`，`INSERT INTO t2 VALUES (1)`，`CREATE TABLE u2(A INTEGER)`，`INSERT INTO u2 VALUES (1)`
+- sql：`SELECT * FROM t2 JOIN u2 USING(a)`
+- SQLite：`[[1]]`
+- 本仓：`[[1]]`
+- 备注：实测 3.49.1 中 `USING` 名匹配大小写不敏感：`a` 与 `A` 视为同一列
+
+### `implicit.join-using-dedupe`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE l(id INTEGER, lv TEXT)`，`INSERT INTO l VALUES (1,'a'),(2,'b'),(2,'c')`，`CREATE TABLE r(id INTEGER, rv TEXT)`，`INSERT INTO r VALUES (2,'B'),(3,'C'),(3,'D')`
+- sql：`SELECT * FROM l RIGHT JOIN r USING(id)`
+- SQLite：`[[2,"b","B"],[2,"c","B"],[3,null,"C"],[3,null,"D"]]`
+- 本仓：`[[2,"b","B"],[2,"c","B"],[3,null,"C"],[3,null,"D"]]`
+- 备注：`USING` 列在结果中只出现一次，取两侧合并值（未匹配右行取右值）；右表其余列按原序追加
+
+### `implicit.join-using-multi`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE p(a INTEGER, b INTEGER, c TEXT)`，`INSERT INTO p VALUES (1,2,'p')`，`CREATE TABLE q(c TEXT, id INTEGER, b INTEGER, d TEXT)`，`INSERT INTO q VALUES ('p',9,2,'q')`
+- sql：`SELECT * FROM p JOIN q USING(b,c)`
+- SQLite：`[[1,2,"p",9,"q"]]`
+- 本仓：`[[1,2,"p",9,"q"]]`
+- 备注：多列 `USING` 按公共列等值匹配，结果列按左表列序输出
+
+### `implicit.join-using-multi-order`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE p(a INTEGER, b INTEGER, c TEXT)`，`INSERT INTO p VALUES (1,2,'p')`，`CREATE TABLE q(c TEXT, id INTEGER, b INTEGER, d TEXT)`，`INSERT INTO q VALUES ('p',9,2,'q')`
+- sql：`SELECT * FROM p JOIN q USING(c,b)`
+- SQLite：`[[1,2,"p",9,"q"]]`
+- 本仓：`[[1,2,"p",9,"q"]]`
+- 备注：`USING` 列出顺序不影响结果，列标签仍是 `a,b,c,id,d`
 
 ### `implicit.sqlite-master-order`
 
@@ -381,6 +659,66 @@
 - 本仓：`syntax: expected `select` but found `ALL``
 - 备注：背景记录称本引擎接受 `INTERSECT ALL`，本产物在复合查询处直接拒绝，两侧均不接受该语句
 
+### `syntax.join-natural-on`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE one(x INTEGER)`，`INSERT INTO one VALUES (1)`，`CREATE TABLE two(x INTEGER)`，`INSERT INTO two VALUES (1)`
+- sql：`SELECT * FROM one NATURAL JOIN two ON one.x=two.x`
+- SQLite：`a NATURAL join may not have an ON or USING clause`
+- 本仓：`syntax: a NATURAL join may not have an ON or USING clause`
+- 备注：`NATURAL` 不得同时写 `ON` 或 `USING`
+
+### `syntax.join-natural-using`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE one(x INTEGER)`，`INSERT INTO one VALUES (1)`，`CREATE TABLE two(x INTEGER)`，`INSERT INTO two VALUES (1)`
+- sql：`SELECT * FROM one NATURAL JOIN two USING(x)`
+- SQLite：`a NATURAL join may not have an ON or USING clause`
+- 本仓：`syntax: a NATURAL join may not have an ON or USING clause`
+- 备注：`NATURAL` 不得同时写 `ON` 或 `USING`
+
+### `syntax.join-using-empty`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE one(x INTEGER)`，`INSERT INTO one VALUES (1)`，`CREATE TABLE two(x INTEGER)`，`INSERT INTO two VALUES (1)`
+- sql：`SELECT * FROM one JOIN two USING()`
+- SQLite：`near ")": syntax error`
+- 本仓：`syntax: near ")": syntax error`
+- 备注：真实 SQLite 对空 `USING()` 报 `near ")": syntax error`，本仓同样拒绝
+
+### `syntax.join-using-missing-column`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE one(x INTEGER)`，`INSERT INTO one VALUES (1)`，`CREATE TABLE two(x INTEGER)`，`INSERT INTO two VALUES (1)`
+- sql：`SELECT * FROM one JOIN two USING(nope)`
+- SQLite：`cannot join using column nope - column not present in both tables`
+- 本仓：`unknown-column: cannot join using column nope - column not present in both tables`
+- 备注：`USING` 列必须两侧都存在；不存在的列报 `cannot join using column ...`
+
+### `syntax.join-using-name-mismatch`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE t(i INTEGER, j TEXT)`，`INSERT INTO t VALUES (1,'y')`，`CREATE TABLE u(ID INTEGER, J TEXT, k TEXT)`，`INSERT INTO u VALUES (1,'y','z')`
+- sql：`SELECT * FROM t JOIN u USING(i,j)`
+- SQLite：`cannot join using column i - column not present in both tables`
+- 本仓：`unknown-column: cannot join using column i - column not present in both tables`
+- 备注：`USING` 列必须两侧都存在：`i`/`j` 与 `ID`/`J` 名字不同，即使大小写折叠也不相等
+
+### `syntax.join-using-on`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE l(id INTEGER, lv TEXT)`，`INSERT INTO l VALUES (1,'a'),(2,'b')`，`CREATE TABLE r(id INTEGER, rv TEXT)`，`INSERT INTO r VALUES (2,'B'),(3,'C')`
+- sql：`SELECT * FROM l JOIN r USING(id) ON l.id = r.id`
+- SQLite：`near "ON": syntax error`
+- 本仓：`syntax: near "ON": syntax error`
+- 备注：`USING` 与 `ON` 不能同时写，真实 SQLite 报 `near "on": syntax error`
+
 ### `syntax.reserved-object-name`
 
 - direction：`none`
@@ -419,6 +757,16 @@
 - SQLite：`[]`
 - 本仓：`[[1]]`
 
+### `semantics.sqlite-sequence-writable`
+
+- direction：`sqlite-accepts-ours-rejects`
+- class：`intentional-divergence`
+- setup：`CREATE TABLE c(id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)`
+- sql：`INSERT INTO sqlite_sequence(name, seq) VALUES ('c', 5)`
+- SQLite：`[]`
+- 本仓：`readonly-system-table: table sqlite_sequence may not be modified`
+- 备注：真实 SQLite 允许直接改自增水位；本仓选择只读（`readonly-system-table`），避免用户直接改自增计数器导致后续插入冲突或与 AUTOINCREMENT 语义不一致。若将来放开，改这一条即可
+
 ### `semantics.limit-expression`
 
 - direction：`sqlite-accepts-ours-rejects`
@@ -428,42 +776,6 @@
 - SQLite：`[[1],[2]]`
 - 本仓：`unsupported-clause: unsupported `SELECT` clause starting at `+`; this engine supports `FROM`, `WHERE`, `ORDER BY`, `LIMIT` and `UNION` / `IN...`
 - 备注：`LIMIT` 表达式被拒绝，数值从未求值
-
-### `syntax.join-full`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：`CREATE TABLE j1(a INTEGER, b INTEGER)`，`INSERT INTO j1 VALUES (1, 2), (2, 3)`，`CREATE TABLE j2(a INTEGER, c INTEGER)`，`INSERT INTO j2 VALUES (1, 4), (3, 5)`
-- sql：`SELECT j1.a FROM j1 FULL JOIN j2 ON j1.a = j2.a`
-- SQLite：`[[1],[2],[null]]`
-- 本仓：`unsupported-clause: `full` joins are not supported; use `[INNER] JOIN` or `LEFT JOIN``
-
-### `syntax.join-natural`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：`CREATE TABLE j1(a INTEGER, b INTEGER)`，`INSERT INTO j1 VALUES (1, 2), (2, 3)`，`CREATE TABLE j2(a INTEGER, c INTEGER)`，`INSERT INTO j2 VALUES (1, 4), (3, 5)`
-- sql：`SELECT a FROM j1 NATURAL JOIN j2`
-- SQLite：`[[1]]`
-- 本仓：`unsupported-clause: `natural` joins are not supported; use `[INNER] JOIN` or `LEFT JOIN``
-
-### `syntax.join-right`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：`CREATE TABLE j1(a INTEGER, b INTEGER)`，`INSERT INTO j1 VALUES (1, 2), (2, 3)`，`CREATE TABLE j2(a INTEGER, c INTEGER)`，`INSERT INTO j2 VALUES (1, 4), (3, 5)`
-- sql：`SELECT j1.a FROM j1 RIGHT JOIN j2 ON j1.a = j2.a`
-- SQLite：`[[1],[null]]`
-- 本仓：`unsupported-clause: `right` joins are not supported; use `[INNER] JOIN` or `LEFT JOIN``
-
-### `syntax.join-using`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：`CREATE TABLE j1(a INTEGER, b INTEGER)`，`INSERT INTO j1 VALUES (1, 2), (2, 3)`，`CREATE TABLE j2(a INTEGER, c INTEGER)`，`INSERT INTO j2 VALUES (1, 4), (3, 5)`
-- sql：`SELECT a FROM j1 JOIN j2 USING (a)`
-- SQLite：`[[1]]`
-- 本仓：`unsupported-clause: `JOIN ... USING` is not supported; write an explicit `ON` predicate`
 
 ### `syntax.table-check`
 

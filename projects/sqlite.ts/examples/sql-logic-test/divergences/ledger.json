@@ -214,7 +214,7 @@
     },
     {
       "id": "syntax.join-using",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [
         "CREATE TABLE j1(a INTEGER, b INTEGER)",
         "INSERT INTO j1 VALUES (1, 2), (2, 3)",
@@ -231,11 +231,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "unsupported-clause",
-        "clause": "JOIN",
-        "message": "`JOIN ... USING` is not supported; write an explicit `ON` predicate"
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -246,7 +247,7 @@
     },
     {
       "id": "syntax.join-right",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [
         "CREATE TABLE j1(a INTEGER, b INTEGER)",
         "INSERT INTO j1 VALUES (1, 2), (2, 3)",
@@ -266,11 +267,15 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "unsupported-clause",
-        "clause": "JOIN",
-        "message": "`right` joins are not supported; use `[INNER] JOIN` or `LEFT JOIN`"
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            null
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -281,7 +286,7 @@
     },
     {
       "id": "syntax.join-full",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [
         "CREATE TABLE j1(a INTEGER, b INTEGER)",
         "INSERT INTO j1 VALUES (1, 2), (2, 3)",
@@ -304,11 +309,18 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "unsupported-clause",
-        "clause": "JOIN",
-        "message": "`full` joins are not supported; use `[INNER] JOIN` or `LEFT JOIN`"
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            null
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -319,7 +331,7 @@
     },
     {
       "id": "syntax.join-natural",
-      "direction": "sqlite-accepts-ours-rejects",
+      "direction": "none",
       "setup": [
         "CREATE TABLE j1(a INTEGER, b INTEGER)",
         "INSERT INTO j1 VALUES (1, 2), (2, 3)",
@@ -336,11 +348,12 @@
         ]
       },
       "ours": {
-        "kind": "error",
-        "stage": "sql",
-        "code": "unsupported-clause",
-        "clause": "JOIN",
-        "message": "`natural` joins are not supported; use `[INNER] JOIN` or `LEFT JOIN`"
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
       },
       "class": "missing-feature",
       "evidence": {
@@ -1596,6 +1609,1374 @@
       },
       "status": "open",
       "note": "AUTOINCREMENT 只允许 INTEGER PRIMARY KEY"
+    },
+    {
+      "id": "implicit.join-using-dedupe",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b'),(2,'c')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C'),(3,'D')"
+      ],
+      "sql": "SELECT * FROM l RIGHT JOIN r USING(id)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            2,
+            "c",
+            "B"
+          ],
+          [
+            3,
+            null,
+            "C"
+          ],
+          [
+            3,
+            null,
+            "D"
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            2,
+            "c",
+            "B"
+          ],
+          [
+            3,
+            null,
+            "C"
+          ],
+          [
+            3,
+            null,
+            "D"
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`USING` 列在结果中只出现一次，取两侧合并值（未匹配右行取右值）；右表其余列按原序追加"
+    },
+    {
+      "id": "implicit.join-natural-columns",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE p(a INTEGER, b INTEGER, c TEXT)",
+        "INSERT INTO p VALUES (1,2,'p')",
+        "CREATE TABLE q(c TEXT, id INTEGER, b INTEGER, d TEXT)",
+        "INSERT INTO q VALUES ('p',9,2,'q')"
+      ],
+      "sql": "SELECT * FROM p NATURAL JOIN q",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            "p",
+            9,
+            "q"
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            "p",
+            9,
+            "q"
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`NATURAL` 公共列按大小写不敏感匹配；保留左表列序，右表非公共列按原序追加"
+    },
+    {
+      "id": "implicit.join-full-multiplicity",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE f1(id INTEGER)",
+        "INSERT INTO f1 VALUES (1),(1)",
+        "CREATE TABLE f2(id INTEGER)",
+        "INSERT INTO f2 VALUES (1),(1),(2)"
+      ],
+      "sql": "SELECT id FROM f1 FULL JOIN f2 USING(id)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`FULL` 保留重复行重数：4 条匹配对 + 1 条未匹配右行，共 5 行，不做整行去重"
+    },
+    {
+      "id": "implicit.join-right-order",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, v TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, w TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(1,'A')"
+      ],
+      "sql": "SELECT * FROM l RIGHT JOIN r ON l.id=r.id",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "a",
+            1,
+            "A"
+          ],
+          [
+            2,
+            "b",
+            2,
+            "B"
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "a",
+            1,
+            "A"
+          ],
+          [
+            2,
+            "b",
+            2,
+            "B"
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`RIGHT JOIN` 按左表驱动输出，未匹配右行追加在末尾，列序仍左表在前"
+    },
+    {
+      "id": "implicit.join-right-no-on",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, v TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, w TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(1,'A')"
+      ],
+      "sql": "SELECT * FROM l RIGHT JOIN r",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "a",
+            2,
+            "B"
+          ],
+          [
+            1,
+            "a",
+            1,
+            "A"
+          ],
+          [
+            2,
+            "b",
+            2,
+            "B"
+          ],
+          [
+            2,
+            "b",
+            1,
+            "A"
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "a",
+            2,
+            "B"
+          ],
+          [
+            1,
+            "a",
+            1,
+            "A"
+          ],
+          [
+            2,
+            "b",
+            2,
+            "B"
+          ],
+          [
+            2,
+            "b",
+            1,
+            "A"
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "缺 `ON`/`USING` 的 `RIGHT JOIN` 合法，退化为左表驱动的笛卡尔积"
+    },
+    {
+      "id": "syntax.join-using-missing-column",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE one(x INTEGER)",
+        "INSERT INTO one VALUES (1)",
+        "CREATE TABLE two(x INTEGER)",
+        "INSERT INTO two VALUES (1)"
+      ],
+      "sql": "SELECT * FROM one JOIN two USING(nope)",
+      "sqlite": {
+        "kind": "error",
+        "stage": "sql",
+        "message": "cannot join using column nope - column not present in both tables"
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "unknown-column",
+        "clause": null,
+        "message": "cannot join using column nope - column not present in both tables"
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`USING` 列必须两侧都存在；不存在的列报 `cannot join using column ...`"
+    },
+    {
+      "id": "syntax.join-natural-on",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE one(x INTEGER)",
+        "INSERT INTO one VALUES (1)",
+        "CREATE TABLE two(x INTEGER)",
+        "INSERT INTO two VALUES (1)"
+      ],
+      "sql": "SELECT * FROM one NATURAL JOIN two ON one.x=two.x",
+      "sqlite": {
+        "kind": "error",
+        "stage": "sql",
+        "message": "a NATURAL join may not have an ON or USING clause"
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "syntax",
+        "clause": "JOIN",
+        "message": "a NATURAL join may not have an ON or USING clause"
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`NATURAL` 不得同时写 `ON` 或 `USING`"
+    },
+    {
+      "id": "semantics.sqlite-sequence-writable",
+      "direction": "sqlite-accepts-ours-rejects",
+      "setup": [
+        "CREATE TABLE c(id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)"
+      ],
+      "sql": "INSERT INTO sqlite_sequence(name, seq) VALUES ('c', 5)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": []
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "readonly-system-table",
+        "clause": null,
+        "message": "table sqlite_sequence may not be modified"
+      },
+      "class": "intentional-divergence",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "真实 SQLite 允许直接改自增水位；本仓选择只读（`readonly-system-table`），避免用户直接改自增计数器导致后续插入冲突或与 AUTOINCREMENT 语义不一致。若将来放开，改这一条即可"
+    },
+    {
+      "id": "implicit.join-natural",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT * FROM l NATURAL JOIN r",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "b",
+            "B"
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "b",
+            "B"
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`NATURAL` 只保留公共列一次；结果列为 `id,lv,rv`，未匹配行不出现"
+    },
+    {
+      "id": "implicit.join-natural-left",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT * FROM l NATURAL LEFT JOIN r",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "a",
+            null
+          ],
+          [
+            2,
+            "b",
+            "B"
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "a",
+            null
+          ],
+          [
+            2,
+            "b",
+            "B"
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`NATURAL LEFT` 保留未匹配左行，右侧补 NULL"
+    },
+    {
+      "id": "implicit.join-natural-right",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT * FROM l NATURAL RIGHT JOIN r",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            3,
+            null,
+            "C"
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            3,
+            null,
+            "C"
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`NATURAL RIGHT` 丢弃未匹配左行，未匹配右行左侧补 NULL"
+    },
+    {
+      "id": "implicit.join-natural-product",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE n1(x INTEGER)",
+        "INSERT INTO n1 VALUES (1),(2)",
+        "CREATE TABLE n2(y INTEGER)",
+        "INSERT INTO n2 VALUES (10),(20)"
+      ],
+      "sql": "SELECT * FROM n1 NATURAL JOIN n2",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            10
+          ],
+          [
+            1,
+            20
+          ],
+          [
+            2,
+            10
+          ],
+          [
+            2,
+            20
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            10
+          ],
+          [
+            1,
+            20
+          ],
+          [
+            2,
+            10
+          ],
+          [
+            2,
+            20
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "无公共列时 `NATURAL` 退化为笛卡尔积，两列四行"
+    },
+    {
+      "id": "implicit.join-natural-case",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b TEXT)",
+        "INSERT INTO t VALUES (1,'x')",
+        "CREATE TABLE u(A INTEGER, B TEXT, c TEXT)",
+        "INSERT INTO u VALUES (1,'x','y')"
+      ],
+      "sql": "SELECT * FROM t NATURAL JOIN u",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "x",
+            "y"
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "x",
+            "y"
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "实测 3.49.1 中 `NATURAL` 公共列按大小写不敏感匹配，保留左表列名"
+    },
+    {
+      "id": "implicit.join-right-using-labels",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT id, lv, rv FROM l RIGHT JOIN r USING(id)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            3,
+            null,
+            "C"
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            3,
+            null,
+            "C"
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`USING` 列在结果里只出现一次且不带表前缀，列标签 `id,lv,rv`"
+    },
+    {
+      "id": "implicit.join-right-using-qualified",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT l.id, r.id FROM l RIGHT JOIN r USING(id)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            2
+          ],
+          [
+            null,
+            3
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            2
+          ],
+          [
+            null,
+            3
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "带表前缀引用时两侧各自可寻址：左行未匹配时 `l.id` 为 NULL，`r.id` 仍是右值"
+    },
+    {
+      "id": "implicit.join-right-using-single",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT id FROM l RIGHT JOIN r USING(id)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            2
+          ],
+          [
+            3
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            2
+          ],
+          [
+            3
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "未加前缀的 `USING` 列取合并值，未匹配右行显示右值"
+    },
+    {
+      "id": "implicit.join-right-using-star",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT * FROM l RIGHT JOIN r USING(id)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            3,
+            null,
+            "C"
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            3,
+            null,
+            "C"
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`SELECT *` 不重复输出 `USING` 列，右侧其余列按原序追加"
+    },
+    {
+      "id": "implicit.join-full-outer-using",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT * FROM l FULL OUTER JOIN r USING(id)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "a",
+            null
+          ],
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            3,
+            null,
+            "C"
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "a",
+            null
+          ],
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            3,
+            null,
+            "C"
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`FULL` 是匹配对与两侧未匹配行的并集，不做整行去重"
+    },
+    {
+      "id": "implicit.join-full-count",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT count(*) FROM l FULL OUTER JOIN r USING(id)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            3
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            3
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`count(*)` 与行数一致"
+    },
+    {
+      "id": "implicit.join-full-duplicate",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE d1(id INTEGER)",
+        "INSERT INTO d1 VALUES (1),(1)",
+        "CREATE TABLE d2(id INTEGER)",
+        "INSERT INTO d2 VALUES (1),(1)"
+      ],
+      "sql": "SELECT id FROM d1 FULL JOIN d2 USING(id)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            1
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            1
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`FULL` 保留匹配重数：2×2 个匹配对共四行，不合并重复行"
+    },
+    {
+      "id": "implicit.join-full-single",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE e1(id INTEGER)",
+        "INSERT INTO e1 VALUES (1),(1)",
+        "CREATE TABLE e2(id INTEGER)",
+        "INSERT INTO e2 VALUES (2)"
+      ],
+      "sql": "SELECT id FROM e1 FULL JOIN e2 USING(id)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "左表两条重复行都未匹配、右表一条未匹配：三行全部保留"
+    },
+    {
+      "id": "implicit.join-full-order-by",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT id, lv, rv FROM l FULL JOIN r USING(id) ORDER BY id DESC",
+      "class": "none",
+      "status": "open",
+      "note": "`FULL` 与 `ORDER BY` 组合按合并列排序，未匹配侧以 `NULL` 参与排序",
+      "direction": "none",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            3,
+            null,
+            "C"
+          ],
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            1,
+            "a",
+            null
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            3,
+            null,
+            "C"
+          ],
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            1,
+            "a",
+            null
+          ]
+        ]
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
+    },
+    {
+      "id": "implicit.join-using-multi",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE p(a INTEGER, b INTEGER, c TEXT)",
+        "INSERT INTO p VALUES (1,2,'p')",
+        "CREATE TABLE q(c TEXT, id INTEGER, b INTEGER, d TEXT)",
+        "INSERT INTO q VALUES ('p',9,2,'q')"
+      ],
+      "sql": "SELECT * FROM p JOIN q USING(b,c)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            "p",
+            9,
+            "q"
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            "p",
+            9,
+            "q"
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "多列 `USING` 按公共列等值匹配，结果列按左表列序输出"
+    },
+    {
+      "id": "implicit.join-using-multi-order",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE p(a INTEGER, b INTEGER, c TEXT)",
+        "INSERT INTO p VALUES (1,2,'p')",
+        "CREATE TABLE q(c TEXT, id INTEGER, b INTEGER, d TEXT)",
+        "INSERT INTO q VALUES ('p',9,2,'q')"
+      ],
+      "sql": "SELECT * FROM p JOIN q USING(c,b)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            "p",
+            9,
+            "q"
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            "p",
+            9,
+            "q"
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`USING` 列出顺序不影响结果，列标签仍是 `a,b,c,id,d`"
+    },
+    {
+      "id": "implicit.join-chain",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE m1(a INTEGER, b INTEGER)",
+        "INSERT INTO m1 VALUES (1,2)",
+        "CREATE TABLE m2(a INTEGER, c INTEGER)",
+        "INSERT INTO m2 VALUES (1,3)",
+        "CREATE TABLE m3(b INTEGER, a INTEGER, d INTEGER)",
+        "INSERT INTO m3 VALUES (2,1,4)"
+      ],
+      "sql": "SELECT * FROM m1 JOIN m2 USING(a) JOIN m3 USING(a)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            3,
+            2,
+            4
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            3,
+            2,
+            4
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "链式 `USING` 把合并列继续传给下一次连接，左侧列按首次出现的表展开"
+    },
+    {
+      "id": "implicit.join-chain-right",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE m1(a INTEGER, b INTEGER)",
+        "INSERT INTO m1 VALUES (1,2)",
+        "CREATE TABLE m2(a INTEGER, c INTEGER)",
+        "INSERT INTO m2 VALUES (1,3)",
+        "CREATE TABLE m3(b INTEGER, a INTEGER, d INTEGER)",
+        "INSERT INTO m3 VALUES (2,1,4)"
+      ],
+      "sql": "SELECT * FROM m1 JOIN m2 USING(a) RIGHT JOIN m3 USING(a)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            3,
+            2,
+            4
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            3,
+            2,
+            4
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "链式中间换成 `RIGHT JOIN` 结果不变"
+    },
+    {
+      "id": "syntax.join-using-empty",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE one(x INTEGER)",
+        "INSERT INTO one VALUES (1)",
+        "CREATE TABLE two(x INTEGER)",
+        "INSERT INTO two VALUES (1)"
+      ],
+      "sql": "SELECT * FROM one JOIN two USING()",
+      "sqlite": {
+        "kind": "error",
+        "stage": "sql",
+        "message": "near \")\": syntax error"
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "syntax",
+        "clause": null,
+        "message": "near \")\": syntax error"
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "真实 SQLite 对空 `USING()` 报 `near \")\": syntax error`，本仓同样拒绝"
+    },
+    {
+      "id": "syntax.join-natural-using",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE one(x INTEGER)",
+        "INSERT INTO one VALUES (1)",
+        "CREATE TABLE two(x INTEGER)",
+        "INSERT INTO two VALUES (1)"
+      ],
+      "sql": "SELECT * FROM one NATURAL JOIN two USING(x)",
+      "sqlite": {
+        "kind": "error",
+        "stage": "sql",
+        "message": "a NATURAL join may not have an ON or USING clause"
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "syntax",
+        "clause": "JOIN",
+        "message": "a NATURAL join may not have an ON or USING clause"
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`NATURAL` 不得同时写 `ON` 或 `USING`"
+    },
+    {
+      "id": "syntax.join-using-on",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT * FROM l JOIN r USING(id) ON l.id = r.id",
+      "class": "none",
+      "status": "open",
+      "note": "`USING` 与 `ON` 不能同时写，真实 SQLite 报 `near \"on\": syntax error`",
+      "direction": "none",
+      "sqlite": {
+        "kind": "error",
+        "stage": "sql",
+        "message": "near \"ON\": syntax error"
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "syntax",
+        "clause": null,
+        "message": "near \"ON\": syntax error"
+      },
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      }
+    },
+    {
+      "id": "syntax.join-using-name-mismatch",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE t(i INTEGER, j TEXT)",
+        "INSERT INTO t VALUES (1,'y')",
+        "CREATE TABLE u(ID INTEGER, J TEXT, k TEXT)",
+        "INSERT INTO u VALUES (1,'y','z')"
+      ],
+      "sql": "SELECT * FROM t JOIN u USING(i,j)",
+      "sqlite": {
+        "kind": "error",
+        "stage": "sql",
+        "message": "cannot join using column i - column not present in both tables"
+      },
+      "ours": {
+        "kind": "error",
+        "stage": "sql",
+        "code": "unknown-column",
+        "clause": null,
+        "message": "cannot join using column i - column not present in both tables"
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "`USING` 列必须两侧都存在：`i`/`j` 与 `ID`/`J` 名字不同，即使大小写折叠也不相等"
+    },
+    {
+      "id": "implicit.join-using-case-fold",
+      "direction": "none",
+      "setup": [
+        "CREATE TABLE t2(a INTEGER)",
+        "INSERT INTO t2 VALUES (1)",
+        "CREATE TABLE u2(A INTEGER)",
+        "INSERT INTO u2 VALUES (1)"
+      ],
+      "sql": "SELECT * FROM t2 JOIN u2 USING(a)",
+      "sqlite": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
+      },
+      "ours": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
+      },
+      "class": "none",
+      "evidence": {
+        "sqlite": "CPython 3.12.10 sqlite3 3.49.1",
+        "ours": "@yydb/sqlite createEngine engine 3.45.0 on Node v24.18.0 from packed tarballs"
+      },
+      "status": "open",
+      "note": "实测 3.49.1 中 `USING` 名匹配大小写不敏感：`a` 与 `A` 视为同一列"
     }
   ]
 }
