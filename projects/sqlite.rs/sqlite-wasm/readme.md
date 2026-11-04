@@ -11,12 +11,14 @@ a small fail-closed SQL front end.
 |-----------|---------------|
 | `CREATE TABLE` | column list with `PRIMARY KEY`, `NOT NULL`, `UNIQUE`, `DEFAULT` |
 | `INSERT` | optional column list, one or more `VALUES` tuples |
-| `SELECT` | `count(*)`, `*`, or explicit columns, with optional `LIMIT` |
+| `SELECT` | `count(*)`, `*`, or explicit columns, with optional `WHERE`, `ORDER BY` and `LIMIT` |
 
-`WHERE`, `JOIN`, `GROUP BY`, `ORDER BY`, `UPDATE`, `DELETE`, `ALTER`, `DROP`,
+`JOIN`, `GROUP BY`, `HAVING`, `UPDATE`, `DELETE`, `ALTER`, `DROP`,
 table-level constraints, views, triggers, and indexes are rejected with a
-message. Indexes are excluded on purpose: index trees are materialized by the
-file-writing path, which this crate does not have.
+message. `WHERE` accepts plain predicates only: comparisons, `AND` / `OR` /
+`NOT`, `IS [NOT] NULL`, column references and literals. Indexes are excluded on
+purpose: index trees are materialized by the file-writing path, which this crate
+does not have.
 
 ## Build
 

@@ -67,8 +67,8 @@ function checkHostContract() {
   assertSql(/expects 2 values/.test(arity), `arity mismatch is rejected, got ${arity}`);
   const deleted = throws(() => database.exec("delete from probe"));
   assertSql(/unsupported statement/.test(deleted), `delete is rejected, got ${deleted}`);
-  const ordered = throws(() => database.exec("select * from probe order by id"));
-  assertSql(/unsupported `SELECT` clause/.test(ordered), `order by is rejected, got ${ordered}`);
+  const grouped = throws(() => database.exec("select * from probe group by id"));
+  assertSql(/unsupported `SELECT` clause/.test(grouped), `group by is rejected, got ${grouped}`);
 }
 
 // The orthogonal primitives: one statement, a statement list, and the
@@ -90,13 +90,15 @@ function checkPrimitives() {
   const batch = JSON.parse(database.executeBatch(["insert into p (label) values ('b')", "select count(*) from p"]));
   assertSql(batch.length === 2 && JSON.stringify(batch[1].rows) === "[[2]]", "executeBatch runs the list in order");
 
-  const rejected = JSON.parse(database.tryExecute("select * from p order by id"));
+  const rejected = JSON.parse(database.tryExecute("select * from p group by id"));
   assertSql(rejected.ok === false, "tryExecute reports a rejection without throwing");
   assertSql(
-    rejected.error.code === "unsupported-clause" && rejected.error.statement === "select" && rejected.error.clause === "ORDER",
+    rejected.error.code === "unsupported-clause" && rejected.error.statement === "select" && rejected.error.clause === "GROUP",
     "tryExecute error carries code, statement and clause",
   );
   assertSql(rejected.error.position === 16, "tryExecute error carries the clause offset");
+  const filtered = JSON.parse(database.tryExecute("select label from p where id >= 2 order by id desc limit 1"));
+  assertSql(filtered.ok === true && JSON.stringify(filtered.result.rows) === '[["b"]]', "where, order by and limit run together");
   const accepted = JSON.parse(database.tryExecute("select * from p"));
   assertSql(accepted.ok === true && accepted.result.rows.length === 2, "tryExecute returns the result on success");
 }

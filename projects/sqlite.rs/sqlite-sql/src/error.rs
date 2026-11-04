@@ -7,7 +7,7 @@
 //! |-------|---------|
 //! | `code` | stable identifier such as `unsupported-statement`, `unsupported-clause`, `unknown-table` |
 //! | `statement` | the statement being parsed or executed (`create-table`, `insert`, `select`) |
-//! | `clause` | the offending clause when one is recognized (`ORDER`, `LIMIT`, `GENERATED`) |
+//! | `clause` | the offending clause when one is recognized (`GROUP`, `LIMIT`, `GENERATED`) |
 //! | `position` | byte offset inside the submitted SQL text |
 
 use std::fmt;

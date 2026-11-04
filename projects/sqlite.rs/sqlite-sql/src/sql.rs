@@ -6,12 +6,17 @@
 //! |-----------|-------|
 //! | `CREATE TABLE` | column list with `PRIMARY KEY`, `NOT NULL`, `UNIQUE`, `DEFAULT` |
 //! | `INSERT` | optional column list, one or more `VALUES` tuples |
-//! | `SELECT` | `count(*)`, `*`, or an explicit column list, with optional `LIMIT` |
+//! | `SELECT` | `count(*)`, `*`, or an explicit column list, with optional `WHERE`, `ORDER BY` and `LIMIT` |
 //!
-//! Anything else (`WHERE`, `JOIN`, `UPDATE`, `DELETE`, table-level constraints,
-//! views, triggers, `ALTER`, `DROP`) is rejected with a structured error instead
-//! of being silently approximated. Every rejection carries the statement kind,
-//! the offending clause when one is recognized, and the byte offset inside the
+//! `WHERE` accepts plain predicates only: `=`, `<>`, `!=`, `<`, `>`, `<=`, `>=`,
+//! `AND`, `OR`, `NOT`, `IS NULL`, `IS NOT NULL`, column references and literals.
+//! `ORDER BY` accepts one or more columns with `ASC` / `DESC`.
+//!
+//! Anything else (`JOIN`, `GROUP BY`, `HAVING`, subqueries, functions in
+//! predicates, `UPDATE`, `DELETE`, table-level constraints, views, triggers,
+//! `ALTER`, `DROP`) is rejected with a structured error instead of being
+//! silently approximated. Every rejection carries the statement kind, the
+//! offending clause when one is recognized, and the byte offset inside the
 //! input.
 
 use sqlite::{ColumnSpec, WriteValue};
@@ -57,6 +62,70 @@ pub enum SelectItems {
     Named(Vec<String>),
 }
 
+/// One comparison operand: a column reference or a literal.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Operand {
+    /// Column name as written.
+    Column(String),
+    /// Literal value.
+    Literal(Literal),
+}
+
+/// Comparison operator inside a `WHERE` predicate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompareOp {
+    /// `=`.
+    Eq,
+    /// `<>` or `!=`.
+    NotEq,
+    /// `<`.
+    Lt,
+    /// `<=`.
+    LtEq,
+    /// `>`.
+    Gt,
+    /// `>=`.
+    GtEq,
+}
+
+/// One `ORDER BY` key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OrderKey {
+    /// Column name as written.
+    pub column: String,
+    /// `DESC` was written.
+    pub descending: bool,
+}
+
+/// A `WHERE` predicate.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Expr {
+    /// A bare operand used as a boolean.
+    Truth(Operand),
+    /// Two operands compared with one operator.
+    Compare {
+        /// Left operand.
+        left: Operand,
+        /// Comparison operator.
+        op: CompareOp,
+        /// Right operand.
+        right: Operand,
+    },
+    /// `IS NULL` or `IS NOT NULL`.
+    IsNull {
+        /// Tested operand.
+        value: Operand,
+        /// `IS NOT NULL` was written.
+        negated: bool,
+    },
+    /// `NOT`.
+    Not(Box<Expr>),
+    /// `AND`.
+    And(Box<Expr>, Box<Expr>),
+    /// `OR`.
+    Or(Box<Expr>, Box<Expr>),
+}
+
 /// One parsed statement.
 #[derive(Clone, Debug)]
 pub enum Statement {
@@ -78,12 +147,16 @@ pub enum Statement {
         /// One literal tuple per inserted row.
         rows: Vec<Vec<Literal>>,
     },
-    /// `SELECT ... FROM ... [LIMIT n]`.
+    /// `SELECT ... FROM ... [WHERE ...] [ORDER BY ...] [LIMIT n]`.
     Select {
         /// Source table name as written.
         table: String,
         /// Selected projection.
         items: SelectItems,
+        /// Optional `WHERE` predicate.
+        filter: Option<Expr>,
+        /// `ORDER BY` keys in source order.
+        order: Vec<OrderKey>,
         /// Optional row limit.
         limit: Option<usize>,
     },
@@ -479,6 +552,115 @@ impl Parser {
         }
     }
 
+    /// Reads a comparison operator, combining the two-token forms.
+    ///
+    /// The tokenizer emits one character per punctuation token, so `<=`, `>=`,
+    /// `<>` and `!=` arrive as two tokens and are joined here.
+    fn compare_op(&mut self) -> Option<(CompareOp, usize)> {
+        let first = match self.peek() {
+            Some(Token::Operator(operator)) => operator.as_str(),
+            _ => return None,
+        };
+        let second = match self.tokens.get(self.at + 1) {
+            Some(Token::Operator(operator)) => Some(operator.as_str()),
+            _ => None,
+        };
+        match (first, second) {
+            ("=", _) => Some((CompareOp::Eq, 1)),
+            ("<", Some("=")) => Some((CompareOp::LtEq, 2)),
+            ("<", Some(">")) => Some((CompareOp::NotEq, 2)),
+            ("<", _) => Some((CompareOp::Lt, 1)),
+            (">", Some("=")) => Some((CompareOp::GtEq, 2)),
+            (">", _) => Some((CompareOp::Gt, 1)),
+            ("!", Some("=")) => Some((CompareOp::NotEq, 2)),
+            _ => None,
+        }
+    }
+
+    /// Reads one operand: a column reference or a literal.
+    fn operand(&mut self) -> Result<Operand, SqlError> {
+        if let Some(Token::Word(word)) = self.peek() {
+            let lower = word.to_ascii_lowercase();
+            if lower == "null" {
+                self.at += 1;
+                return Ok(Operand::Literal(Literal::Null));
+            }
+            if lower == "true" {
+                self.at += 1;
+                return Ok(Operand::Literal(Literal::Integer(1)));
+            }
+            if lower == "false" {
+                self.at += 1;
+                return Ok(Operand::Literal(Literal::Integer(0)));
+            }
+        }
+        match self.peek() {
+            Some(Token::Int(_)) | Some(Token::Real(_)) | Some(Token::Text(_)) | Some(Token::Blob(_)) | Some(Token::Minus) => {
+                Ok(Operand::Literal(self.literal()?))
+            }
+            Some(Token::Word(_)) | Some(Token::Quoted(_)) => Ok(Operand::Column(self.name()?)),
+            Some(token) => Err(self.error("syntax", format!("expected a column or a literal but found {}", token.describe()))),
+            None => Err(self.error("syntax", "expected a column or a literal but the statement ended")),
+        }
+    }
+
+    /// `OR` binds loosest, then `AND`, then `NOT`.
+    fn or_expr(&mut self) -> Result<Expr, SqlError> {
+        let mut left = self.and_expr()?;
+        while self.eat_word("or") {
+            left = Expr::Or(Box::new(left), Box::new(self.and_expr()?));
+        }
+        Ok(left)
+    }
+
+    fn and_expr(&mut self) -> Result<Expr, SqlError> {
+        let mut left = self.not_expr()?;
+        while self.eat_word("and") {
+            left = Expr::And(Box::new(left), Box::new(self.not_expr()?));
+        }
+        Ok(left)
+    }
+
+    fn not_expr(&mut self) -> Result<Expr, SqlError> {
+        if self.eat_word("not") {
+            return Ok(Expr::Not(Box::new(self.not_expr()?)));
+        }
+        self.primary()
+    }
+
+    fn primary(&mut self) -> Result<Expr, SqlError> {
+        if self.peek() == Some(&Token::LParen) {
+            self.at += 1;
+            let inner = self.or_expr()?;
+            self.expect_char(&Token::RParen)?;
+            return Ok(inner);
+        }
+        let left = self.operand()?;
+        if let Some((operator, width)) = self.compare_op() {
+            self.at += width;
+            let right = self.operand()?;
+            return Ok(Expr::Compare { left, op: operator, right });
+        }
+        if self.eat_word("is") {
+            let negated = self.eat_word("not");
+            self.expect_word("null")?;
+            return Ok(Expr::IsNull { value: left, negated });
+        }
+        Ok(Expr::Truth(left))
+    }
+
+    fn order_key(&mut self) -> Result<OrderKey, SqlError> {
+        let column = self.name()?;
+        let descending = if self.eat_word("desc") {
+            true
+        }
+        else {
+            self.eat_word("asc");
+            false
+        };
+        Ok(OrderKey { column, descending })
+    }
+
     fn statement(&mut self) -> Result<Statement, SqlError> {
         if self.eat_word("create") {
             self.kind = Some("create-table");
@@ -712,6 +894,23 @@ impl Parser {
         };
         self.expect_word("from")?;
         let table = self.name()?;
+        let filter = if self.eat_word("where") { Some(self.or_expr()?) } else { None };
+        let order = if self.eat_word("order") {
+            self.expect_word("by")?;
+            let mut keys = Vec::new();
+            loop {
+                keys.push(self.order_key()?);
+                if self.peek() == Some(&Token::Comma) {
+                    self.at += 1;
+                    continue;
+                }
+                break;
+            }
+            keys
+        }
+        else {
+            Vec::new()
+        };
         let limit = if self.eat_word("limit") {
             let negative = matches!(self.peek(), Some(Token::Minus));
             if negative {
@@ -735,11 +934,14 @@ impl Parser {
             None
         };
         match self.peek() {
-            None | Some(Token::Semi) => Ok(Statement::Select { table, items, limit }),
+            None | Some(Token::Semi) => Ok(Statement::Select { table, items, filter, order, limit }),
             Some(token) => {
                 let mut error = self.error(
                     "unsupported-clause",
-                    format!("unsupported `SELECT` clause starting at {}; this engine supports `FROM` and `LIMIT` only", token.describe()),
+                    format!(
+                        "unsupported `SELECT` clause starting at {}; this engine supports `FROM`, `WHERE`, `ORDER BY` and `LIMIT` only",
+                        token.describe()
+                    ),
                 );
                 error.clause = Some(match token {
                     Token::Word(word) => word.to_ascii_uppercase(),

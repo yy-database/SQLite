@@ -23,6 +23,7 @@ __pycache__/
 *.pyc
 
 # Build artifacts
+projects/sqlite.ts/packages/sqlite/dist/
 projects/sqlite.ts/packages/sqlite-harness/stages/node/out/
 projects/sqlite.ts/packages/sqlite-harness/stages/wasm/pkg/
 projects/sqlite.ts/packages/sqlite-harness/stages/python/wheels/

@@ -3,13 +3,14 @@
 //! The engine keeps the whole database image in `SqliteWriter::pages()`; it
 //! never opens a file and never imports an upstream SQLite engine.
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use sqlite::{ColumnSpec, RecordLimits, SqliteWriter, TableLimits, TextEncoding, decode_library_version, decode_record};
 
 use crate::error::SqlError;
 use crate::json_string;
-use crate::sql::{Literal, SelectItems, Statement, parse};
+use crate::sql::{CompareOp, Expr, Literal, Operand, OrderKey, SelectItems, Statement, parse};
 
 /// One cell surfaced to the host.
 #[derive(Clone, Debug, PartialEq)]
@@ -174,7 +175,7 @@ impl Engine {
                 let rows = rowids.into_iter().map(|rowid| vec![Cell::Integer(rowid)]).collect();
                 Ok(ExecResult { statement: "insert", columns: vec!["rowid".to_string()], rows, affected: slots_by_row.len() })
             }
-            Statement::Select { table, items, limit } => self.select(&table, items, limit),
+            Statement::Select { table, items, filter, order, limit } => self.select(&table, items, filter, order, limit),
         }
     }
 
@@ -186,7 +187,14 @@ impl Engine {
         Ok(rowids)
     }
 
-    fn select(&self, table: &str, items: SelectItems, limit: Option<usize>) -> Result<ExecResult, SqlError> {
+    fn select(
+        &self,
+        table: &str,
+        items: SelectItems,
+        filter: Option<Expr>,
+        order: Vec<OrderKey>,
+        limit: Option<usize>,
+    ) -> Result<ExecResult, SqlError> {
         let key = table.to_ascii_lowercase();
         let def = self
             .tables
@@ -196,20 +204,45 @@ impl Engine {
             .writer
             .table_rows(table, TableLimits::default())
             .map_err(|error| SqlError::new("storage", error.to_string()).in_statement("select"))?;
+        // `count(*)` over the whole table never has to materialize a row.
+        if filter.is_none() && order.is_empty() {
+            if let SelectItems::CountAll = items {
+                return Ok(ExecResult {
+                    statement: "select",
+                    columns: vec!["count(*)".to_string()],
+                    rows: vec![vec![Cell::Integer(records.len() as i64)]],
+                    affected: 0,
+                });
+            }
+        }
+        let columns = column_map(def);
+        if let Some(expr) = &filter {
+            validate_expr(expr, &columns, table)?;
+        }
+        for entry in &order {
+            validate_column(&entry.column, &columns, table)?;
+        }
+        let mut decoded = records
+            .iter()
+            .map(|row| Ok((row.rowid, decode_row(&row.payload, def, row.rowid)?)))
+            .collect::<Result<Vec<(i64, Vec<Cell>)>, SqlError>>()?;
+        if let Some(expr) = &filter {
+            decoded.retain(|(_, values)| eval_expr(expr, values, &columns) == Some(true));
+        }
+        if !order.is_empty() {
+            decoded.sort_by(|left, right| compare_rows(&left.1, &right.1, &order, &columns));
+        }
+        let take = limit.unwrap_or(usize::MAX);
         match items {
             SelectItems::CountAll => Ok(ExecResult {
                 statement: "select",
                 columns: vec!["count(*)".to_string()],
-                rows: vec![vec![Cell::Integer(records.len() as i64)]],
+                rows: vec![vec![Cell::Integer(decoded.len() as i64)]],
                 affected: 0,
             }),
             SelectItems::Star => {
                 let columns = def.columns.iter().map(|column| column.name.clone()).collect();
-                let rows = records
-                    .iter()
-                    .take(limit.unwrap_or(usize::MAX))
-                    .map(|row| decode_row(&row.payload, def, row.rowid))
-                    .collect::<Result<_, _>>()?;
+                let rows = decoded.into_iter().take(take).map(|(_, values)| values).collect();
                 Ok(ExecResult { statement: "select", columns, rows, affected: 0 })
             }
             SelectItems::Named(names) => {
@@ -221,18 +254,168 @@ impl Engine {
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let rows = records
-                    .iter()
-                    .take(limit.unwrap_or(usize::MAX))
-                    .map(|row| {
-                        let values = decode_row(&row.payload, def, row.rowid)?;
-                        Ok(indices.iter().map(|index| values[*index].clone()).collect())
-                    })
-                    .collect::<Result<Vec<Vec<Cell>>, SqlError>>()?;
+                let rows = decoded
+                    .into_iter()
+                    .take(take)
+                    .map(|(_, values)| indices.iter().map(|index| values[*index].clone()).collect())
+                    .collect();
                 Ok(ExecResult { statement: "select", columns: names, rows, affected: 0 })
             }
         }
     }
+}
+
+fn column_map(def: &TableDef) -> BTreeMap<String, usize> {
+    def.columns.iter().enumerate().map(|(index, column)| (column.name.to_ascii_lowercase(), index)).collect()
+}
+
+fn validate_column(name: &str, columns: &BTreeMap<String, usize>, table: &str) -> Result<usize, SqlError> {
+    columns.get(&name.to_ascii_lowercase()).copied().ok_or_else(|| {
+        SqlError::new("unknown-column", format!("unknown column `{name}` in table `{table}`")).in_statement("select")
+    })
+}
+
+fn validate_operand(operand: &Operand, columns: &BTreeMap<String, usize>, table: &str) -> Result<(), SqlError> {
+    match operand {
+        Operand::Column(name) => {
+            validate_column(name, columns, table)?;
+            Ok(())
+        }
+        Operand::Literal(_) => Ok(()),
+    }
+}
+
+fn validate_expr(expr: &Expr, columns: &BTreeMap<String, usize>, table: &str) -> Result<(), SqlError> {
+    match expr {
+        Expr::Truth(operand) | Expr::IsNull { value: operand, .. } => validate_operand(operand, columns, table),
+        Expr::Compare { left, right, .. } => {
+            validate_operand(left, columns, table)?;
+            validate_operand(right, columns, table)
+        }
+        Expr::Not(inner) => validate_expr(inner, columns, table),
+        Expr::And(left, right) | Expr::Or(left, right) => {
+            validate_expr(left, columns, table)?;
+            validate_expr(right, columns, table)
+        }
+    }
+}
+
+fn literal_cell(literal: &Literal) -> Cell {
+    match literal {
+        Literal::Null => Cell::Null,
+        Literal::Integer(value) => Cell::Integer(*value),
+        Literal::Real(value) => Cell::Real(*value),
+        Literal::Text(value) => Cell::Text(value.clone()),
+        Literal::Blob(value) => Cell::Blob(value.clone()),
+    }
+}
+
+fn operand_cell(operand: &Operand, values: &[Cell], columns: &BTreeMap<String, usize>) -> Cell {
+    match operand {
+        Operand::Column(name) => values[columns[&name.to_ascii_lowercase()]].clone(),
+        Operand::Literal(literal) => literal_cell(literal),
+    }
+}
+
+/// SQLite storage-class order: `NULL` < numbers < text < blob.
+fn storage_rank(cell: &Cell) -> u8 {
+    match cell {
+        Cell::Null => 0,
+        Cell::Integer(_) | Cell::Real(_) => 1,
+        Cell::Text(_) => 2,
+        Cell::Blob(_) => 3,
+    }
+}
+
+/// Compares two cells with the SQLite ordering rules.
+///
+/// Integers and reals compare numerically across the two storage classes, text
+/// compares with the `BINARY` collation, and blobs compare byte by byte.
+fn compare_cells(left: &Cell, right: &Cell) -> Ordering {
+    use Ordering::Equal;
+    let (left_rank, right_rank) = (storage_rank(left), storage_rank(right));
+    if left_rank != right_rank {
+        return left_rank.cmp(&right_rank);
+    }
+    match (left, right) {
+        (Cell::Null, Cell::Null) => Equal,
+        (Cell::Integer(left), Cell::Integer(right)) => left.cmp(right),
+        (Cell::Real(left), Cell::Real(right)) => left.partial_cmp(right).unwrap_or(Equal),
+        (Cell::Integer(left), Cell::Real(right)) => (*left as f64).partial_cmp(right).unwrap_or(Equal),
+        (Cell::Real(left), Cell::Integer(right)) => left.partial_cmp(&(*right as f64)).unwrap_or(Equal),
+        (Cell::Text(left), Cell::Text(right)) => left.as_bytes().cmp(right.as_bytes()),
+        (Cell::Blob(left), Cell::Blob(right)) => left.cmp(right),
+        _ => Equal,
+    }
+}
+
+/// Applies one comparison operator. `None` means the result is SQL `NULL`.
+fn compare_values(left: &Cell, right: &Cell, operator: CompareOp) -> Option<bool> {
+    use Ordering::{Equal, Greater, Less};
+    if matches!(left, Cell::Null) || matches!(right, Cell::Null) {
+        return None;
+    }
+    let ordering = compare_cells(left, right);
+    Some(match operator {
+        CompareOp::Eq => ordering == Equal,
+        CompareOp::NotEq => ordering != Equal,
+        CompareOp::Lt => ordering == Less,
+        CompareOp::LtEq => ordering != Greater,
+        CompareOp::Gt => ordering == Greater,
+        CompareOp::GtEq => ordering != Less,
+    })
+}
+
+/// SQLite boolean conversion: numeric zero is false, everything else numeric is
+/// true, and text, blobs and `NULL` are not numbers.
+fn truthiness(cell: &Cell) -> Option<bool> {
+    match cell {
+        Cell::Null => None,
+        Cell::Integer(value) => Some(*value != 0),
+        Cell::Real(value) => Some(*value != 0.0),
+        Cell::Text(_) | Cell::Blob(_) => Some(false),
+    }
+}
+
+/// Three-valued predicate evaluation: `None` is SQL `NULL`.
+fn eval_expr(expr: &Expr, values: &[Cell], columns: &BTreeMap<String, usize>) -> Option<bool> {
+    match expr {
+        Expr::Truth(operand) => truthiness(&operand_cell(operand, values, columns)),
+        Expr::Compare { left, op, right } => {
+            compare_values(&operand_cell(left, values, columns), &operand_cell(right, values, columns), *op)
+        }
+        Expr::IsNull { value, negated } => {
+            let is_null = matches!(operand_cell(value, values, columns), Cell::Null);
+            Some(is_null != *negated)
+        }
+        Expr::Not(inner) => eval_expr(inner, values, columns).map(|value| !value),
+        Expr::And(left, right) => match (eval_expr(left, values, columns), eval_expr(right, values, columns)) {
+            (Some(false), _) | (_, Some(false)) => Some(false),
+            (Some(true), Some(true)) => Some(true),
+            _ => None,
+        },
+        Expr::Or(left, right) => match (eval_expr(left, values, columns), eval_expr(right, values, columns)) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        },
+    }
+}
+
+fn compare_rows(left: &[Cell], right: &[Cell], order: &[OrderKey], columns: &BTreeMap<String, usize>) -> Ordering {
+    for entry in order {
+        let index = columns[&entry.column.to_ascii_lowercase()];
+        let ordering = if entry.descending {
+            compare_cells(&left[index], &right[index]).reverse()
+        }
+        else {
+            compare_cells(&left[index], &right[index])
+        };
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+    Ordering::Equal
 }
 
 fn self_contained_arity(
@@ -361,13 +544,41 @@ mod tests {
     fn rejections_carry_a_code_and_position() {
         let mut engine = Engine::new(None).expect("open");
         engine.execute("create table t (id integer primary key, label text)").expect("create");
-        let error = engine.execute_one("select * from t order by id").expect_err("order by is rejected");
+        let error = engine.execute_one("select * from t group by id").expect_err("group by is rejected");
         assert_eq!(error.code, "unsupported-clause");
         assert_eq!(error.statement, Some("select"));
-        assert_eq!(error.clause.as_deref(), Some("ORDER"));
+        assert_eq!(error.clause.as_deref(), Some("GROUP"));
         assert_eq!(error.position, Some(16));
         let unknown = engine.execute_one("insert into missing values (1)").expect_err("unknown table");
         assert_eq!(unknown.code, "unknown-table");
         assert_eq!(unknown.statement, Some("insert"));
+    }
+
+    #[test]
+    fn where_and_order_by_follow_sqlite_ordering() {
+        let mut engine = Engine::new(None).expect("open");
+        engine
+            .execute(
+                "create table t (id integer primary key, label text, score real); \
+                 insert into t (label, score) values ('b', 1.5), ('a', null), ('c', 2.0), (null, 0.0);",
+            )
+            .expect("seed");
+        // `NULL` sorts below every number, so `DESC` puts it last.
+        let ordered = engine.execute_one("select label from t order by score desc").expect("order");
+        assert_eq!(
+            ordered.rows,
+            vec![
+                vec![Cell::Text("c".to_string())],
+                vec![Cell::Text("b".to_string())],
+                vec![Cell::Null],
+                vec![Cell::Text("a".to_string())],
+            ]
+        );
+        let filtered = engine.execute_one("select label from t where score >= 1.5 order by id").expect("filter");
+        assert_eq!(filtered.rows, vec![vec![Cell::Text("b".to_string())], vec![Cell::Text("c".to_string())]]);
+        let counted = engine.execute_one("select count(*) from t where score is not null").expect("count");
+        assert_eq!(counted.rows, vec![vec![Cell::Integer(3)]]);
+        let unknown = engine.execute_one("select * from t where missing = 1").expect_err("unknown column");
+        assert_eq!(unknown.code, "unknown-column");
     }
 }

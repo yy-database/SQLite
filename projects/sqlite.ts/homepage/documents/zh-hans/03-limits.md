@@ -3,15 +3,16 @@
 ## WebAssembly
 
 - 不打开文件、不写文件、不读取 `-wal` 或 `-journal`。
-- SQL 仅接受 `CREATE TABLE`、`INSERT`、`SELECT`（`count(*)`、`*`、列投影，附带可选 `LIMIT`）。
-- `WHERE`、`JOIN`、`GROUP BY`、`ORDER BY`、`UPDATE`、`DELETE`、`ALTER`、`DROP`、表级约束、视图、触发器、索引都会被拒绝并给出消息。
+- SQL 仅接受 `CREATE TABLE`、`INSERT`、`SELECT`（`count(*)`、`*`、列投影，附带可选 `WHERE`、`ORDER BY`、`LIMIT`）。
+- `WHERE` 只接受朴素谓词：比较运算、`AND` / `OR` / `NOT`、`IS [NOT] NULL`、列引用与字面量。
+- `JOIN`、`GROUP BY`、`HAVING`、`UPDATE`、`DELETE`、`ALTER`、`DROP`、表级约束、视图、触发器、索引都会被拒绝并给出消息。
 - 不支持建索引：索引树由文件保存路径生成，而 wasm 构建没有文件系统。拒绝建索引，而不是导出半成品镜像。
 - 一次镜像只有一种文本编码，写入固定 UTF-8。
 - `SELECT` 先读取整张表再应用 `LIMIT`。
 
 ## Node-API 与 PyO3
 
-- 不执行 SQL，页面与记录操作按显式 API 进行。
+- 存储原语（页面与记录操作）按显式 API 进行，不经过 SQL；SQL 由 `SqliteEngine` 执行。
 - 写入侧不产生 `-wal` 或 `-journal` 文件；读取侧可以回放既有文件。
 - 写入文本为 UTF-8；读取支持 UTF-8、UTF-16LE、UTF-16BE。
 - 页面大小必须是 512 到 65536 之间的 2 的幂。

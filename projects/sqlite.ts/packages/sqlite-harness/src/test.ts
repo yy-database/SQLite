@@ -14,18 +14,21 @@
 // cases than its floor. No file is left unclassified: every test file lands in
 // exactly one layer.
 
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 
-import { emit, execFile, nativeModulePath, repoPath, type CliOptions } from "./util.ts";
+import { emit, execFile, nativeModulePath, platformKey, repoPath, type CliOptions, type CommandResult } from "./util.ts";
 import { platformStages } from "../stages/stages.mjs";
+import { stagesDir } from "../stages/paths.mjs";
 
 type LayerName = "external" | "storage" | "sql";
 
 const TS_EXTERNAL_FILES = ["sql-semantics.test.ts"];
 const TS_SQL_FILES = ["sql-engine.test.ts"];
 const PY_EXTERNAL_MODULES = ["test_sql_semantics"];
-const PY_SQL_MODULES: string[] = [];
+const PY_SQL_MODULES = ["test_sql_engine"];
 
 const FLOORS: Record<LayerName, { ts: number; py: number }> = {
   external: {
@@ -37,13 +40,11 @@ const FLOORS: Record<LayerName, { ts: number; py: number }> = {
     py: Number(process.env.PY_STORAGE_FLOOR ?? 35),
   },
   sql: {
-    // The TypeScript suite runs the native engine directly, so its case count is
-    // the repository's own SQL coverage. The Python SQL acceptance runs against
-    // the installed wheel inside `platforms/python`, so `PY_SQL_FLOOR` stays 0
-    // here and that layer's numbers are reported by the stage instead of being
-    // counted twice.
-    ts: Number(process.env.TS_SQL_FLOOR ?? 8),
-    py: Number(process.env.PY_SQL_FLOOR ?? 0),
+    // The TypeScript suite runs the native engine directly. The Python SQL module
+    // runs against the installed wheel built by the `platforms/python` stage, so
+    // both hosts are measured on the same statement surface.
+    ts: Number(process.env.TS_SQL_FLOOR ?? 9),
+    py: Number(process.env.PY_SQL_FLOOR ?? 4),
   },
 };
 
@@ -70,9 +71,179 @@ function nativePath(): string {
   return nativeModulePath();
 }
 
+interface PackProbe {
+  readonly name: string;
+  readonly tarball: string;
+  readonly files: number;
+  readonly elapsedMs: number;
+  readonly ok: boolean;
+  readonly detail: string;
+}
+
+// The product package is imported by library users, so the tarball has to be
+// loadable by a plain Node runtime. TypeScript sources inside a tarball are
+// rejected with `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`, so only compiled
+// JavaScript may be exported.
+const SQL_PROBE = `import { createEngine, executeSql } from "@yydb/sqlite";\n` +
+  `const engine = createEngine(4096);\n` +
+  `const pick = (result) => ({ statement: result.statement, affected: result.affected, columns: result.columns, rows: result.rows });\n` +
+  `const created = pick(executeSql(engine, "create table probe (id integer primary key, label text not null)"));\n` +
+  `const inserted = pick(executeSql(engine, "insert into probe (label) values ('ready')"));\n` +
+  `const counted = pick(executeSql(engine, "select count(*) from probe"));\n` +
+  `process.stdout.write(JSON.stringify({ created, inserted, counted }));\n`;
+
+const FIXTURE_PROBE = `import { existsSync, readdirSync } from "node:fs";\n` +
+  `import { fixturesDirectory } from "@yydb/sqlite-fixtures";\n` +
+  `const names = existsSync(fixturesDirectory) ? readdirSync(fixturesDirectory) : [];\n` +
+  `process.stdout.write(JSON.stringify({ fixtures: names.length }));\n`;
+
+interface PackTarget {
+  readonly name: string;
+  readonly directory: string[];
+  readonly probe: string;
+  readonly native: boolean;
+}
+
+const PACK_TARGETS: PackTarget[] = [
+  { name: "@yydb/sqlite", directory: ["projects", "sqlite.ts", "packages", "sqlite"], probe: SQL_PROBE, native: true },
+  {
+    name: "@yydb/sqlite-fixtures",
+    directory: ["projects", "sqlite.ts", "packages", "sqlite-fixtures"],
+    probe: FIXTURE_PROBE,
+    native: false,
+  },
+];
+
+// `npm` and `pnpm` are shell scripts on Windows, so the pack step goes through
+// the platform shell. Every other step uses plain executables.
+function shellRun(line: string, cwd: string): CommandResult {
+  const start = process.hrtime.bigint();
+  const result = spawnSync(line, { cwd, encoding: "utf8", shell: true, maxBuffer: 64 * 1024 * 1024 });
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    elapsedMs: Number(process.hrtime.bigint() - start) / 1_000_000,
+  };
+}
+
+function plainNode(script: string, cwd: string): CommandResult {
+  const start = process.hrtime.bigint();
+  const env = { ...process.env };
+  delete env.SQLITE_NATIVE;
+  delete env.NODE_OPTIONS;
+  const result = spawnSync(process.execPath, [script], { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, env });
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    elapsedMs: Number(process.hrtime.bigint() - start) / 1_000_000,
+  };
+}
+
+function packageName(name: string): { scope: string | null; leaf: string } {
+  const parts = name.split("/");
+  return parts.length === 2 ? { scope: parts[0], leaf: parts[1] } : { scope: null, leaf: name };
+}
+
+function installState(target: PackTarget): PackProbe {
+  const packageDirectory = repoPath(...target.directory);
+  const staging = mkdtempSync(join(tmpdir(), `sqlite-pack-probe-${packageName(target.name).leaf}-`));
+  const start = process.hrtime.bigint();
+  const fail = (detail: string): PackProbe => ({
+    name: target.name,
+    tarball: "",
+    files: 0,
+    elapsedMs: Math.round(Number(process.hrtime.bigint() - start) / 1_000_000),
+    ok: false,
+    detail,
+  });
+  try {
+    const packed = shellRun(`pnpm pack --pack-destination "${staging}"`, packageDirectory);
+    if (packed.status !== 0) return fail(`pack failed\n${(packed.stdout + packed.stderr).trim()}`);
+    const tarball = readdirSync(staging).find((entry) => entry.endsWith(".tgz"));
+    if (!tarball) return fail("pack produced no tarball");
+    const archive = join(staging, tarball);
+
+    const listing = execFile("tar", ["-tzf", archive], staging);
+    if (listing.status !== 0) return fail(`cannot list ${tarball}\n${listing.stderr.trim()}`);
+    const entries = listing.stdout.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+    // `.d.ts` is a declaration file, which is what `types` must point at. Only
+    // real sources would force the consumer to strip types.
+    const sources = entries.filter(
+      (entry) =>
+        (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) || entry.endsWith(".mts") || entry.endsWith(".cts"),
+    );
+    if (sources.length > 0) return fail(`${tarball} ships TypeScript sources: ${sources.join(", ")}`);
+
+    const extracted = execFile("tar", ["-xzf", archive, "-C", staging], staging);
+    if (extracted.status !== 0) return fail(`cannot extract ${tarball}\n${extracted.stderr.trim()}`);
+
+    // Stage the tarball as an installed dependency. The platform package is
+    // copied in because it is unpublished during local development and the
+    // probe must resolve it the same way an installed consumer would.
+    const { scope, leaf } = packageName(target.name);
+    const modules = scope ? join(staging, "node_modules", scope) : join(staging, "node_modules");
+    mkdirSync(modules, { recursive: true });
+    renameSync(join(staging, "package"), join(modules, leaf));
+    if (target.native) {
+      const key = platformKey();
+      if (!key) return fail(`no platform package for ${process.platform}-${process.arch}`);
+      cpSync(repoPath("projects", "sqlite.ts", "platforms", `sqlite-${key}`), join(modules, `sqlite-${key}`), {
+        recursive: true,
+      });
+    }
+
+    const probePath = join(staging, "probe.mjs");
+    writeFileSync(probePath, target.probe);
+    const run = plainNode(probePath, staging);
+    if (run.status !== 0) return fail(`plain Node import failed\n${(run.stdout + run.stderr).trim()}`);
+    let payload: Record<string, any>;
+    try {
+      payload = JSON.parse(run.stdout.trim().split("\n").pop() ?? "");
+    } catch {
+      return fail(`probe produced no JSON: ${run.stdout.trim()}`);
+    }
+    if (target.native) {
+      const counted = payload.counted?.rows?.[0]?.[0];
+      if (payload.created?.statement !== "create-table" || payload.inserted?.affected !== 1 || counted !== 1) {
+        return fail(`probe returned unexpected values: ${run.stdout.trim()}`);
+      }
+    } else if (typeof payload.fixtures !== "number" || payload.fixtures <= 0) {
+      return fail(`fixture package exposes no fixtures: ${run.stdout.trim()}`);
+    }
+    return {
+      name: target.name,
+      tarball,
+      files: entries.length,
+      elapsedMs: Math.round(Number(process.hrtime.bigint() - start) / 1_000_000),
+      ok: true,
+      detail: `${entries.length} files, plain Node import and one statement ok`,
+    };
+  } finally {
+    // Only the temporary directory this probe created is removed, and only when
+    // it still matches the prefix `mkdtempSync` produced.
+    if (basename(staging).startsWith("sqlite-pack-probe-") && staging.startsWith(tmpdir())) {
+      rmSync(staging, { recursive: true, force: true });
+    }
+  }
+}
+
+// The native module and the compiled TypeScript entry are both build outputs.
+// Workspace consumers resolve `@yydb/sqlite` through `dist`, so the gate builds
+// it before any suite runs instead of trusting a stale checkout.
 function build(): { ok: boolean; output: string } {
-  const result = execFile(process.execPath, [repoPath("scripts", "build-napi.mjs")], repoPath());
-  return { ok: result.status === 0, output: (result.stdout + result.stderr).trim() };
+  const native = execFile(process.execPath, [repoPath("scripts", "build-napi.mjs")], repoPath());
+  const packageDirectory = repoPath("projects", "sqlite.ts", "packages", "sqlite");
+  const typescript = execFile(
+    process.execPath,
+    [repoPath("node_modules", "typescript", "bin", "tsc"), "-p", join(packageDirectory, "tsconfig.json")],
+    packageDirectory,
+  );
+  return {
+    ok: native.status === 0 && typescript.status === 0,
+    output: `${native.stdout}${native.stderr}${typescript.stdout}${typescript.stderr}`.trim(),
+  };
 }
 
 function tsFiles(): { external: string[]; storage: string[]; sql: string[] } {
@@ -148,11 +319,25 @@ function pyModules(): { external: string[]; storage: string[]; sql: string[] } {
   };
 }
 
+// The Python SQL module has to import the packaged extension module, so it runs
+// with the interpreter that `platforms/python` provisioned. Every other Python
+// layer keeps using the host interpreter.
+function pyInterpreter(layer: LayerName): string {
+  if (layer === "sql") {
+    const venv = join(stagesDir, "python", ".venv");
+    const candidate = join(venv, process.platform === "win32" ? "Scripts" : "bin", process.platform === "win32" ? "python.exe" : "python");
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return process.platform === "win32" ? "python" : "python3";
+}
+
 function runPyLayer(layer: LayerName, modules: string[]): Suite {
   const name = `sqlite.py/${layer}`;
   const floor = FLOORS[layer].py;
   const directory = repoPath("projects", "sqlite.py", "packages", "sqlite", "tests");
-  const interpreter = process.platform === "win32" ? "python" : "python3";
+  const interpreter = pyInterpreter(layer);
   let cases = 0;
   let skipped = 0;
   let failures = 0;
@@ -232,6 +417,18 @@ export function commandTest(options: CliOptions): number {
     process.stderr.write(`build failed\n${built.output}\n`);
     return 1;
   }
+  // Platform stages run first: the Python SQL layer imports the wheel that the
+  // `platforms/python` stage installs, and the probe below reuses the built
+  // native module without rebuilding it.
+  const external = externalCheck();
+  const packs: PackProbe[] = PACK_TARGETS.map((target) => installState(target));
+  const platforms: PlatformStageResult[] = platformStages
+    .filter((stage: { commands: string[] }) => stage.commands.includes("test"))
+    .map((stage: { assertionsFloor: number; run: () => Omit<PlatformStageResult, "assertionsFloor"> }) => ({
+      ...stage.run(),
+      assertionsFloor: stage.assertionsFloor,
+    }));
+
   const ts = tsFiles();
   const py = pyModules();
   const suites: Suite[] = [
@@ -247,13 +444,6 @@ export function commandTest(options: CliOptions): number {
   for (const suite of suites) {
     if (!suite.ok) process.stderr.write(`\n${suite.name} output\n${suite.detail}\n`);
   }
-  const external = externalCheck();
-  const platforms: PlatformStageResult[] = platformStages
-    .filter((stage: { commands: string[] }) => stage.commands.includes("test"))
-    .map((stage: { assertionsFloor: number; run: () => Omit<PlatformStageResult, "assertionsFloor"> }) => ({
-      ...stage.run(),
-      assertionsFloor: stage.assertionsFloor,
-    }));
 
   const cases = (layer: LayerName): number =>
     suites.filter((suite) => suite.layer === layer).reduce((total, suite) => total + suite.cases, 0);
@@ -269,9 +459,16 @@ export function commandTest(options: CliOptions): number {
   };
 
   const ok =
-    suites.every((suite) => suite.ok) && external.ok && platforms.every((stage) => stage.ok);
+    suites.every((suite) => suite.ok) &&
+    external.ok &&
+    packs.every((probe) => probe.ok) &&
+    platforms.every((stage) => stage.ok);
 
-  const payload = { command: "test", ok, native: nativePath(), external, coverage, suites, platforms };
+  for (const probe of packs) {
+    if (!probe.ok) process.stderr.write(`\n${probe.name} pack probe output\n${probe.tarball} ${probe.detail}\n`);
+  }
+
+  const payload = { command: "test", ok, native: nativePath(), external, coverage, suites, platforms, packs };
   const text = () => {
     const rows = suites.map((suite) => [
       suite.name,
@@ -307,12 +504,24 @@ export function commandTest(options: CliOptions): number {
     const externalLine = external.ok
       ? `external engines referenced: ${external.used.join(", ")}`
       : `external engines missing from suite sources: ${external.missing.join(", ")}`;
+    const packRows = packs.map((probe) => [
+      probe.name,
+      probe.tarball || "-",
+      probe.files,
+      `${probe.elapsedMs}ms`,
+      probe.ok ? "ok" : `FAIL (${probe.detail})`,
+    ]);
+    const packsTable = [
+      "| packed package | tarball | files | elapsed | plain Node install-state import |",
+      "| -------------- | ------- | ----- | ------- | ------------------------------ |",
+      ...packRows.map((row) => `| ${row.join(" | ")} |`),
+    ].join("\n");
     const coverageLines = [
       `coverage: external-conformance ${coverage.externalConformance} cases (external engines, not repository coverage)`,
       `coverage: storage-primitives ${coverage.storagePrimitives} (cases plus platform assertions)`,
       `coverage: sql-execution ${coverage.sqlExecution} (cases plus platform assertions)`,
     ].join("\n");
-    return `${table}\n${stages}\n${coverageLines}\n${externalLine}\nnative module: ${nativePath()}`;
+    return `${table}\n${stages}\n${packsTable}\n${coverageLines}\n${externalLine}\nnative module: ${nativePath()}`;
   };
   emit(options, payload as unknown as Record<string, unknown>, text);
   return ok ? 0 : 1;

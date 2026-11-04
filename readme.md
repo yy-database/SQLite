@@ -6,10 +6,11 @@ Rust codecs live in the aggregated [`database.rs`](https://github.com/oovm/datab
 (`sqlite-formats`, `sqlite-storage`, `sqlite`). This repo owns FFI, packaging, and branding — same
 shape as `yydb` / `yyds` / `iris-orm`.
 
-A fail-closed SQL subset (`CREATE TABLE`, `INSERT`, `SELECT` with `LIMIT`) runs over this
-repository's own format-3 writer in `projects/sqlite.rs/sqlite-sql` and is exposed by the Node-API,
-PyO3 and WebAssembly bindings. Richer SQL (`WHERE`, `ORDER BY`, joins, aggregates beyond
-`count(*)`) is rejected with a structured error and is **not** here.
+A fail-closed SQL subset (`CREATE TABLE`, `INSERT`, `SELECT` with optional `WHERE`, `ORDER BY` and
+`LIMIT`) runs over this repository's own format-3 writer in `projects/sqlite.rs/sqlite-sql` and is
+exposed by the Node-API, PyO3 and WebAssembly bindings. `WHERE` accepts plain predicates (comparisons,
+`AND` / `OR` / `NOT`, `IS [NOT] NULL`, column references and literals). Richer SQL (joins, `GROUP BY`,
+aggregates beyond `count(*)`, subqueries) is rejected with a structured error and is **not** here.
 
 ## Layout
 
