@@ -112,8 +112,54 @@ function throws(run) {
   throw new Error("assertion failed: expected the statement to be rejected");
 }
 
+// `NULL` group: a comparison that touches SQL `NULL` stays unknown, so `WHERE`
+// must drop the row. Each failure names the offending predicate and carries the
+// `three-valued-logic` tag, so one leaked row fails on its own.
+const COMPARISONS = [
+  "score = null",
+  "null = score",
+  "score <> null",
+  "null <> score",
+  "score < null",
+  "null < score",
+  "score <= null",
+  "null <= score",
+  "score > null",
+  "null > score",
+  "score >= null",
+  "null >= score",
+];
+
+function checkThreeValuedLogic() {
+  const database = new MemoryDatabase(4096);
+  database.exec(
+    "create table nums (id integer primary key, label text, score real);" +
+      "insert into nums (label, score) values ('a', 1.5);" +
+      "insert into nums (label, score) values ('b', null);" +
+      "insert into nums (label, score) values (null, 2.5);" +
+      "insert into nums (label, score) values ('d', null);",
+  );
+
+  for (const predicate of COMPARISONS) {
+    const rows = JSON.parse(database.execute(`select id from nums where ${predicate}`)).rows;
+    assertSql(rows.length === 0, `three-valued-logic: \`where ${predicate}\` treated SQL NULL as TRUE and returned ${JSON.stringify(rows)}`);
+  }
+
+  const total = JSON.parse(database.execute("select count(*) from nums")).rows[0][0];
+  const nullScores = JSON.parse(database.execute("select count(*) from nums where score is null")).rows[0][0];
+  const notNullScores = JSON.parse(database.execute("select count(*) from nums where score is not null")).rows[0][0];
+  assertSql(total - nullScores === 2, `three-valued-logic: count(*) minus the NULL scores must be 2, got ${total - nullScores}`);
+  assertSql(nullScores + notNullScores === total, `three-valued-logic: IS NULL plus IS NOT NULL must cover ${total} rows, got ${nullScores + notNullScores}`);
+
+  const ascending = JSON.parse(database.execute("select id, score from nums order by score asc")).rows;
+  const descending = JSON.parse(database.execute("select id, score from nums order by score desc")).rows;
+  assertSql(ascending[0][1] === null, `three-valued-logic: ascending order must start with a NULL score, got ${JSON.stringify(ascending)}`);
+  assertSql(descending[descending.length - 1][1] === null, `three-valued-logic: descending order must end with a NULL score, got ${JSON.stringify(descending)}`);
+}
+
 checkHostContract();
 checkPrimitives();
+checkThreeValuedLogic();
 
 const wasmBytes = readFileSync(resolve(wasmPlatform, "pkg/sqlite_wasm_bg.wasm")).length;
 const database = new MemoryDatabase(4096);

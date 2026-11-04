@@ -99,6 +99,51 @@ assertSql(
 );
 assertSql(engine.ping() > 0, "engine header ping");
 
+// `NULL` group: a comparison that touches SQL `NULL` stays unknown, so `WHERE`
+// must drop the row. Each failure names the offending predicate and carries the
+// `three-valued-logic` tag, so one leaked row fails on its own.
+const COMPARISONS = [
+  "score = null",
+  "null = score",
+  "score <> null",
+  "null <> score",
+  "score < null",
+  "null < score",
+  "score <= null",
+  "null <= score",
+  "score > null",
+  "null > score",
+  "score >= null",
+  "null >= score",
+];
+
+function checkThreeValuedLogic() {
+  const engine = binding.SqliteEngine.create(4096);
+  engine.execute("create table nums (id integer primary key, label text, score real)");
+  engine.executeBatch([
+    "insert into nums (label, score) values ('a', 1.5)",
+    "insert into nums (label, score) values ('b', null)",
+    "insert into nums (label, score) values (null, 2.5)",
+    "insert into nums (label, score) values ('d', null)",
+  ]);
+
+  for (const predicate of COMPARISONS) {
+    const rows = engine.execute(`select id from nums where ${predicate}`).rows;
+    assertSql(rows.length === 0, `three-valued-logic: \`where ${predicate}\` treated SQL NULL as TRUE and returned ${JSON.stringify(rows)}`);
+  }
+
+  const total = engine.execute("select count(*) from nums").rows[0][0];
+  const nullScores = engine.execute("select count(*) from nums where score is null").rows[0][0];
+  const notNullScores = engine.execute("select count(*) from nums where score is not null").rows[0][0];
+  assertSql(total - nullScores === 2, `three-valued-logic: count(*) minus the NULL scores must be 2, got ${total - nullScores}`);
+  assertSql(nullScores + notNullScores === total, `three-valued-logic: IS NULL plus IS NOT NULL must cover ${total} rows, got ${nullScores + notNullScores}`);
+
+  const ascending = engine.execute("select id, score from nums order by score asc").rows;
+  const descending = engine.execute("select id, score from nums order by score desc").rows;
+  assertSql(ascending[0][1] === null, `three-valued-logic: ascending order must start with a NULL score, got ${JSON.stringify(ascending)}`);
+  assertSql(descending[descending.length - 1][1] === null, `three-valued-logic: descending order must end with a NULL score, got ${JSON.stringify(descending)}`);
+}
+
 const enginePath = resolve(outDir, "engine.sqlite3");
 writeFileSync(enginePath, engine.snapshot());
 const engineCheck = spawnSync("python", [resolve(stagesDir, "verify_sqlite.py"), enginePath, "people", "id,name,score"], {
@@ -112,6 +157,8 @@ assertSql(
   engineReport.integrity_check === "ok" && engineReport.count === 2,
   "external sqlite3 reads the SQL-written rows",
 );
+
+checkThreeValuedLogic();
 
 console.log(
   JSON.stringify(
