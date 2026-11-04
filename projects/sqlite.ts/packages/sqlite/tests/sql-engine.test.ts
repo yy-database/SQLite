@@ -111,12 +111,15 @@ test("unsupported clauses return a structured rejection", () => {
   const engine = createEngine();
   engine.execute("create table t (id integer primary key, label text)");
 
-  const rightJoin = engine.tryExecute("select * from t right join t as u on t.id = u.id");
-  assert.equal(rightJoin.ok, false);
-  assert.equal(rightJoin.error?.code, "unsupported-clause");
-  assert.equal(rightJoin.error?.statement, "select");
-  assert.equal(rightJoin.error?.clause, "JOIN");
-  assert.equal(rightJoin.error?.position, 16);
+  // A `SELECT` clause outside the supported set is still structured.
+  const unsupported = engine.tryExecute("select * from t for update");
+  assert.equal(unsupported.ok, false);
+  assert.equal(unsupported.error?.code, "unsupported-clause");
+  assert.equal(unsupported.error?.statement, "select");
+  assert.equal(unsupported.error?.clause, "UPDATE");
+
+  // `RIGHT JOIN` is part of the join family now and no longer hits this path.
+  assert.equal(engine.tryExecute("select * from t right join t as u on t.id = u.id").ok, true);
 
   const where = engine.tryExecute("select * from t where missing = 1");
   assert.equal(where.ok, false);
@@ -807,3 +810,110 @@ test("insert default values fills every column default", () => {
   engine.execute("create table nn(a text not null)");
   assert.equal(engine.tryExecute("insert into nn default values").error?.code, "storage");
 });
+
+// `USING` exposes the shared column once, and an outer join coalesces it so
+// an unmatched right row still shows its own key while `l.id` stays NULL.
+test("join using folds the shared column and coalesces outer rows", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table l(id integer, lv text)");
+  engine.execute("insert into l values (1, 'a'), (2, 'b'), (2, 'c')");
+  engine.execute("create table r(id integer, rv text)");
+  engine.execute("insert into r values (2, 'B'), (3, 'C'), (3, 'D')");
+  const right = engine.execute("select * from l right join r using(id)");
+  assert.deepEqual(right.columns, ["id", "lv", "rv"]);
+  assert.deepEqual(right.rows, [[2, "b", "B"], [2, "c", "B"], [3, null, "C"], [3, null, "D"]]);
+  assert.deepEqual(engine.execute("select l.id, r.id from l right join r using(id)").rows, [
+    [2, 2], [2, 2], [null, 3], [null, 3],
+  ]);
+  assert.deepEqual(engine.execute("select * from l full outer join r using(id)").rows, [
+    [1, "a", null], [2, "b", "B"], [2, "c", "B"], [3, null, "C"], [3, null, "D"],
+  ]);
+  assert.deepEqual(engine.execute("select id from l full join r using(id) where r.id is null").rows, [[1]]);
+});
+
+// `NATURAL` matches every shared column name (case-insensitively), keeps the
+// left order, and appends the right columns that do not participate.
+test("natural join folds common columns including case variants", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table p(a integer, b integer, c text)");
+  engine.execute("insert into p values (1, 2, 'p')");
+  engine.execute("create table q(c text, id integer, b integer, d text)");
+  engine.execute("insert into q values ('p', 9, 2, 'q')");
+  const joined = engine.execute("select * from p natural join q");
+  assert.deepEqual(joined.columns, ["a", "b", "c", "id", "d"]);
+  assert.deepEqual(joined.rows, [[1, 2, "p", 9, "q"]]);
+  engine.execute("create table t(i integer, j text)");
+  engine.execute("insert into t values (1, 'y')");
+  engine.execute("create table u(ID integer, J text, k text)");
+  engine.execute("insert into u values (1, 'y', 'z')");
+  assert.deepEqual(engine.execute("select * from t natural join u").columns, ["i", "j", "ID", "k"]);
+  // No shared column degenerates to a product.
+  engine.execute("create table n1(x integer)");
+  engine.execute("insert into n1 values (1), (2)");
+  engine.execute("create table n2(y integer)");
+  engine.execute("insert into n2 values (10), (20)");
+  assert.equal(engine.execute("select * from n1 natural join n2").rows.length, 4);
+});
+
+// `FULL` is left-major with unmatched right rows appended, and it preserves
+// duplicate multiplicities instead of de-duplicating whole rows.
+test("full and right joins keep duplicates and pad the missing side", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table f1(id integer)");
+  engine.execute("insert into f1 values (1), (1)");
+  engine.execute("create table f2(id integer)");
+  engine.execute("insert into f2 values (1), (1), (2)");
+  assert.deepEqual(engine.execute("select id from f1 full join f2 using(id)").rows, [[1], [1], [1], [1], [2]]);
+  engine.execute("create table l(id integer, v text)");
+  engine.execute("insert into l values (1, 'a'), (2, 'b')");
+  engine.execute("create table r(id integer, w text)");
+  engine.execute("insert into r values (2, 'B'), (1, 'A')");
+  assert.deepEqual(engine.execute("select * from l right join r on l.id = r.id").rows, [
+    [1, "a", 1, "A"], [2, "b", 2, "B"],
+  ]);
+  // A join without `ON` or `USING` is a product, even for `RIGHT JOIN`.
+  assert.deepEqual(engine.execute("select * from l right join r").rows, [
+    [1, "a", 2, "B"], [1, "a", 1, "A"], [2, "b", 2, "B"], [2, "b", 1, "A"],
+  ]);
+});
+
+// `USING` needs both sides to have the column, and `NATURAL` cannot take an
+// `ON` or `USING` clause.
+test("join using and natural report structural errors", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table one(x integer)");
+  engine.execute("insert into one values (1)");
+  engine.execute("create table two(x integer)");
+  engine.execute("insert into two values (1)");
+  assert.equal(engine.tryExecute("select * from one join two using(nope)").error?.code, "unknown-column");
+  assert.equal(engine.tryExecute("select * from one join two using()").error?.code, "syntax");
+  assert.equal(engine.tryExecute("select * from one natural join two on one.x = two.x").error?.code, "syntax");
+  assert.equal(engine.tryExecute("select * from one natural join two using(x)").error?.code, "syntax");
+});
+
+// A chained `USING` keeps the merged column addressable across the next join,
+// and a multi-column `USING` may list its columns in either order.
+test("chained and multi-column using joins keep the merged column", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table m1(a integer, b integer)");
+  engine.execute("insert into m1 values (1, 2)");
+  engine.execute("create table m2(a integer, c integer)");
+  engine.execute("insert into m2 values (1, 3)");
+  engine.execute("create table m3(b integer, a integer, d integer)");
+  engine.execute("insert into m3 values (2, 1, 4)");
+  const chained = engine.execute("select * from m1 join m2 using(a) join m3 using(a)");
+  assert.deepEqual(chained.columns, ["a", "b", "c", "b", "d"]);
+  assert.deepEqual(chained.rows, [[1, 2, 3, 2, 4]]);
+  assert.deepEqual(engine.execute("select * from m1 join m2 using(a) right join m3 using(a)").rows, [[1, 2, 3, 2, 4]]);
+
+  engine.execute("create table p(a integer, b integer, c text)");
+  engine.execute("insert into p values (1, 2, 'p')");
+  engine.execute("create table q(c text, id integer, b integer, d text)");
+  engine.execute("insert into q values ('p', 9, 2, 'q')");
+  for (const order of ["using(b,c)", "using(c,b)"]) {
+    const joined = engine.execute(`select * from p join q ${order}`);
+    assert.deepEqual(joined.columns, ["a", "b", "c", "id", "d"]);
+    assert.deepEqual(joined.rows, [[1, 2, "p", 9, "q"] as (number | string)[]]);
+  }
+});
+

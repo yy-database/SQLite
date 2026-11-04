@@ -377,6 +377,583 @@
           ]
         ]
       }
+    },
+    {
+      "id": "join.right_using_labels",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT id, lv, rv FROM l RIGHT JOIN r USING(id)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            3,
+            null,
+            "C"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.right_using_qualified",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT l.id, r.id FROM l RIGHT JOIN r USING(id)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            2
+          ],
+          [
+            null,
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.right_using_star",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT * FROM l RIGHT JOIN r USING(id)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            3,
+            null,
+            "C"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.right_using_id",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT id FROM l RIGHT JOIN r USING(id)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2
+          ],
+          [
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.right_no_on",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT * FROM l RIGHT JOIN r",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "a",
+            2,
+            "B"
+          ],
+          [
+            1,
+            "a",
+            3,
+            "C"
+          ],
+          [
+            2,
+            "b",
+            2,
+            "B"
+          ],
+          [
+            2,
+            "b",
+            3,
+            "C"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.full_using_star",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT * FROM l FULL OUTER JOIN r USING(id)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "a",
+            null
+          ],
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            3,
+            null,
+            "C"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.full_using_count",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT count(*) FROM l FULL OUTER JOIN r USING(id)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.full_duplicate",
+      "setup": [
+        "CREATE TABLE d1(id INTEGER)",
+        "INSERT INTO d1 VALUES (1),(1)",
+        "CREATE TABLE d2(id INTEGER)",
+        "INSERT INTO d2 VALUES (1),(1)"
+      ],
+      "sql": "SELECT id FROM d1 FULL JOIN d2 USING(id)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.full_single",
+      "setup": [
+        "CREATE TABLE e1(id INTEGER)",
+        "INSERT INTO e1 VALUES (1),(1)",
+        "CREATE TABLE e2(id INTEGER)",
+        "INSERT INTO e2 VALUES (2)"
+      ],
+      "sql": "SELECT id FROM e1 FULL JOIN e2 USING(id)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.natural_using",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT * FROM l NATURAL JOIN r",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "b",
+            "B"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.natural_left",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT * FROM l NATURAL LEFT JOIN r",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "a",
+            null
+          ],
+          [
+            2,
+            "b",
+            "B"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.natural_right",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT * FROM l NATURAL RIGHT JOIN r",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            3,
+            null,
+            "C"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.natural_product",
+      "setup": [
+        "CREATE TABLE n1(x INTEGER)",
+        "INSERT INTO n1 VALUES (1),(2)",
+        "CREATE TABLE n2(y INTEGER)",
+        "INSERT INTO n2 VALUES (10),(20)"
+      ],
+      "sql": "SELECT * FROM n1 NATURAL JOIN n2",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            10
+          ],
+          [
+            1,
+            20
+          ],
+          [
+            2,
+            10
+          ],
+          [
+            2,
+            20
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.natural_case",
+      "setup": [
+        "CREATE TABLE t(a INTEGER, b TEXT)",
+        "INSERT INTO t VALUES (1,'x')",
+        "CREATE TABLE u(A INTEGER, B TEXT, c TEXT)",
+        "INSERT INTO u VALUES (1,'x','y')"
+      ],
+      "sql": "SELECT * FROM t NATURAL JOIN u",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "x",
+            "y"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.using_multi",
+      "setup": [
+        "CREATE TABLE p(a INTEGER, b INTEGER, c TEXT)",
+        "INSERT INTO p VALUES (1,2,'p')",
+        "CREATE TABLE q(c TEXT, id INTEGER, b INTEGER, d TEXT)",
+        "INSERT INTO q VALUES ('p',9,2,'q')"
+      ],
+      "sql": "SELECT * FROM p JOIN q USING(b,c)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            "p",
+            9,
+            "q"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.using_multi_order",
+      "setup": [
+        "CREATE TABLE p(a INTEGER, b INTEGER, c TEXT)",
+        "INSERT INTO p VALUES (1,2,'p')",
+        "CREATE TABLE q(c TEXT, id INTEGER, b INTEGER, d TEXT)",
+        "INSERT INTO q VALUES ('p',9,2,'q')"
+      ],
+      "sql": "SELECT * FROM p JOIN q USING(c,b)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            "p",
+            9,
+            "q"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.chain",
+      "setup": [
+        "CREATE TABLE m1(a INTEGER, b INTEGER)",
+        "INSERT INTO m1 VALUES (1,2)",
+        "CREATE TABLE m2(a INTEGER, c INTEGER)",
+        "INSERT INTO m2 VALUES (1,3)",
+        "CREATE TABLE m3(b INTEGER, a INTEGER, d INTEGER)",
+        "INSERT INTO m3 VALUES (2,1,4)"
+      ],
+      "sql": "SELECT * FROM m1 JOIN m2 USING(a) JOIN m3 USING(a)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            3,
+            2,
+            4
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.chain_right",
+      "setup": [
+        "CREATE TABLE m1(a INTEGER, b INTEGER)",
+        "INSERT INTO m1 VALUES (1,2)",
+        "CREATE TABLE m2(a INTEGER, c INTEGER)",
+        "INSERT INTO m2 VALUES (1,3)",
+        "CREATE TABLE m3(b INTEGER, a INTEGER, d INTEGER)",
+        "INSERT INTO m3 VALUES (2,1,4)"
+      ],
+      "sql": "SELECT * FROM m1 JOIN m2 USING(a) RIGHT JOIN m3 USING(a)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2,
+            3,
+            2,
+            4
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.using_case_fold",
+      "setup": [
+        "CREATE TABLE t2(a INTEGER)",
+        "INSERT INTO t2 VALUES (1)",
+        "CREATE TABLE u2(A INTEGER)",
+        "INSERT INTO u2 VALUES (1)"
+      ],
+      "sql": "SELECT * FROM t2 JOIN u2 USING(a)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.using_empty",
+      "setup": [
+        "CREATE TABLE one(x INTEGER)",
+        "INSERT INTO one VALUES (1)",
+        "CREATE TABLE two(x INTEGER)",
+        "INSERT INTO two VALUES (1)"
+      ],
+      "sql": "SELECT * FROM one JOIN two USING()",
+      "expect": {
+        "kind": "error",
+        "oracle": "near \")\": syntax error"
+      }
+    },
+    {
+      "id": "join.using_missing",
+      "setup": [
+        "CREATE TABLE one(x INTEGER)",
+        "INSERT INTO one VALUES (1)",
+        "CREATE TABLE two(x INTEGER)",
+        "INSERT INTO two VALUES (1)"
+      ],
+      "sql": "SELECT * FROM one JOIN two USING(nope)",
+      "expect": {
+        "kind": "error",
+        "oracle": "cannot join using column nope - column not present in both tables"
+      }
+    },
+    {
+      "id": "join.using_on",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT * FROM l JOIN r USING(id) ON l.id = r.id",
+      "expect": {
+        "kind": "error",
+        "oracle": "near \"ON\": syntax error"
+      }
+    },
+    {
+      "id": "join.full_order_by",
+      "setup": [
+        "CREATE TABLE l(id INTEGER, lv TEXT)",
+        "INSERT INTO l VALUES (1,'a'),(2,'b')",
+        "CREATE TABLE r(id INTEGER, rv TEXT)",
+        "INSERT INTO r VALUES (2,'B'),(3,'C')"
+      ],
+      "sql": "SELECT id, lv, rv FROM l FULL JOIN r USING(id) ORDER BY id DESC",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            3,
+            null,
+            "C"
+          ],
+          [
+            2,
+            "b",
+            "B"
+          ],
+          [
+            1,
+            "a",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "join.using_name_mismatch",
+      "setup": [
+        "CREATE TABLE t(i INTEGER, j TEXT)",
+        "INSERT INTO t VALUES (1,'y')",
+        "CREATE TABLE u(ID INTEGER, J TEXT, k TEXT)",
+        "INSERT INTO u VALUES (1,'y','z')"
+      ],
+      "sql": "SELECT * FROM t JOIN u USING(i,j)",
+      "expect": {
+        "kind": "error",
+        "oracle": "cannot join using column i - column not present in both tables"
+      }
+    },
+    {
+      "id": "join.natural_on",
+      "setup": [
+        "CREATE TABLE one(x INTEGER)",
+        "INSERT INTO one VALUES (1)",
+        "CREATE TABLE two(x INTEGER)",
+        "INSERT INTO two VALUES (1)"
+      ],
+      "sql": "SELECT * FROM one NATURAL JOIN two ON one.x = two.x",
+      "expect": {
+        "kind": "error",
+        "oracle": "a NATURAL join may not have an ON or USING clause"
+      }
+    },
+    {
+      "id": "join.natural_using_clause",
+      "setup": [
+        "CREATE TABLE one(x INTEGER)",
+        "INSERT INTO one VALUES (1)",
+        "CREATE TABLE two(x INTEGER)",
+        "INSERT INTO two VALUES (1)"
+      ],
+      "sql": "SELECT * FROM one NATURAL JOIN two USING(x)",
+      "expect": {
+        "kind": "error",
+        "oracle": "a NATURAL join may not have an ON or USING clause"
+      }
     }
   ]
 }

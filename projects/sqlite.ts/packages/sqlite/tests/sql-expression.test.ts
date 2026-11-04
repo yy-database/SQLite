@@ -533,19 +533,11 @@ test("recursive CTEs are rejected and WITH RECURSIVE without a self reference wo
   assert.match(recursive.error?.message ?? "", /recursive/i);
 });
 
-test("unsupported joins and non-aggregate HAVING report structured errors", () => {
+test("right joins and USING execute while non-aggregate HAVING reports a structured error", () => {
   const engine = joinEngine();
 
-  const right = engine.tryExecute("select l.a from l right join r on l.a = r.a");
-  assert.equal(right.ok, false);
-  assert.equal(right.error?.code, "unsupported-clause");
-  assert.equal(right.error?.clause, "JOIN");
-
-  const using = engine.tryExecute("select count(*) from l join r using (a)");
-  assert.equal(using.ok, false);
-  assert.equal(using.error?.code, "unsupported-clause");
-  assert.equal(using.error?.clause, "JOIN");
-
+  assert.deepEqual(engine.execute("select l.a from l right join r on l.a = r.a").rows, [[1], [1], [3], [null]]);
+  assert.deepEqual(engine.execute("select count(*) from l join r using (a)").rows, [[3]]);
   const having = engine.tryExecute("select a from l having a > 1");
   assert.equal(having.ok, false);
   assert.equal(having.error?.code, "misuse-of-aggregate");

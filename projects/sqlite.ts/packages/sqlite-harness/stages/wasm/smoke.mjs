@@ -67,8 +67,13 @@ function checkHostContract() {
   assertSql(/expects 2 values/.test(arity), `arity mismatch is rejected, got ${arity}`);
   const deleted = throws(() => database.exec("delete from probe"));
   assertSql(/unsupported statement/.test(deleted), `delete is rejected, got ${deleted}`);
-  const rightJoin = throws(() => database.exec("select * from probe right join probe as other on probe.id = other.id"));
-  assertSql(/right.* joins are not supported/.test(rightJoin), `right join is rejected, got ${rightJoin}`);
+  const rightJoin = JSON.parse(database.exec("select * from probe right join probe as other on probe.id = other.id"));
+  assertSql(
+    rightJoin[0].columns.join(",") === "id,label,id,label" && JSON.stringify(rightJoin[0].rows) === '[[1,"a",1,"a"]]',
+    `right join keeps the left columns first, got ${JSON.stringify(rightJoin)}`,
+  );
+  const rejected = throws(() => database.exec("select * from probe for update"));
+  assertSql(/unsupported .*clause/i.test(rejected), `unsupported clause is rejected, got ${rejected}`);
 }
 
 // The orthogonal primitives: one statement, a statement list, and the
@@ -90,13 +95,15 @@ function checkPrimitives() {
   const batch = JSON.parse(database.executeBatch(["insert into p (label) values ('b')", "select count(*) from p"]));
   assertSql(batch.length === 2 && JSON.stringify(batch[1].rows) === "[[2]]", "executeBatch runs the list in order");
 
-  const rejected = JSON.parse(database.tryExecute("select * from p right join p as other on p.id = other.id"));
+  const rightJoin = JSON.parse(database.tryExecute("select * from p right join p as other on p.id = other.id"));
+  assertSql(rightJoin.ok === true && rightJoin.result.rows.length === 2, "tryExecute executes a right join");
+  const rejected = JSON.parse(database.tryExecute("select * from p for update"));
   assertSql(rejected.ok === false, "tryExecute reports a rejection without throwing");
   assertSql(
-    rejected.error.code === "unsupported-clause" && rejected.error.statement === "select" && rejected.error.clause === "JOIN",
+    rejected.error.code === "unsupported-clause" && rejected.error.statement === "select" && rejected.error.clause === "UPDATE",
     "tryExecute error carries code, statement and clause",
   );
-  assertSql(rejected.error.position === 16, "tryExecute error carries the clause offset");
+  assertSql(rejected.error.position === 20, "tryExecute error carries the clause offset");
   const filtered = JSON.parse(database.tryExecute("select label from p where id >= 2 order by id desc limit 1"));
   assertSql(filtered.ok === true && JSON.stringify(filtered.result.rows) === '[["b"]]', "where, order by and limit run together");
   const accepted = JSON.parse(database.tryExecute("select * from p"));
