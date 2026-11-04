@@ -7,6 +7,8 @@ use std::collections::BTreeMap;
 
 use sqlite::{ColumnSpec, RecordLimits, SqliteWriter, TableLimits, TextEncoding, decode_library_version, decode_record};
 
+use crate::error::SqlError;
+use crate::json_string;
 use crate::sql::{Literal, SelectItems, Statement, parse};
 
 /// One cell surfaced to the host.
@@ -37,6 +39,39 @@ pub struct ExecResult {
     pub affected: usize,
 }
 
+impl ExecResult {
+    /// Serializes one result as the documented JSON envelope.
+    pub fn to_json(&self) -> String {
+        let mut out = String::from("{\"statement\":");
+        out.push_str(&json_string(self.statement));
+        out.push_str(",\"affected\":");
+        out.push_str(&self.affected.to_string());
+        out.push_str(",\"columns\":[");
+        for (index, column) in self.columns.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            out.push_str(&json_string(column));
+        }
+        out.push_str("],\"rows\":[");
+        for (row_index, row) in self.rows.iter().enumerate() {
+            if row_index > 0 {
+                out.push(',');
+            }
+            out.push('[');
+            for (cell_index, cell) in row.iter().enumerate() {
+                if cell_index > 0 {
+                    out.push(',');
+                }
+                out.push_str(&cell_json(cell));
+            }
+            out.push(']');
+        }
+        out.push_str("]}");
+        out
+    }
+}
+
 struct TableDef {
     columns: Vec<ColumnSpec>,
     rowid_alias: Option<usize>,
@@ -50,18 +85,40 @@ pub struct Engine {
 
 impl Engine {
     /// Creates a blank in-memory database image.
-    pub fn new(page_size: Option<u32>) -> Result<Self, String> {
+    pub fn new(page_size: Option<u32>) -> Result<Self, SqlError> {
         let page_size = page_size.unwrap_or(4096) as usize;
-        let writer = SqliteWriter::create(page_size).map_err(|error| error.to_string())?;
+        let writer = SqliteWriter::create(page_size).map_err(|error| SqlError::new("storage", error.to_string()))?;
         Ok(Self { writer, tables: BTreeMap::new() })
     }
 
-    /// Executes one or more statements and returns their results in order.
-    pub fn execute(&mut self, sql: &str) -> Result<Vec<ExecResult>, String> {
+    /// Executes exactly one statement.
+    pub fn execute_one(&mut self, statement: &str) -> Result<ExecResult, SqlError> {
+        let statements = parse(statement)?;
+        match statements.len() {
+            1 => {
+                let only = statements.into_iter().next().expect("length checked");
+                self.run_statement(only)
+            }
+            0 => Err(SqlError::new("empty-statement", "expected exactly one statement but found 0")),
+            count => Err(SqlError::new("multiple-statements", format!("expected exactly one statement but found {count}"))),
+        }
+    }
+
+    /// Executes a list of statements in order and stops at the first rejection.
+    pub fn execute_batch(&mut self, statements: &[String]) -> Result<Vec<ExecResult>, SqlError> {
+        let mut results = Vec::with_capacity(statements.len());
+        for statement in statements {
+            results.push(self.execute_one(statement)?);
+        }
+        Ok(results)
+    }
+
+    /// Executes a semicolon-separated script and returns the results in order.
+    pub fn execute(&mut self, sql: &str) -> Result<Vec<ExecResult>, SqlError> {
         let statements = parse(sql)?;
         let mut results = Vec::with_capacity(statements.len());
         for statement in statements {
-            results.push(self.execute_statement(statement)?);
+            results.push(self.run_statement(statement)?);
         }
         Ok(results)
     }
@@ -82,11 +139,11 @@ impl Engine {
     }
 
     /// Format-3 library version stamped in the image header.
-    pub fn sqlite_version(&self) -> Result<String, String> {
-        decode_library_version(self.writer.pages()).map_err(|error| error.to_string())
+    pub fn sqlite_version(&self) -> Result<String, SqlError> {
+        decode_library_version(self.writer.pages()).map_err(|error| SqlError::new("storage", error.to_string()))
     }
 
-    fn execute_statement(&mut self, statement: Statement) -> Result<ExecResult, String> {
+    fn run_statement(&mut self, statement: Statement) -> Result<ExecResult, SqlError> {
         match statement {
             Statement::CreateTable { name, if_not_exists, columns } => {
                 let key = name.to_ascii_lowercase();
@@ -94,16 +151,21 @@ impl Engine {
                     if if_not_exists {
                         return Ok(ExecResult { statement: "create-table", columns: Vec::new(), rows: Vec::new(), affected: 0 });
                     }
-                    return Err(format!("table `{name}` already exists"));
+                    return Err(SqlError::new("table-exists", format!("table `{name}` already exists")).in_statement("create-table"));
                 }
-                self.writer.create_table(&name, &columns).map_err(|error| error.to_string())?;
+                self.writer
+                    .create_table(&name, &columns)
+                    .map_err(|error| SqlError::new("storage", error.to_string()).in_statement("create-table"))?;
                 let rowid_alias = columns.iter().position(|column| column.primary_key && column.declared_type.eq_ignore_ascii_case("INTEGER"));
                 self.tables.insert(key, TableDef { columns, rowid_alias });
                 Ok(ExecResult { statement: "create-table", columns: Vec::new(), rows: Vec::new(), affected: 1 })
             }
             Statement::Insert { table, columns, rows } => {
                 let key = table.to_ascii_lowercase();
-                let def = self.tables.get(&key).ok_or_else(|| format!("unknown table `{table}`"))?;
+                let def = self
+                    .tables
+                    .get(&key)
+                    .ok_or_else(|| SqlError::new("unknown-table", format!("unknown table `{table}`")).in_statement("insert"))?;
                 let mut slots_by_row = Vec::with_capacity(rows.len());
                 for values in &rows {
                     slots_by_row.push(self_contained_arity(def, &table, columns.as_deref(), values)?);
@@ -116,32 +178,47 @@ impl Engine {
         }
     }
 
-    fn insert_rows(writer: &mut SqliteWriter, table: &str, rows: &[Vec<Option<sqlite::WriteValue>>]) -> Result<Vec<i64>, String> {
+    fn insert_rows(writer: &mut SqliteWriter, table: &str, rows: &[Vec<Option<sqlite::WriteValue>>]) -> Result<Vec<i64>, SqlError> {
         let mut rowids = Vec::with_capacity(rows.len());
         for slots in rows {
-            rowids.push(writer.insert(table, slots).map_err(|error| error.to_string())?);
+            rowids.push(writer.insert(table, slots).map_err(|error| SqlError::new("storage", error.to_string()).in_statement("insert"))?);
         }
         Ok(rowids)
     }
 
-    fn select(&self, table: &str, items: SelectItems, limit: Option<usize>) -> Result<ExecResult, String> {
+    fn select(&self, table: &str, items: SelectItems, limit: Option<usize>) -> Result<ExecResult, SqlError> {
         let key = table.to_ascii_lowercase();
-        let def = self.tables.get(&key).ok_or_else(|| format!("unknown table `{table}`"))?;
-        let records = self.writer.table_rows(table, TableLimits::default()).map_err(|error| error.to_string())?;
+        let def = self
+            .tables
+            .get(&key)
+            .ok_or_else(|| SqlError::new("unknown-table", format!("unknown table `{table}`")).in_statement("select"))?;
+        let records = self
+            .writer
+            .table_rows(table, TableLimits::default())
+            .map_err(|error| SqlError::new("storage", error.to_string()).in_statement("select"))?;
         match items {
-            SelectItems::CountAll => {
-                Ok(ExecResult { statement: "select", columns: vec!["count(*)".to_string()], rows: vec![vec![Cell::Integer(records.len() as i64)]], affected: 0 })
-            }
+            SelectItems::CountAll => Ok(ExecResult {
+                statement: "select",
+                columns: vec!["count(*)".to_string()],
+                rows: vec![vec![Cell::Integer(records.len() as i64)]],
+                affected: 0,
+            }),
             SelectItems::Star => {
                 let columns = def.columns.iter().map(|column| column.name.clone()).collect();
-                let rows = records.iter().take(limit.unwrap_or(usize::MAX)).map(|row| decode_row(&row.payload, def, row.rowid)).collect::<Result<_, _>>()?;
+                let rows = records
+                    .iter()
+                    .take(limit.unwrap_or(usize::MAX))
+                    .map(|row| decode_row(&row.payload, def, row.rowid))
+                    .collect::<Result<_, _>>()?;
                 Ok(ExecResult { statement: "select", columns, rows, affected: 0 })
             }
             SelectItems::Named(names) => {
                 let indices = names
                     .iter()
                     .map(|name| {
-                        def.columns.iter().position(|column| column.name.eq_ignore_ascii_case(name)).ok_or_else(|| format!("unknown column `{name}` in table `{table}`"))
+                        def.columns.iter().position(|column| column.name.eq_ignore_ascii_case(name)).ok_or_else(|| {
+                            SqlError::new("unknown-column", format!("unknown column `{name}` in table `{table}`")).in_statement("select")
+                        })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let rows = records
@@ -151,7 +228,7 @@ impl Engine {
                         let values = decode_row(&row.payload, def, row.rowid)?;
                         Ok(indices.iter().map(|index| values[*index].clone()).collect())
                     })
-                    .collect::<Result<Vec<Vec<Cell>>, String>>()?;
+                    .collect::<Result<Vec<Vec<Cell>>, SqlError>>()?;
                 Ok(ExecResult { statement: "select", columns: names, rows, affected: 0 })
             }
         }
@@ -163,22 +240,24 @@ fn self_contained_arity(
     table: &str,
     columns: Option<&[String]>,
     values: &[Literal],
-) -> Result<Vec<Option<sqlite::WriteValue>>, String> {
+) -> Result<Vec<Option<sqlite::WriteValue>>, SqlError> {
     let mut slots = vec![None; def.columns.len()];
     match columns {
         Some(names) => {
             if names.len() != values.len() {
-                return Err(format!("insert into `{table}` has {} columns but {} values", names.len(), values.len()));
+                return Err(SqlError::new(
+                    "arity-mismatch",
+                    format!("insert into `{table}` has {} columns but {} values", names.len(), values.len()),
+                )
+                .in_statement("insert"));
             }
             let mut seen = Vec::new();
             for (name, value) in names.iter().zip(values) {
-                let index = def
-                    .columns
-                    .iter()
-                    .position(|column| column.name.eq_ignore_ascii_case(name))
-                    .ok_or_else(|| format!("unknown column `{name}` in table `{table}`"))?;
+                let index = def.columns.iter().position(|column| column.name.eq_ignore_ascii_case(name)).ok_or_else(|| {
+                    SqlError::new("unknown-column", format!("unknown column `{name}` in table `{table}`")).in_statement("insert")
+                })?;
                 if seen.contains(&index) {
-                    return Err(format!("column `{name}` is listed twice in the insert"));
+                    return Err(SqlError::new("duplicate-column", format!("column `{name}` is listed twice in the insert")).in_statement("insert"));
                 }
                 seen.push(index);
                 slots[index] = Some(value.to_write_value());
@@ -186,7 +265,11 @@ fn self_contained_arity(
         }
         None => {
             if values.len() != def.columns.len() {
-                return Err(format!("insert into `{table}` expects {} values but received {}", def.columns.len(), values.len()));
+                return Err(SqlError::new(
+                    "arity-mismatch",
+                    format!("insert into `{table}` expects {} values but received {}", def.columns.len(), values.len()),
+                )
+                .in_statement("insert"));
             }
             for (index, value) in values.iter().enumerate() {
                 slots[index] = Some(value.to_write_value());
@@ -196,9 +279,10 @@ fn self_contained_arity(
     Ok(slots)
 }
 
-fn decode_row(payload: &[u8], def: &TableDef, rowid: i64) -> Result<Vec<Cell>, String> {
+fn decode_row(payload: &[u8], def: &TableDef, rowid: i64) -> Result<Vec<Cell>, SqlError> {
     let limits = RecordLimits { max_columns: 1024, max_payload_bytes: 16 * 1024 * 1024 };
-    let values = decode_record(payload, TextEncoding::Utf8, limits).map_err(|error| error.to_string())?;
+    let values = decode_record(payload, TextEncoding::Utf8, limits)
+        .map_err(|error| SqlError::new("storage", error.to_string()).in_statement("select"))?;
     let mut cells = Vec::with_capacity(def.columns.len());
     for index in 0..def.columns.len() {
         let value = values.get(index);
@@ -214,35 +298,14 @@ fn decode_row(payload: &[u8], def: &TableDef, rowid: i64) -> Result<Vec<Cell>, S
     Ok(cells)
 }
 
-/// Serializes results as JSON for the wasm host.
+/// Serializes results as a JSON array for the wasm host.
 pub fn results_json(results: &[ExecResult]) -> String {
     let mut out = String::from("[");
     for (index, result) in results.iter().enumerate() {
         if index > 0 {
             out.push(',');
         }
-        out.push_str(&format!("{{\"statement\":\"{}\",\"affected\":{},\"columns\":[", result.statement, result.affected));
-        for (column_index, column) in result.columns.iter().enumerate() {
-            if column_index > 0 {
-                out.push(',');
-            }
-            out.push_str(&json_string(column));
-        }
-        out.push_str("],\"rows\":[");
-        for (row_index, row) in result.rows.iter().enumerate() {
-            if row_index > 0 {
-                out.push(',');
-            }
-            out.push('[');
-            for (cell_index, cell) in row.iter().enumerate() {
-                if cell_index > 0 {
-                    out.push(',');
-                }
-                out.push_str(&cell_json(cell));
-            }
-            out.push(']');
-        }
-        out.push_str("]}");
+        out.push_str(&result.to_json());
     }
     out.push(']');
     out
@@ -273,31 +336,13 @@ fn cell_json(cell: &Cell) -> String {
     }
 }
 
-fn json_string(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 2);
-    out.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            character if (character as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", character as u32)),
-            character => out.push(character),
-        }
-    }
-    out.push('"');
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // The only Rust-side test. It proves the crate compiles, a database opens
-    // and one create/insert/select round trip returns the row it wrote. The
-    // published host contract is judged by the `sqlite.ts` platform stage.
+    // The Rust-side smoke test proves the crate compiles and one
+    // create/insert/select round trip returns the row it wrote. The published
+    // host contract is judged by the `sqlite.ts` and `sqlite.py` suites.
     #[test]
     fn opens_and_round_trips_one_row() {
         let mut engine = Engine::new(None).expect("open");
@@ -310,5 +355,19 @@ mod tests {
             .expect("execute");
         assert_eq!(results.len(), 3);
         assert_eq!(results[2].rows, vec![vec![Cell::Integer(1), Cell::Text("alpha".to_string())]]);
+    }
+
+    #[test]
+    fn rejections_carry_a_code_and_position() {
+        let mut engine = Engine::new(None).expect("open");
+        engine.execute("create table t (id integer primary key, label text)").expect("create");
+        let error = engine.execute_one("select * from t order by id").expect_err("order by is rejected");
+        assert_eq!(error.code, "unsupported-clause");
+        assert_eq!(error.statement, Some("select"));
+        assert_eq!(error.clause.as_deref(), Some("ORDER"));
+        assert_eq!(error.position, Some(16));
+        let unknown = engine.execute_one("insert into missing values (1)").expect_err("unknown table");
+        assert_eq!(unknown.code, "unknown-table");
+        assert_eq!(unknown.statement, Some("insert"));
     }
 }

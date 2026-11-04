@@ -6,13 +6,16 @@ Rust codecs live in the aggregated [`database.rs`](https://github.com/oovm/datab
 (`sqlite-formats`, `sqlite-storage`, `sqlite`). This repo owns FFI, packaging, and branding — same
 shape as `yydb` / `yyds` / `iris-orm`.
 
-SQL dialect over `.yydb` is **not** here; that surface is `yydb::sql::SqliteConnection`.
+A fail-closed SQL subset (`CREATE TABLE`, `INSERT`, `SELECT` with `LIMIT`) runs over this
+repository's own format-3 writer in `projects/sqlite.rs/sqlite-sql` and is exposed by the Node-API,
+PyO3 and WebAssembly bindings. Richer SQL (`WHERE`, `ORDER BY`, joins, aggregates beyond
+`count(*)`) is rejected with a structured error and is **not** here.
 
 ## Layout
 
 | Path | Role |
 |------|------|
-| `projects/sqlite.rs/` | Rust FFI workspace (`sqlite-napi` produces `sqlite.node`) |
+| `projects/sqlite.rs/` | Rust FFI workspace (`sqlite-sql` shared SQL core, `sqlite-napi` produces `sqlite.node`) |
 | `projects/sqlite.ts/` | TypeScript packages, platform packages, homepage and acceptance suite |
 | `projects/sqlite.ts/packages/sqlite/` | TypeScript binding over `sqlite.node` |
 | `projects/sqlite.ts/packages/sqlite-harness/` | Self-improvement toolbox: `test`, `bench`, `conformance`, `fixtures`, `oracle` |
@@ -51,16 +54,19 @@ implementation. Coverage is reported as three independent layers, never as one a
 | Layer | What it counts | Current floor |
 |-------|----------------|---------------|
 | `external` | Cross-engine conformance judged by `better-sqlite3`, `node:sqlite`, `sql.js` and the CPython `sqlite3` module. Reported but not repository coverage | 283 TS + 265 PY |
-| `storage` | This repository's writer / reader / snapshot primitives, platform packages and the installed wheel | 62 TS + 35 PY |
-| `sql` | SQL text executed by this repository's own engine | 0 TS + 0 PY |
+| `storage` | This repository's writer / reader / snapshot primitives, platform packages and the installed wheel | 62 TS + 35 PY + 31 stage assertions |
+| `sql` | SQL text executed by this repository's own engine | 8 TS + 0 PY + 56 stage assertions |
+
+The Python SQL acceptance runs against the installed wheel inside `platforms/python`, so it is
+reported by the stage rather than counted again as a Python suite case.
 
 The floors are overridable through `TS_EXTERNAL_FLOOR`, `TS_STORAGE_FLOOR`, `TS_SQL_FLOOR`,
 `PY_EXTERNAL_FLOOR`, `PY_STORAGE_FLOOR` and `PY_SQL_FLOOR`. The harness fails when a suite reports
 a failure, executes fewer cases than its layer floor, or skips a case. Platform stages report
-assertion counts and keep the written row count in a separate `rows` (data volume) field. It also
-reads the suite sources and fails if they stop calling a real external engine
-(`better-sqlite3`, Python `sqlite3`, `PRAGMA integrity_check`). There is no JSON metadata and no
-allowlist.
+assertion counts and keep the written row count in a separate `rows` (data volume) field, with a
+separate SQL assertion floor per stage. It also reads the suite sources and fails if they stop
+calling a real external engine (`better-sqlite3`, Python `sqlite3`, `PRAGMA integrity_check`).
+There is no JSON metadata and no allowlist.
 
 ### `projects/sqlite.ts/packages/sqlite/tests`
 
@@ -75,6 +81,7 @@ allowlist.
 | `stress-matrix.test.ts` | 7 | 10k-row sequential/shuffled/bulk/hollow/overflow/index-churn loads, Python oracle |
 | `wal-journal.test.ts` | 2 | committed WAL frames and hot rollback journal semantics |
 | `sql-semantics.test.ts` | 283 | `sql-*.json` corpus judged by three external builds at once (`better-sqlite3`, `node:sqlite`, `sql.js`) |
+| `sql-engine.test.ts` | 8 | this repository's SQL engine: statement envelopes, batches, structured rejections, blobs, and a snapshot read by `better-sqlite3` |
 
 ### `projects/sqlite.py/packages/sqlite/tests`
 

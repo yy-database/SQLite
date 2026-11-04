@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 
@@ -28,6 +28,13 @@ function run(command, args, cwd) {
 
 function assertStorage(condition, message) {
   counts.storage += 1;
+  if (!condition) {
+    throw new Error(`assertion failed: ${message}`);
+  }
+}
+
+function assertSql(condition, message) {
+  counts.sql += 1;
   if (!condition) {
     throw new Error(`assertion failed: ${message}`);
   }
@@ -66,6 +73,41 @@ assertStorage(report.first_row[0] === 1 && report.first_row[1] === "row-1", "ext
 const database = binding.SqliteDatabase.open(databasePath);
 assertStorage(database.ping() > 0, "header ping");
 assertStorage(database.table("bench").length === 1000, "reader sees 1000 rows");
+
+// SQL layer: the same orthogonal primitives the WebAssembly and PyO3 hosts
+// expose, executed against the Node-API binding.
+const engine = binding.SqliteEngine.create(4096);
+const created = engine.execute("create table people (id integer primary key, name text not null, score real)");
+assertSql(created.statement === "create-table" && created.affected === 1, "engine reports create-table");
+const inserted = engine.execute("insert into people (name, score) values ('ada', 9.5)");
+assertSql(inserted.statement === "insert" && inserted.affected === 1, "engine reports insert");
+assertSql(inserted.columns[0] === "rowid" && inserted.rows[0][0] === 1, "engine returns the assigned rowid");
+const selected = engine.execute("select * from people");
+assertSql(selected.columns.join(",") === "id,name,score", "engine returns the column labels");
+assertSql(selected.rows.length === 1 && selected.rows[0][1] === "ada", "engine returns the rows");
+const batch = engine.executeBatch(["insert into people (name) values ('bob')", "select count(*) from people"]);
+assertSql(batch.length === 2 && batch[1].rows[0][0] === 2, "engine batch runs the list in order");
+const rejected = engine.tryExecute("select * from people order by id");
+assertSql(rejected.ok === false && rejected.error.code === "unsupported-clause", "engine rejects an unsupported clause");
+assertSql(
+  rejected.error.statement === "select" && rejected.error.clause === "ORDER" && rejected.error.position === 21,
+  "engine rejection carries statement, clause and offset",
+);
+assertSql(engine.ping() > 0, "engine header ping");
+
+const enginePath = resolve(outDir, "engine.sqlite3");
+writeFileSync(enginePath, engine.snapshot());
+const engineCheck = spawnSync("python", [resolve(stagesDir, "verify_sqlite.py"), enginePath, "people", "id,name,score"], {
+  encoding: "utf8",
+});
+if (engineCheck.status !== 0) {
+  throw new Error(`python verification failed:\n${engineCheck.stdout}\n${engineCheck.stderr}`);
+}
+const engineReport = JSON.parse(engineCheck.stdout);
+assertSql(
+  engineReport.integrity_check === "ok" && engineReport.count === 2,
+  "external sqlite3 reads the SQL-written rows",
+);
 
 console.log(
   JSON.stringify(

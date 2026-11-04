@@ -16,7 +16,7 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-from sqlite_format3 import SqliteDatabase, SqliteWriter
+from sqlite_format3 import SqliteDatabase, SqliteEngine, SqliteWriter
 
 COUNTS = {"cases": 0, "assertions": 0, "storage": 0, "sql": 0}
 ROWS = {"rows": 0}
@@ -25,6 +25,13 @@ ROWS = {"rows": 0}
 def check(condition, message):
     COUNTS["assertions"] += 1
     COUNTS["storage"] += 1
+    if not condition:
+        raise AssertionError(message)
+
+
+def check_sql(condition, message):
+    COUNTS["assertions"] += 1
+    COUNTS["sql"] += 1
     if not condition:
         raise AssertionError(message)
 
@@ -152,12 +159,77 @@ def utf16(directory):
     check(rows[0]["columns"][1]["value"] == "中文标注", "UTF-16 text decodes")
 
 
+def sql_engine(directory):
+    path = directory / "sql-engine.sqlite3"
+    engine = SqliteEngine.create(4096)
+
+    created = engine.execute("create table people (id integer primary key, name text not null, score real)")
+    check_sql(created["statement"] == "create-table", "create-table statement name")
+    check_sql(created["affected"] == 1 and created["columns"] == [] and created["rows"] == [], "create-table envelope")
+
+    inserted = engine.execute("insert into people (name, score) values ('ada', 9.5)")
+    check_sql(inserted["statement"] == "insert" and inserted["affected"] == 1, "insert statement and affected")
+    check_sql(inserted["columns"] == ["rowid"] and inserted["rows"] == [[1]], "insert returns the rowid")
+    engine.execute("insert into people (name) values ('bob')")
+
+    selected = engine.execute("select * from people")
+    check_sql(selected["columns"] == ["id", "name", "score"], "select * column labels")
+    check_sql(selected["rows"] == [[1, "ada", 9.5], [2, "bob", None]], "select * rows")
+
+    counted = engine.execute("select count(*) from people")
+    check_sql(counted["columns"] == ["count(*)"] and counted["rows"] == [[2]], "select count(*)")
+
+    limited = engine.execute("select name from people limit 1")
+    check_sql(limited["rows"] == [["ada"]], "select named column with limit")
+
+    batch = engine.execute_batch(
+        [
+            "create table t2 (id integer primary key, label text)",
+            "insert into t2 values (1, 'x')",
+            "select * from t2",
+        ]
+    )
+    check_sql(len(batch) == 3 and batch[2]["rows"] == [[1, "x"]], "batch preserves order")
+
+    rejected = engine.try_execute("select * from people order by id")
+    check_sql(rejected["ok"] is False, "unsupported clause is reported, not raised")
+    error = rejected["error"]
+    check_sql(error["code"] == "unsupported-clause", "rejection code")
+    check_sql(error["statement"] == "select" and error["clause"] == "ORDER", "rejection statement and clause")
+    check_sql(error["position"] == 21, "rejection position")
+
+    unknown = engine.try_execute("insert into missing values (1)")
+    check_sql(unknown["ok"] is False and unknown["error"]["code"] == "unknown-table", "unknown table code")
+
+    multi = engine.try_execute("select * from people; select * from people")
+    check_sql(multi["ok"] is False and multi["error"]["code"] == "multiple-statements", "multiple statements code")
+
+    engine.execute("create table raw (id integer primary key, payload blob)")
+    engine.execute("insert into raw (payload) values (X'00ff')")
+    blob = engine.execute("select * from raw")
+    check_sql(blob["rows"] == [[1, {"$blob": "00ff"}]], "blob cells use the tagged envelope")
+
+    check_sql(engine.page_size() == 4096, "engine page size")
+    check_sql(engine.sqlite_version().startswith("3."), "engine library version")
+    check_sql(engine.ping() > 0, "engine header ping")
+
+    path.write_bytes(engine.snapshot())
+    check_sql(integrity_check(path) == "ok", "SQL-written image passes PRAGMA integrity_check")
+    connection = sqlite3.connect(path)
+    try:
+        external = connection.execute("SELECT id, name, score FROM people").fetchall()
+    finally:
+        connection.close()
+    check_sql(external == [(1, "ada", 9.5), (2, "bob", None)], "external sqlite3 reads SQL-written rows")
+
+
 CASES = [
     ("write_read_roundtrip_1000", write_read_roundtrip_1000),
     ("wal_visible", wal_visible),
     ("hot_journal_rollback", hot_journal_rollback),
     ("without_rowid", without_rowid),
     ("utf16", utf16),
+    ("sql_engine", sql_engine),
 ]
 
 

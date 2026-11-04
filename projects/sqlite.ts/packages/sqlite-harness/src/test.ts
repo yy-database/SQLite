@@ -25,7 +25,7 @@ type LayerName = "external" | "storage" | "sql";
 const TS_EXTERNAL_FILES = ["sql-semantics.test.ts"];
 const TS_SQL_FILES = ["sql-engine.test.ts"];
 const PY_EXTERNAL_MODULES = ["test_sql_semantics"];
-const PY_SQL_MODULES = ["test_sql_engine"];
+const PY_SQL_MODULES: string[] = [];
 
 const FLOORS: Record<LayerName, { ts: number; py: number }> = {
   external: {
@@ -37,7 +37,12 @@ const FLOORS: Record<LayerName, { ts: number; py: number }> = {
     py: Number(process.env.PY_STORAGE_FLOOR ?? 35),
   },
   sql: {
-    ts: Number(process.env.TS_SQL_FLOOR ?? 0),
+    // The TypeScript suite runs the native engine directly, so its case count is
+    // the repository's own SQL coverage. The Python SQL acceptance runs against
+    // the installed wheel inside `platforms/python`, so `PY_SQL_FLOOR` stays 0
+    // here and that layer's numbers are reported by the stage instead of being
+    // counted twice.
+    ts: Number(process.env.TS_SQL_FLOOR ?? 8),
     py: Number(process.env.PY_SQL_FLOOR ?? 0),
   },
 };

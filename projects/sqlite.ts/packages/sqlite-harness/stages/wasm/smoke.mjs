@@ -71,6 +71,36 @@ function checkHostContract() {
   assertSql(/unsupported `SELECT` clause/.test(ordered), `order by is rejected, got ${ordered}`);
 }
 
+// The orthogonal primitives: one statement, a statement list, and the
+// non-throwing outcome. Each returns the same JSON envelope as `exec`.
+function checkPrimitives() {
+  const database = new MemoryDatabase(4096);
+  const created = JSON.parse(database.execute("create table p (id integer primary key, label text)"));
+  assertSql(created.statement === "create-table" && created.affected === 1, "execute reports create-table");
+  const inserted = JSON.parse(database.execute("insert into p (label) values ('a')"));
+  assertSql(inserted.statement === "insert" && inserted.affected === 1, "execute reports insert");
+  assertSql(JSON.stringify(inserted.rows) === "[[1]]", "execute returns the assigned rowid");
+  const selected = JSON.parse(database.execute("select * from p"));
+  assertSql(
+    JSON.stringify(selected) ===
+      JSON.stringify({ statement: "select", affected: 0, columns: ["id", "label"], rows: [[1, "a"]] }),
+    "execute returns the select envelope",
+  );
+
+  const batch = JSON.parse(database.executeBatch(["insert into p (label) values ('b')", "select count(*) from p"]));
+  assertSql(batch.length === 2 && JSON.stringify(batch[1].rows) === "[[2]]", "executeBatch runs the list in order");
+
+  const rejected = JSON.parse(database.tryExecute("select * from p order by id"));
+  assertSql(rejected.ok === false, "tryExecute reports a rejection without throwing");
+  assertSql(
+    rejected.error.code === "unsupported-clause" && rejected.error.statement === "select" && rejected.error.clause === "ORDER",
+    "tryExecute error carries code, statement and clause",
+  );
+  assertSql(rejected.error.position === 16, "tryExecute error carries the clause offset");
+  const accepted = JSON.parse(database.tryExecute("select * from p"));
+  assertSql(accepted.ok === true && accepted.result.rows.length === 2, "tryExecute returns the result on success");
+}
+
 function throws(run) {
   try {
     run();
@@ -81,6 +111,7 @@ function throws(run) {
 }
 
 checkHostContract();
+checkPrimitives();
 
 const wasmBytes = readFileSync(resolve(wasmPlatform, "pkg/sqlite_wasm_bg.wasm")).length;
 const database = new MemoryDatabase(4096);

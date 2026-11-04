@@ -10,7 +10,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes, PyDict, PyList};
 use sqlite::{
     ColumnSpec, RecordLimits, RecordValue, SchemaObjectKind, SqliteDatabase as Database, SqliteWriter as Writer, TableLimits, TableRow,
-    TextEncoding, WriteValue, decode_library_version, decode_record, validate_database,
+    TextEncoding, UpdateValue, WriteValue, decode_library_version, decode_record, validate_database,
 };
 
 fn runtime_error(error: impl std::fmt::Display) -> PyErr {
@@ -102,6 +102,20 @@ fn schema_kind(kind: SchemaObjectKind) -> &'static str {
         SchemaObjectKind::View => "view",
         SchemaObjectKind::Trigger => "trigger",
     }
+}
+
+fn schema_to_py<'py>(py: Python<'py>, objects: Vec<sqlite::SchemaObject>) -> PyResult<Bound<'py, PyList>> {
+    let list = PyList::empty(py);
+    for object in objects {
+        let item = PyDict::new(py);
+        item.set_item("kind", schema_kind(object.kind))?;
+        item.set_item("name", object.name)?;
+        item.set_item("tableName", object.table_name)?;
+        item.set_item("rootPage", object.root_page)?;
+        item.set_item("sql", object.sql)?;
+        list.append(item)?;
+    }
+    Ok(list)
 }
 
 fn write_value(item: &Bound<'_, PyAny>) -> PyResult<WriteValue> {
@@ -220,17 +234,7 @@ impl SqliteDatabase {
     #[pyo3(signature = (max_rows=None))]
     fn schema<'py>(&self, py: Python<'py>, max_rows: Option<usize>) -> PyResult<Bound<'py, PyList>> {
         let objects = self.inner.schema(limit_from(max_rows)).map_err(runtime_error)?;
-        let list = PyList::empty(py);
-        for object in objects {
-            let item = PyDict::new(py);
-            item.set_item("kind", schema_kind(object.kind))?;
-            item.set_item("name", object.name)?;
-            item.set_item("tableName", object.table_name)?;
-            item.set_item("rootPage", object.root_page)?;
-            item.set_item("sql", object.sql)?;
-            list.append(item)?;
-        }
-        Ok(list)
+        schema_to_py(py, objects)
     }
 
     /// Decoded rows of a rowid table or simple view.
@@ -239,6 +243,20 @@ impl SqliteDatabase {
         let encoding = encode_encoding(Some(encoding_name(self.inner.pages())?))?;
         let rows = self.inner.table(name, limit_from(max_rows)).map_err(runtime_error)?;
         rows_to_py(py, rows, encoding)
+    }
+
+    /// Raw rows of a rowid table: `{rowid, payload}` with an undecoded record.
+    #[pyo3(signature = (name, max_rows=None))]
+    fn table_raw<'py>(&self, py: Python<'py>, name: &str, max_rows: Option<usize>) -> PyResult<Bound<'py, PyList>> {
+        let rows = sqlite::read_named_table(self.inner.pages(), name, limit_from(max_rows)).map_err(runtime_error)?;
+        let list = PyList::empty(py);
+        for row in rows {
+            let item = PyDict::new(py);
+            item.set_item("rowid", row.rowid)?;
+            item.set_item("payload", PyBytes::new(py, &row.payload))?;
+            list.append(item)?;
+        }
+        Ok(list)
     }
 
     /// Decoded rows of a `WITHOUT ROWID` table.
@@ -308,6 +326,11 @@ impl SqliteWriter {
         self.inner.create_table(name, &specs).map_err(runtime_error)
     }
 
+    /// Creates an index over one or more columns.
+    fn create_index(&mut self, name: &str, table: &str, columns: Vec<String>, unique: Option<bool>) -> PyResult<()> {
+        self.inner.create_index(name, table, &columns, unique.unwrap_or(false)).map_err(runtime_error)
+    }
+
     /// Inserts one row; `None` slots apply the column default or NULL.
     fn insert(&mut self, table: &str, values: &Bound<'_, PyAny>) -> PyResult<i64> {
         let slots = slots_from(values)?;
@@ -319,12 +342,140 @@ impl SqliteWriter {
         self.inner.delete(table, rowid).map_err(runtime_error)
     }
 
+    /// Updates one row by rowid.
+    ///
+    /// Each slot is `{"keep": True}` or `{"set": <value>}`, matching the
+    /// `keep`/`set` object form used by the Node-API `update`.
+    fn update(&mut self, table: &str, rowid: i64, slots: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let mut values = Vec::new();
+        for item in slots.try_iter()? {
+            let item = item?;
+            let slot = item.cast::<PyDict>().map_err(|_| PyRuntimeError::new_err("each update slot must be a dict"))?;
+            let keep = match slot.get_item("keep")? {
+                Some(value) if !value.is_none() => value.extract::<bool>()?,
+                _ => false,
+            };
+            if keep {
+                values.push(UpdateValue::Keep);
+                continue;
+            }
+            match slot.get_item("set")? {
+                Some(inner) => values.push(UpdateValue::Set(write_value(&inner)?)),
+                None => return Err(PyRuntimeError::new_err("sqlite update slot needs `keep` or `set`")),
+            }
+        }
+        self.inner.update(table, rowid, &values).map_err(runtime_error)
+    }
+
+    /// Starts an in-memory transaction.
+    fn begin(&mut self) -> PyResult<()> {
+        self.inner.begin().map_err(runtime_error)
+    }
+
+    /// Commits the open transaction.
+    fn commit(&mut self) -> PyResult<()> {
+        self.inner.commit().map_err(runtime_error)
+    }
+
+    /// Rolls the image back to the state before `begin`.
+    fn rollback(&mut self) -> PyResult<()> {
+        self.inner.rollback().map_err(runtime_error)
+    }
+
+    /// Schema objects read back through the crate's own reader.
+    #[pyo3(signature = (max_rows=None))]
+    fn schema<'py>(&self, py: Python<'py>, max_rows: Option<usize>) -> PyResult<Bound<'py, PyList>> {
+        let objects = self.inner.schema_objects(limit_from(max_rows)).map_err(runtime_error)?;
+        schema_to_py(py, objects)
+    }
+
     /// Decoded rows currently held by the writer.
     #[pyo3(signature = (table, max_rows=None))]
-    fn table_rows<'py>(&self, py: Python<'py>, table: &str, max_rows: Option<usize>) -> PyResult<Bound<'py, PyList>> {
+    fn table_decoded<'py>(&self, py: Python<'py>, table: &str, max_rows: Option<usize>) -> PyResult<Bound<'py, PyList>> {
         let encoding = encode_encoding(Some(encoding_name(self.inner.pages())?))?;
         let rows = self.inner.table_rows(table, limit_from(max_rows)).map_err(runtime_error)?;
         rows_to_py(py, rows, encoding)
+    }
+}
+
+fn engine_error(error: sqlite_sql::SqlError) -> PyErr {
+    PyRuntimeError::new_err(error.message)
+}
+
+fn json_to_py<'py>(py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyAny>> {
+    py.import("json")?.call_method1("loads", (text,))
+}
+
+/// In-memory SQLite format-3 database with a fail-closed SQL subset.
+///
+/// Results use the same JSON envelope as the Node-API and WebAssembly hosts:
+/// `{"statement","affected","columns","rows"}` with integers, reals and strings
+/// as native values and blobs as `{"$blob":"<hex>"}`. Rejected statements raise
+/// `RuntimeError`; `try_execute` returns `{"ok": False, "error": {...}}` instead.
+#[pyclass]
+pub struct SqliteEngine {
+    inner: sqlite_sql::Engine,
+}
+
+#[pymethods]
+impl SqliteEngine {
+    /// Creates a blank in-memory database image; `page_size` defaults to 4096.
+    #[staticmethod]
+    #[pyo3(signature = (page_size=None))]
+    fn create(page_size: Option<u32>) -> PyResult<Self> {
+        sqlite_sql::Engine::new(page_size).map(|inner| Self { inner }).map_err(engine_error)
+    }
+
+    /// Executes a semicolon-separated script and returns every result in order.
+    #[pyo3(signature = (sql))]
+    fn exec<'py>(&mut self, py: Python<'py>, sql: &str) -> PyResult<Bound<'py, PyAny>> {
+        let results = self.inner.execute(sql).map_err(engine_error)?;
+        json_to_py(py, &sqlite_sql::results_json(&results))
+    }
+
+    /// Executes exactly one statement and returns `{statement, affected, columns, rows}`.
+    #[pyo3(signature = (statement))]
+    fn execute<'py>(&mut self, py: Python<'py>, statement: &str) -> PyResult<Bound<'py, PyAny>> {
+        let result = self.inner.execute_one(statement).map_err(engine_error)?;
+        json_to_py(py, &result.to_json())
+    }
+
+    /// Executes a list of statements in order and returns every result.
+    #[pyo3(signature = (statements))]
+    fn execute_batch<'py>(&mut self, py: Python<'py>, statements: Vec<String>) -> PyResult<Bound<'py, PyAny>> {
+        let results = self.inner.execute_batch(&statements).map_err(engine_error)?;
+        json_to_py(py, &sqlite_sql::results_json(&results))
+    }
+
+    /// Executes one statement without raising, returning `{ok, result}` or `{ok, error}`.
+    #[pyo3(signature = (statement))]
+    fn try_execute<'py>(&mut self, py: Python<'py>, statement: &str) -> PyResult<Bound<'py, PyAny>> {
+        let text = match self.inner.execute_one(statement) {
+            Ok(result) => format!("{{\"ok\":true,\"result\":{}}}", result.to_json()),
+            Err(error) => format!("{{\"ok\":false,\"error\":{}}}", error.to_json()),
+        };
+        json_to_py(py, &text)
+    }
+
+    /// Raw main-file image, ready to be written as a `.sqlite3` file.
+    fn snapshot<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, self.inner.snapshot())
+    }
+
+    /// Configured page size.
+    fn page_size(&self) -> u32 {
+        self.inner.page_size()
+    }
+
+    /// Format-3 library version stamped in the image header.
+    fn sqlite_version(&self) -> PyResult<String> {
+        self.inner.sqlite_version().map_err(engine_error)
+    }
+
+    /// Health probe that re-validates the current image header.
+    fn ping(&self) -> PyResult<i32> {
+        validate_database(self.inner.snapshot()).map_err(runtime_error)?;
+        Ok(1)
     }
 }
 
@@ -351,6 +502,7 @@ fn validate(payload: Vec<u8>) -> PyResult<usize> {
 fn sqlite_format3(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<SqliteDatabase>()?;
     module.add_class::<SqliteWriter>()?;
+    module.add_class::<SqliteEngine>()?;
     module.add_function(wrap_pyfunction!(decode_record_cells, module)?)?;
     module.add_function(wrap_pyfunction!(library_version, module)?)?;
     module.add_function(wrap_pyfunction!(validate, module)?)?;

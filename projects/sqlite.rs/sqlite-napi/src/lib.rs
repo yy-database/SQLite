@@ -635,3 +635,93 @@ impl SqliteWriter {
         build_decoded_rows(self.writer.pages(), rows, resolved)
     }
 }
+
+fn engine_error(error: sqlite_sql::SqlError) -> napi::Error {
+    napi::Error::from_reason(error.message)
+}
+
+fn engine_json(text: String) -> napi::Result<serde_json::Value> {
+    serde_json::from_str(&text).map_err(|e| napi::Error::from_reason(format!("sqlite result JSON invalid: {e}")))
+}
+
+/// In-memory SQLite format-3 database with a fail-closed SQL subset.
+///
+/// The engine keeps the whole image in memory and runs every accepted statement
+/// through the pure-Rust writer, so `snapshot()` yields a real `.sqlite3` file.
+/// Unsupported statements are rejected with a structured error carrying
+/// `code`, `statement`, `clause` and `position`; `tryExecute` returns that error
+/// instead of throwing.
+#[napi]
+pub struct SqliteEngine {
+    engine: sqlite_sql::Engine,
+}
+
+#[napi]
+impl SqliteEngine {
+    /// Creates a blank in-memory database image with the given page size (default 4096).
+    #[napi(factory)]
+    pub fn create(page_size: Option<u32>) -> napi::Result<Self> {
+        sqlite_sql::Engine::new(page_size).map(|engine| Self { engine }).map_err(engine_error)
+    }
+
+    /// Executes a semicolon-separated script and returns every result in order.
+    #[napi]
+    pub fn exec(&mut self, sql: String) -> napi::Result<serde_json::Value> {
+        let results = self.engine.execute(&sql).map_err(engine_error)?;
+        engine_json(sqlite_sql::results_json(&results))
+    }
+
+    /// Executes exactly one statement and returns `{statement, affected, columns, rows}`.
+    #[napi]
+    pub fn execute(&mut self, statement: String) -> napi::Result<serde_json::Value> {
+        let result = self.engine.execute_one(&statement).map_err(engine_error)?;
+        engine_json(result.to_json())
+    }
+
+    /// Executes a list of statements in order and returns every result.
+    #[napi]
+    pub fn executeBatch(&mut self, statements: Vec<String>) -> napi::Result<serde_json::Value> {
+        let results = self.engine.execute_batch(&statements).map_err(engine_error)?;
+        engine_json(sqlite_sql::results_json(&results))
+    }
+
+    /// Executes one statement without throwing, returning `{ok, result}` or `{ok, error}`.
+    #[napi]
+    pub fn tryExecute(&mut self, statement: String) -> serde_json::Value {
+        match self.engine.execute_one(&statement) {
+            Ok(result) => serde_json::json!({
+                "ok": true,
+                "result": serde_json::from_str::<serde_json::Value>(&result.to_json()).unwrap_or(serde_json::Value::Null),
+            }),
+            Err(error) => serde_json::json!({
+                "ok": false,
+                "error": serde_json::from_str::<serde_json::Value>(&error.to_json()).unwrap_or(serde_json::Value::Null),
+            }),
+        }
+    }
+
+    /// Raw main-file image, ready to be written as a `.sqlite3` file.
+    #[napi]
+    pub fn snapshot(&self) -> Buffer {
+        self.engine.snapshot().to_vec().into()
+    }
+
+    /// Configured page size.
+    #[napi]
+    pub fn pageSize(&self) -> u32 {
+        self.engine.page_size()
+    }
+
+    /// Format-3 library version stamped in the image header.
+    #[napi]
+    pub fn sqliteVersion(&self) -> napi::Result<String> {
+        self.engine.sqlite_version().map(|version| version.to_string()).map_err(engine_error)
+    }
+
+    /// Health probe that re-validates the current image header.
+    #[napi]
+    pub fn ping(&self) -> napi::Result<i32> {
+        validate_database(self.engine.snapshot()).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        Ok(1)
+    }
+}
