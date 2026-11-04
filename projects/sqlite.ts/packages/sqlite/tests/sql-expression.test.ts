@@ -171,3 +171,74 @@ test("ORDER BY reuses the evaluator and accepts output ordinals", () => {
   assert.equal(outOfRange.error?.code, "order-term-out-of-range");
   assert.match(outOfRange.error?.message ?? "", /ORDER BY term out of range/);
 });
+
+function setEngine(): ReturnType<typeof createEngine> {
+  const engine = createEngine();
+  engine.exec(
+    "create table l (x integer); insert into l values (1),(2),(2),(2),(3),(null); \
+     create table r (y integer); insert into r values (2),(2),(4),(null); \
+     create table c (z integer); insert into c values (3); \
+     create table w (p integer, q integer);",
+  );
+  return engine;
+}
+
+test("set operators follow SQLite multiplicity and NULL deduplication", () => {
+  const engine = setEngine();
+
+  // UNION removes duplicates on both sides; the two NULLs collapse to one.
+  assert.deepEqual(engine.execute("select x from l union select y from r order by 1").rows, [
+    [null],
+    [1],
+    [2],
+    [3],
+    [4],
+  ]);
+  // UNION ALL keeps every occurrence on both sides.
+  assert.equal(engine.execute("select x from l union all select y from r").rows.length, 10);
+
+  // INTERSECT keeps one copy; INTERSECT ALL keeps min(left, right) copies.
+  assert.deepEqual(engine.execute("select x from l intersect select y from r order by 1").rows, [[null], [2]]);
+  assert.deepEqual(engine.execute("select x from l intersect all select y from r order by 1").rows, [
+    [null],
+    [2],
+    [2],
+  ]);
+
+  // EXCEPT subtracts a presence; EXCEPT ALL subtracts occurrences.
+  assert.deepEqual(engine.execute("select x from l except select y from r order by 1").rows, [[1], [3]]);
+  assert.deepEqual(engine.execute("select x from l except all select y from r order by 1").rows, [[1], [2], [3]]);
+
+  // The result takes its labels from the leftmost core.
+  assert.deepEqual(engine.execute("select x from l union select y from r").columns, ["x"]);
+});
+
+test("compound SELECTs report arity, clause position and left-to-right folds", () => {
+  const engine = setEngine();
+
+  const mismatch = engine.tryExecute("select x from l union select p, q from w");
+  assert.equal(mismatch.ok, false);
+  assert.equal(mismatch.error?.code, "arity-mismatch");
+  assert.match(mismatch.error?.message ?? "", /same number of result columns/);
+  assert.equal(typeof mismatch.error?.position, "number");
+
+  // The trailing ORDER BY / LIMIT apply to the whole compound.
+  assert.deepEqual(engine.execute("select x from l union select y from r order by 1 desc limit 2").rows, [[4], [3]]);
+  // An output label picks the same column as its ordinal.
+  assert.deepEqual(engine.execute("select x from l union select y from r order by x").rows, [
+    [null],
+    [1],
+    [2],
+    [3],
+    [4],
+  ]);
+
+  // ORDER BY may not split a compound query.
+  const misplaced = engine.tryExecute("select x from l order by 1 union select y from r");
+  assert.equal(misplaced.ok, false);
+  assert.equal(misplaced.error?.code, "syntax");
+  assert.match(misplaced.error?.message ?? "", /ORDER BY` clause should come after UNION not before/);
+
+  // SQLite folds strictly left to right: (l EXCEPT r) INTERSECT c keeps 3.
+  assert.deepEqual(engine.execute("select x from l except select y from r intersect select z from c").rows, [[3]]);
+});
