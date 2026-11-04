@@ -643,3 +643,28 @@ test("like follows sqlite wildcard and case rules", () => {
   assert.deepEqual(engine.execute("select 'a%b' like 'a\\%b' escape '\\'").rows, [[1]]);
   assert.deepEqual(engine.execute("select 'axb' like 'a\\%b' escape '\\'").rows, [[0]]);
 });
+
+// `IS TRUE` is the truthiness test, not `= 1`, and it never yields `NULL`.
+test("is true and is false follow sqlite truthiness", () => {
+  const engine = createEngine(4096);
+  assert.deepEqual(engine.execute("select 1 is true, 2 is true, -1 is true").rows, [[1, 1, 1]]);
+  assert.deepEqual(engine.execute("select 0 is true, 0.0 is true").rows, [[0, 0]]);
+  assert.deepEqual(engine.execute("select '1' is true, '' is true, 'a' is true").rows, [[1, 0, 0]]);
+  assert.deepEqual(engine.execute("select x'01' is true, x'31' is true").rows, [[0, 1]]);
+  assert.deepEqual(engine.execute("select 1 is false, 2 is false, 0 is false").rows, [[0, 0, 1]]);
+  assert.deepEqual(engine.execute("select null is true, null is not true").rows, [[0, 1]]);
+  assert.deepEqual(engine.execute("select null is false, null is not false").rows, [[0, 1]]);
+});
+
+// `INSERT ... DEFAULT VALUES` inserts one row built purely from the defaults.
+test("insert default values fills every column default", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table dv(a integer default 7, b text default 'x', c integer)");
+  engine.execute("insert into dv default values");
+  assert.deepEqual(engine.execute("select a, b, c from dv").rows, [[7, "x", null]]);
+  engine.execute("create table dvpk(a integer primary key, b default 3)");
+  engine.execute("insert into dvpk default values");
+  assert.deepEqual(engine.execute("select rowid, a, b from dvpk").rows, [[1, 1, 3]]);
+  engine.execute("create table nn(a text not null)");
+  assert.equal(engine.tryExecute("insert into nn default values").error?.code, "storage");
+});
