@@ -7,6 +7,8 @@ import { repository, stagesDir } from "../paths.mjs";
 const project = resolve(repository, "projects/sqlite.py/packages/sqlite");
 const wheels = resolve(stagesDir, "python/wheels");
 const venv = resolve(stagesDir, "python/.venv");
+// Windows exposes `python` while the POSIX runners only guarantee `python3`.
+const interpreter = process.platform === "win32" ? "python" : "python3";
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { cwd: stagesDir, stdio: "inherit", ...options });
@@ -19,10 +21,10 @@ function run(command, args, options = {}) {
 }
 
 mkdirSync(wheels, { recursive: true });
-run("python", ["-m", "maturin", "build", "--release", "--out", wheels], { cwd: project });
+run(interpreter, ["-m", "maturin", "build", "--release", "--out", wheels], { cwd: project });
 
 if (!existsSync(venv)) {
-  run("python", ["-m", "venv", venv]);
+  run(interpreter, ["-m", "venv", venv]);
 }
 const venvPython = resolve(venv, process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
 
