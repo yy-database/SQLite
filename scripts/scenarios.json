@@ -126,7 +126,7 @@
       "title": "UTF-16 database at scale",
       "capability": "text-encoding",
       "risk": "Text decoding when the schema and rows declare UTF-16",
-      "scale": { "rows": 1000, "shape": "UTF-16LE database with Chinese labels", "pageSize": 1024, "minPages": 2 },
+      "scale": { "rows": 1000, "shape": "UTF-16LE and UTF-16BE databases with Chinese labels", "pageSize": 1024, "minPages": 2 },
       "oracle": { "sources": ["better-sqlite3", "python-sqlite3"], "method": "PRAGMA encoding plus row-by-row text comparison" },
       "cases": {
         "sqlite.ts": "1000 UTF-16 rows decode through the declared encoding",

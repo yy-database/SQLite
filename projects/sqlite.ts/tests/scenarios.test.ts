@@ -453,29 +453,35 @@ test("page sizes 512 1024 and 4096 agree with external pragma", () => {
 });
 
 test("1000 UTF-16 rows decode through the declared encoding", () => {
-  const space = workspace("utf16");
-  try {
-    const seed = new BetterSqlite(space.path);
-    seed.pragma("encoding = 'UTF-16le'");
-    seed.pragma("page_size = 1024");
-    seed.exec("create table u (id integer primary key, label text)");
-    const insert = seed.prepare("insert into u (id, label) values (?, ?)");
-    for (const id of shuffledIds()) insert.run(id, `案例-${id}`);
-    const encoding = seed.prepare("pragma encoding").get() as { encoding: string };
-    assert.equal(integrity(seed), "ok");
-    seed.close();
-    assert.equal(encoding.encoding.toUpperCase(), "UTF-16LE");
+  const variants: [string, string, number][] = [
+    ["UTF-16le", "utf16le", 2],
+    ["UTF-16be", "utf16be", 3],
+  ];
+  for (const [label, expectedEncoding, marker] of variants) {
+    const space = workspace(`utf16-${expectedEncoding}`);
+    try {
+      const seed = new BetterSqlite(space.path);
+      seed.pragma(`encoding = '${label}'`);
+      seed.pragma("page_size = 1024");
+      seed.exec("create table u (id integer primary key, label text)");
+      const insert = seed.prepare("insert into u (id, label) values (?, ?)");
+      for (const id of shuffledIds()) insert.run(id, `案例-${id}`);
+      const encoding = seed.prepare("pragma encoding").get() as { encoding: string };
+      assert.equal(integrity(seed), "ok");
+      seed.close();
+      assert.equal(encoding.encoding.toUpperCase(), label.toUpperCase());
 
-    const reader = openDatabase(space.path);
-    assert.equal(reader.encoding(), "utf16le");
-    assert.equal(reader.pages().readUInt32BE(56), 2);
-    const mine = reader.table("u").map((row) => `${row.rowid.toString()}|${row.columns[1].valueText}`);
-    const oracle = new BetterSqlite(space.path);
-    const external = oracle.prepare("select rowid as rid, label from u order by rowid").safeIntegers(true).all() as { rid: bigint; label: string }[];
-    oracle.close();
-    assert.deepEqual(mine, external.map((row) => `${row.rid.toString()}|${row.label}`));
-  } finally {
-    space.dispose();
+      const reader = openDatabase(space.path);
+      assert.equal(reader.encoding(), expectedEncoding);
+      assert.equal(reader.pages().readUInt32BE(56), marker);
+      const mine = reader.table("u").map((row) => `${row.rowid.toString()}|${row.columns[1].valueText}`);
+      const oracle = new BetterSqlite(space.path);
+      const external = oracle.prepare("select rowid as rid, label from u order by rowid").safeIntegers(true).all() as { rid: bigint; label: string }[];
+      oracle.close();
+      assert.deepEqual(mine, external.map((row) => `${row.rid.toString()}|${row.label}`), `rows in ${label}`);
+    } finally {
+      space.dispose();
+    }
   }
 });
 
