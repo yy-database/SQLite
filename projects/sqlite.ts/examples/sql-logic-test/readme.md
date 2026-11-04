@@ -21,7 +21,7 @@ corpus/                 SQLLogicTest 语料 submodule
 runner/ts/slt.ts        解析、值渲染、结果比对
 runner/ts/run.ts        用 `@yydb/sqlite` 执行单个脚本并输出 JSON
 runner/py/run.py        与 TypeScript runner 行为一致的 Python runner
-fixtures/semantics/     语义层 fixtures，8 个文件 110 例
+fixtures/semantics/     语义层 fixtures，8 个文件 136 例
 fixtures/bindings/      绑定层待填表，只声明调用形状，不含实现
 runner/ts/fixtures.ts   用 `@yydb/sqlite` 执行单个 fixtures 文件
 runner/py/fixtures.py   与 TypeScript 版行为一致的 Python fixtures 执行器
@@ -42,7 +42,7 @@ node scripts/run.mjs --only ts                    # 只跑 TS
 node scripts/run.mjs --json report.json           # 保存完整报告
 node scripts/run.mjs --file-timeout-ms 60000      # 单文件子进程硬超时
 
-node scripts/run-fixtures.mjs                     # 110 条语义 fixture，TS + PY
+node scripts/run-fixtures.mjs                     # 136 条语义 fixture，TS + PY
 node scripts/run-fixtures.mjs --only ts           # 只跑 TypeScript
 node scripts/run-fixtures.mjs --files 01-query    # 只跑指定文件
 python scripts/gen-fixtures.py --verify           # 校验期望值与 CPython sqlite3 一致
@@ -98,19 +98,19 @@ node scripts/gen-divergences.mjs --verify         # 校验台账未漂移
 
 | 分类 | 文件 | 用例 | TS 通过 | PY 通过 |
 |------|------|------|---------|---------|
-| 查询语义 | `01-query.json` | 20 | 17 | 16 |
-| 表达式 | `02-expressions.json` | 15 | 5 | 5 |
+| 查询语义 | `01-query.json` | 46 | 44 | 44 |
+| 表达式 | `02-expressions.json` | 15 | 15 | 15 |
 | 类型与亲和性 | `03-types.json` | 12 | 12 | 12 |
-| 约束 | `04-constraints.json` | 12 | 10 | 10 |
+| 约束 | `04-constraints.json` | 12 | 12 | 12 |
 | 索引 | `05-indexes.json` | 10 | 9 | 9 |
-| NULL 三值逻辑 | `06-null-logic.json` | 10 | 7 | 7 |
+| NULL 三值逻辑 | `06-null-logic.json` | 10 | 10 | 10 |
 | 边界 | `07-boundaries.json` | 10 | 10 | 10 |
-| 多语句与错误 | `08-statements-errors.json` | 21 | 14 | 13 |
-| 合计 | 8 个文件 | 110 | 84（76.4%） | 82（74.5%） |
+| 多语句与错误 | `08-statements-errors.json` | 21 | 15 | 15 |
+| 合计 | 8 个文件 | 136 | 127（93.4%） | 127（93.4%） |
 
 - `gapLocked` 1（`index.desc_is_rejected`）
-- `result-mismatch` 0、`runner-error` 0：失败全部是能力缺口（`syntax` 16、`unsupported-statement` 5、`unsupported-clause` 3、`unknown-column` 1、`storage` 1）
-- 两个执行器 6/8 文件逐例一致；`BETWEEN` 在 TS 侧已随安装的 `platforms/sqlite-win32-x64` 产物通过，在 Python 侧由当前 Rust 源码构建的产物仍拒绝（2 例）
+- `result-mismatch` 0、`runner-error` 0：9 条失败全是能力缺口（`unsupported-statement` 5、`unsupported-clause` 2、`unknown-column` 2）
+- 两个执行器 8/8 文件逐例一致；`BETWEEN` 在两侧都已通过
 
 绑定层待填表（`fixtures/bindings/bindings.json`）：
 
@@ -144,14 +144,14 @@ node scripts/gen-divergences.mjs --verify         # 校验台账未漂移
 | `semantic-diff` | 两侧都可达但语义不同 |
 | `none` | 已复核一致 |
 
-本轮实测（CPython 3.12.10 的 `sqlite3` 3.49.1 对安装态 `@yydb/sqlite`）：37 条，`sqlite-accepts-ours-rejects` 31、`none` 6，另外两类为 0。
+本轮实测（CPython 3.12.10 的 `sqlite3` 3.49.1 对安装态 `@yydb/sqlite`）：81 条，`none` 74、`sqlite-accepts-ours-rejects` 6、`same-statement-different-result` 1、`ours-accepts-sqlite-rejects` 0。
 
-复核结论与任务背景的差异：
+复核结论：
 
-- `INTERSECT ALL` / `EXCEPT ALL`：背景称本引擎能跑，本产物在复合查询处直接拒绝（`syntax`/`unsupported-clause`），两侧都不接受，按 `none` 记录。
-- 复合 `SELECT` 结合顺序：本仓整体拒绝复合查询，结合顺序无法进入比较，`class` 记为 `missing-feature`。
-- SQLite 接受而本仓拒绝的：`INSERT … DEFAULT VALUES`、表级 `PRIMARY KEY (a,b)`/`FOREIGN KEY`/`CHECK`、`WITH RECURSIVE`、无别名派生表、`JOIN … USING`/`RIGHT`/`FULL`/`NATURAL`、窗口函数、`CAST`、`IS TRUE`、`||`、`LIKE`、隐式 `rowid`/`_rowid_`/`oid`、`sqlite_master`/`sqlite_sequence`、`total`/`group_concat`/`hex`/`quote`/`random`、`TEXT PRIMARY KEY`、整数除法与溢出、`LIMIT` 表达式。
-- 已与 SQLite 一致：`ORDER BY` 的 `NULL` 位次（升序最前、降序最后）与 `count(col)`。
+- 仍接受而本仓拒绝（5 条，`missing-feature`）：表级 `FOREIGN KEY` / `CHECK`、`WITH RECURSIVE`、窗口函数、`LIMIT` 表达式。
+- `INSERT … DEFAULT VALUES`：两侧都接受但结果不同，记为 `same-statement-different-result`。
+- `sqlite_sequence` 可写：本仓按系统表只读拒绝（`semantics.sqlite-sequence-writable`，`intentional-divergence`）；理由是防止用户直接改自增计数器导致后续插入冲突或与 `AUTOINCREMENT` 语义不一致。
+- `JOIN … USING` / `RIGHT` / `FULL` / `NATURAL` 已按 SQLite 3.49.1 语义实现，台账用 `implicit.join-*` / `syntax.join-*` 逐条记为 `none`；`USING` 与 `NATURAL` 的列名匹配实测均大小写不敏感，`t(i,j)` 与 `u(ID,J,k)` 报错是因为列名本身不同，而非大小写。
 
 ## 基线
 
@@ -159,19 +159,19 @@ node scripts/gen-divergences.mjs --verify         # 校验台账未漂移
 
 | 文件 | records | pass | unsupported | result-mismatch | error-mismatch | runner-error | filtered |
 |------|---------|------|-------------|-----------------|----------------|--------------|----------|
-| select1 | 1031 | 357 | 674 | 0 | 0 | 0 | 0 |
-| select2 | 1031 | 379 | 652 | 0 | 0 | 0 | 0 |
-| select3 | 3351 | 895 | 2456 | 0 | 0 | 0 | 0 |
-| select4 | 3857 | 2856 | 1001 | 0 | 0 | 0 | 0 |
+| select1 | 1031 | 1031 | 0 | 0 | 0 | 0 | 0 |
+| select2 | 1031 | 1031 | 0 | 0 | 0 | 0 | 0 |
+| select3 | 3351 | 3351 | 0 | 0 | 0 | 0 | 0 |
+| select4 | 3857 | 3856 | 1 | 0 | 0 | 0 | 0 |
 | select5 | 1436 | 1436 | 0 | 0 | 0 | 0 | 0 |
 
 - 语句接受率：`1821 / 1822` = 99.9%
-- query 结果符合率：`4102 / 8884` = 46.2%
-- 全流程通过文件：`select5.test`
+- query 结果符合率：`8884 / 8884` = 100.0%
+- 全流程通过文件：`select1.test`、`select2.test`、`select3.test`、`select5.test`
 
-拒绝码分布：`syntax` 2789、`unsupported-clause` 1994。clause 细分：`BETWEEN` 662、`UNION` 519、`NOT` 331、`EXCEPT` 249、`INTERSECT` 232、`DESC` 1。`unknown-table`、`storage` 与 `()` 列类型错误在本轮为 0。
+拒绝码分布：仅剩 1 个 `unsupported`，为 `select4.test:3181` 的 `DESC` 索引键（`unsupported-clause`）；其余分类为 0。
 
-Python 侧需另行复跑 `node scripts/run.mjs`；本轮 fixtures 复跑显示两面在 `BETWEEN` 上仍有差异，见下节。
+Python 侧语料本轮未复跑；fixtures 两侧已逐例一致（见上表）。
 
 ## 已记录的实现问题
 
@@ -179,30 +179,24 @@ Python 侧需另行复跑 `node scripts/run.mjs`；本轮 fixtures 复跑显示�
 
 | 位置 | 现象 |
 |------|------|
-| `02-expressions.json` | 投影里的常量算术与 `ABS`/`LENGTH`/`SUBSTR`/`ROUND`/`TYPEOF` 报 `syntax: select projection is incomplete`；`COALESCE`、`CASE`、列间算术已可用 |
-| `06-null-logic.json` | `count(col)` 按 `,` 拒绝；`SELECT NULL = NULL` 这类无 `FROM` 的常量投影同样被拒 |
-| `04-constraints.json` | `SELECT rowid` 报 `unknown-column`；`TEXT PRIMARY KEY` 报 `storage: sqlite non-INTEGER PRIMARY KEY is not supported` |
-| `05-indexes.json` | `CREATE INDEX ... (a DESC)` 按 `unsupported-clause`/`DESC` 拒绝；`DROP INDEX` 报 `unsupported-statement` |
-| TypeScript 与 Python 安装面 | 同一 fixture `where.between` 在 TS 产物通过，在 Python 侧由当前 Rust 源码构建的产物被拒 |
-
-语料里 `BETWEEN` 仍被拒的用例带表达式边界（如 `c BETWEEN b-2 AND d+2`），与 fixtures 里的字面量边界不是同一形态。
+| `01-query.json` | `LIMIT … OFFSET` 报 `unsupported-clause`；`ORDER BY` 别名报 `unknown-column` |
+| `05-indexes.json` | `DROP INDEX` 报 `unsupported-statement`；`CREATE INDEX … (a DESC)` 按 gap lock 约定拒绝 |
+| `08-statements-errors.json` | `UPDATE` / `DELETE` / `DROP TABLE` / `ALTER TABLE` 报 `unsupported-statement`；`OFFSET` 报 `unsupported-clause`；`AS` 别名后按别名排序报 `unknown-column` |
 
 ## 执行计划
 
-本轮（P1）：单表 `SELECT`（投影列、`WHERE`、`ORDER BY`、`LIMIT`）+ `CREATE TABLE` + `INSERT` 的可用面，`select1`–`select5` 全量跑完并给出四分类。
+已完成 P1（单表 `SELECT`：投影列、`WHERE`、`ORDER BY`、`LIMIT`，加 `CREATE TABLE` / `INSERT`）与 P2（`JOIN`：内连接、`USING`、`NATURAL`、`RIGHT`、`FULL`、链式连接；集合运算；投影表达式）。
 
-按本轮拒绝码排序的下一步：
+按剩余拒绝码排序的下一步：
 
 | 顺序 | 能力 | 本轮证据 |
 |------|------|---------|
-| 1 | 投影表达式与标量函数 | `syntax` 2789 |
-| 2 | `BETWEEN` / `NOT` 的表达式边界 | `unsupported-clause` 993 |
-| 3 | `UNION` / `INTERSECT` / `EXCEPT` | `unsupported-clause` 1000 |
-| 4 | 索引 `DESC` 键与 `DROP INDEX` | fixtures 与 select4 的 1 例 |
+| 1 | 索引 `DESC` 键与 `DROP INDEX` | 语料 1 例 + fixtures 1 例 |
+| 2 | `UPDATE` / `DELETE` / `DROP TABLE` / `ALTER TABLE` | fixtures 5 例（`unsupported-statement`） |
+| 3 | `LIMIT … OFFSET` 与 `ORDER BY` 别名 | fixtures 3 例 |
+| 4 | 表级约束、`WITH RECURSIVE`、窗口函数、`LIMIT` 表达式 | 台账 5 例（`missing-feature`） |
 
 后续阶段：
-
-- P2：`JOIN`、集合运算、投影表达式。验收：对应文件的可执行查询数与 `result-mismatch` 归零，期望值保持语料原值。
 - P3：`EXISTS` 相关子查询、视图、索引拨到 select1–3 全量。
 - P4：TCL 测试套件（Fossil 而非 git 仓，需先导出成镜像仓）、`.selftest` 样本库、以 CPython `sqlite3` 为差分 oracle 的模糊测试。
 
