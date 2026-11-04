@@ -1,11 +1,40 @@
 // Test-only bridge: exposes the `sqlite.node` surface and `better-sqlite3`
 // oracle to the Python suite. It is not a product entry point.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const native = require("../sqlite.rs/sqlite-napi/sqlite.node");
+
+// The binding is staged in `../sqlite.ts/platforms/<pkg>/lib` by
+// `scripts/build-napi.mjs`. The bridge is test-only glue, so it reads that
+// staged artefact directly instead of resolving an optional dependency that
+// this Python project does not declare.
+function platformKey() {
+  if (process.platform === "win32" && process.arch === "x64") return "win32-x64";
+  if (process.platform === "linux" && process.arch === "x64") return "linux-x64";
+  if (process.platform === "darwin" && process.arch === "x64") return "darwin-x64";
+  if (process.platform === "darwin" && process.arch === "arm64") return "darwin-arm64";
+  return null;
+}
+
+function nativePath() {
+  const fromEnv = process.env.SQLITE_NATIVE?.trim();
+  if (fromEnv) return resolve(fromEnv);
+  const key = platformKey();
+  if (!key) throw new Error(`no SQLite native binding for ${process.platform}-${process.arch}`);
+  const project = dirname(fileURLToPath(import.meta.url));
+  const libDir = join(project, "..", "sqlite.ts", "platforms", `sqlite-${key}`, "lib");
+  const fileName = existsSync(libDir)
+    ? readdirSync(libDir).find((entry) => entry.endsWith(".node"))
+    : undefined;
+  if (!fileName) throw new Error(`missing .node binary in ${libDir}, run pnpm build:napi`);
+  return join(libDir, fileName);
+}
+
+const native = require(nativePath());
 
 function decodeValue(value) {
   switch (value.kind) {
