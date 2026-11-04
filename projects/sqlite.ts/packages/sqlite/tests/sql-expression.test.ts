@@ -421,6 +421,125 @@ test("GROUP BY and HAVING aggregate per group", () => {
   assert.deepEqual(engine.execute("select avg(c), min(c), max(c) from r").rows, [[225.25, 100, 400]]);
 });
 
+function derivedEngine(): ReturnType<typeof createEngine> {
+  const engine = createEngine();
+  engine.exec(
+    "create table t (a integer, b integer); insert into t values (1,10),(2,20),(3,30); \
+     create table c (a integer); insert into c values (99);",
+  );
+  return engine;
+}
+
+test("derived tables expose projection labels and join like base tables", () => {
+  const engine = derivedEngine();
+
+  // SQLite does not require an alias on a FROM subquery.
+  assert.deepEqual(engine.execute("select * from (select a from t)").rows, [[1], [2], [3]]);
+  assert.deepEqual(engine.execute("select * from (select a from t) as q").rows, [[1], [2], [3]]);
+  assert.deepEqual(engine.execute("select q.a, q.b from (select a, b from t) q").rows, [
+    [1, 10],
+    [2, 20],
+    [3, 30],
+  ]);
+
+  // Two derived tables on either side of a join, then a whole-result aggregate.
+  assert.deepEqual(
+    engine.execute("select x.a, y.b from (select a from t) x join (select a, b from t) y on x.a = y.a").rows,
+    [[1, 10], [2, 20], [3, 30]],
+  );
+  assert.deepEqual(engine.execute("select count(*), sum(d.b) from (select a, b from t where a < 3) d").rows, [[2, 30]]);
+
+  // Nesting keeps the inner labels; a derived body may group.
+  assert.deepEqual(engine.execute("select a from (select a from (select a from t where a > 1) inner_q where a < 3) outer_q").rows, [
+    [2],
+  ]);
+  assert.deepEqual(engine.execute("select a, total_b from (select a, sum(b) as total_b from t group by a) d").rows, [
+    [1, 10],
+    [2, 20],
+    [3, 30],
+  ]);
+
+  // A derived table can sit inside `IN (SELECT ...)`, and its body keeps the
+  // full evaluator: joins and correlated subqueries both work inside it.
+  assert.deepEqual(engine.execute("select a from t where a in (select a from (select a from t where a = 1) d)").rows, [[1]]);
+  assert.deepEqual(
+    engine.execute("select * from (select x.a, y.b from t x join t y on x.a = y.a where x.a = 2) d").rows,
+    [[2, 20]],
+  );
+  assert.deepEqual(
+    engine.execute(
+      "select * from (select a from t where exists(select 1 from t u where u.a = t.a and u.b = 10)) d",
+    ).rows,
+    [[1]],
+  );
+
+  // An unaliased derived table has no qualifier. SQLite says
+  // `no such column: t.a`; this engine has always reported an
+  // unknown qualifier as `unknown-table`, so the contract is kept.
+  const anonymous = engine.tryExecute("select t.a from (select a from t)");
+  assert.equal(anonymous.ok, false);
+  assert.equal(anonymous.error?.code, "unknown-table");
+  // Duplicate output labels keep both positions and resolve to the first, as
+  // SQLite does inside one source.
+  assert.deepEqual(engine.execute("select a from (select a, a from t) d").rows, [[1], [2], [3]]);
+});
+
+test("CTEs evaluate once and shadow base tables with the same name", () => {
+  const engine = derivedEngine();
+
+  assert.deepEqual(engine.execute("with c as (select a from t) select * from c").rows, [[1], [2], [3]]);
+  // The CTE wins over the real table `c`.
+  assert.deepEqual(engine.execute("with c as (select a from t) select a from c where a = 1").rows, [[1]]);
+
+  // A later CTE may read an earlier one; declared names rename the outputs.
+  assert.deepEqual(engine.execute("with c(x) as (select a from t), d as (select x from c where x > 1) select * from d").rows, [
+    [2],
+    [3],
+  ]);
+  assert.deepEqual(engine.execute("with c as (select a, sum(b) as s from t group by a) select a, s from c").rows, [
+    [1, 10],
+    [2, 20],
+    [3, 30],
+  ]);
+
+  // CTEs stay visible inside subqueries and joins of the statement.
+  assert.deepEqual(engine.execute("with c as (select a from t) select (select count(*) from c) from t where a = 1").rows, [
+    [3],
+  ]);
+  assert.deepEqual(engine.execute("with c as (select a from t) select c.a, t.b from c join t on c.a = t.a").rows, [
+    [1, 10],
+    [2, 20],
+    [3, 30],
+  ]);
+
+  // A column list that disagrees with the body is rejected, not truncated.
+  const arity = engine.tryExecute("with c(x, y) as (select a from t) select * from c");
+  assert.equal(arity.ok, false);
+  assert.equal(arity.error?.code, "arity-mismatch");
+  assert.equal(arity.error?.clause, "WITH");
+
+  const duplicate = engine.tryExecute("with c as (select a from t), c as (select b from t) select * from c");
+  assert.equal(duplicate.ok, false);
+  assert.equal(duplicate.error?.code, "duplicate-table");
+  assert.equal(duplicate.error?.clause, "WITH");
+});
+
+test("recursive CTEs are rejected and WITH RECURSIVE without a self reference works", () => {
+  const engine = derivedEngine();
+
+  // The keyword alone is accepted when nothing refers back to the CTE.
+  assert.deepEqual(engine.execute("with recursive c as (select a from t) select * from c").rows, [[1], [2], [3]]);
+
+  // An actual self reference is reported instead of looping or half-evaluating.
+  const recursive = engine.tryExecute(
+    "with recursive c(a) as (select a from t where a = 1 union all select a + 1 from c where a < 3) select * from c",
+  );
+  assert.equal(recursive.ok, false);
+  assert.equal(recursive.error?.code, "unsupported-clause");
+  assert.equal(recursive.error?.clause, "WITH");
+  assert.match(recursive.error?.message ?? "", /recursive/i);
+});
+
 test("unsupported joins and non-aggregate HAVING report structured errors", () => {
   const engine = joinEngine();
 
