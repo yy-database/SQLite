@@ -1,8 +1,7 @@
 """Feature scenarios that each target one risk in the Rust SQLite implementation.
 
 Every scenario builds its own database and judges the result with Python's
-`sqlite3` module, including `PRAGMA integrity_check`. Scenario names mirror
-`scripts/scenarios.json`.
+`sqlite3` module, including `PRAGMA integrity_check`.
 """
 
 from __future__ import annotations
