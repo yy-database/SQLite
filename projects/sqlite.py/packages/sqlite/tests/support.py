@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import tempfile
 
-PROJECT = pathlib.Path(__file__).resolve().parents[1]
+PROJECT = pathlib.Path(__file__).resolve().parents[3]
 BRIDGE = PROJECT / "bridge.mjs"
 
 

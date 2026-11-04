@@ -19,8 +19,7 @@ SQL dialect over `.yydb` is **not** here; that surface is `yydb::sql::SqliteConn
 | `projects/sqlite.ts/packages/sqlite-fixtures/` | Binary fixtures written by external engines |
 | `projects/sqlite.ts/platforms/` | Node platform packages plus the WebAssembly package |
 | `projects/sqlite.ts/homepage/` | Capability and binding documents |
-| `projects/sqlite.py/packages/sqlite/` | PyO3 packaging metadata for the `sqlite-format3` wheel |
-| `projects/sqlite.py/` | Python suite over `bridge.mjs` |
+| `projects/sqlite.py/packages/sqlite/` | PyO3 packaging metadata plus the Python acceptance suite for the `sqlite-format3` wheel |
 
 ```shell
 cargo check --manifest-path projects/sqlite.rs/Cargo.toml --workspace
@@ -38,8 +37,8 @@ in `projects/sqlite.rs/.cargo/config.toml` (see `config.example.toml`).
 node projects/sqlite.ts/packages/sqlite-harness/bin/cli.mjs test
 
 # one suite at a time
-cd projects/sqlite.ts && node --experimental-strip-types --test "tests/**/*.test.ts"
-cd projects/sqlite.py && python -m unittest discover -v -s tests -t tests
+cd projects/sqlite.ts/packages/sqlite && node --experimental-strip-types --test "tests/**/*.test.ts"
+cd projects/sqlite.py/packages/sqlite && python -m unittest discover -v -s tests -t tests
 
 # Rust keeps a single smoke: it compiles, opens a database and round-trips one row
 cargo test --release --workspace
@@ -52,7 +51,7 @@ its floor (335 for `sqlite.ts` and 300 for `sqlite.py`, overridable through `TS_
 real external engine (`better-sqlite3`, Python `sqlite3`, `PRAGMA integrity_check`). There is no
 JSON metadata and no allowlist.
 
-### `projects/sqlite.ts/tests`
+### `projects/sqlite.ts/packages/sqlite/tests`
 
 | File | Cases | Coverage |
 |------|-------|----------|
@@ -66,7 +65,7 @@ JSON metadata and no allowlist.
 | `wal-journal.test.ts` | 2 | committed WAL frames and hot rollback journal semantics |
 | `sql-semantics.test.ts` | 283 | `sql-*.json` corpus judged by three external builds at once (`better-sqlite3`, `node:sqlite`, `sql.js`) |
 
-### `projects/sqlite.py/tests`
+### `projects/sqlite.py/packages/sqlite/tests`
 
 | File | Cases | Coverage |
 |------|-------|----------|

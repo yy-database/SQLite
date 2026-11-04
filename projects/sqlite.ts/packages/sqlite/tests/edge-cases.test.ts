@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createWriter, openDatabase, openSnapshot, writeSlots } from "../packages/sqlite/src/index.ts";
+import { createWriter, openDatabase, openSnapshot, writeSlots } from "../src/index.ts";
 
 // External truth: `better-sqlite3` creates the WITHOUT ROWID reference files and
 // every case re-reads with `PRAGMA integrity_check` and `PRAGMA page_count`.

@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { compareOutcomes, runOn, type Cell, type EngineName, type Step, type StepOutcome } from "../packages/sqlite-harness/src/oracle.ts";
+import { compareOutcomes, runOn, type Cell, type EngineName, type Step, type StepOutcome } from "../../sqlite-harness/src/oracle.ts";
 
 const TESTS_DIR = fileURLToPath(new URL(".", import.meta.url));
 const ENGINES: EngineName[] = ["better-sqlite3", "node:sqlite", "sql.js"];

@@ -12,7 +12,9 @@ import sqlite3
 import unittest
 from pathlib import Path
 
-CORPUS_DIR = Path(__file__).resolve().parents[2] / "sqlite.ts" / "tests"
+CORPUS_DIR = (
+    Path(__file__).resolve().parents[4] / "sqlite.ts" / "packages" / "sqlite" / "tests"
+)
 
 
 def decode(cell):
