@@ -1,0 +1,328 @@
+{
+  "group": "joins",
+  "cases": [
+    {
+      "source": "sql.rs::left_join_keeps_all_left_rows_padding_unmatched_with_null",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. LEFT JOIN 未匹配的左行用 NULL 补齐右侧列。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')"
+      ],
+      "steps": [
+        { "sql": "select account_id, Project.name as pname from Account left join Project on Account.account_id = Project.owner_id order by account_id, pname" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, { "t": "p1" }],
+            [{ "i": "1" }, { "t": "p2" }],
+            [{ "i": "2" }, { "t": "p3" }],
+            [{ "i": "3" }, null]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::left_join_with_where_filter_on_left_removes_padded_rows",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. FROM/JOIN 先产生虚拟表再 WHERE 过滤，因此 account 3 的补齐行被 tenant='t1' 丢掉。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')"
+      ],
+      "steps": [
+        { "sql": "select account_id, Project.name as pname from Account left join Project on Account.account_id = Project.owner_id where Account.tenant = 't1' order by account_id, pname" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, { "t": "p1" }],
+            [{ "i": "1" }, { "t": "p2" }],
+            [{ "i": "2" }, { "t": "p3" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::left_join_with_empty_right_table_yields_all_left_with_nulls",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 右表为空时 LEFT JOIN 仍输出全部左行，连接列为 NULL。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'a@t', 't', 0, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'b@t', 't', 0, 0)"
+      ],
+      "steps": [
+        { "sql": "select account_id, Project.project_id as pid from Account left join Project on Account.account_id = Project.owner_id order by account_id" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, null],
+            [{ "i": "2" }, null]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::right_join_keeps_all_right_rows_padding_unmatched_with_null",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. Rust 断言按 (account_id, pname) 排序，这里补 ORDER BY 固定输出顺序。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')",
+        "insert into Project (project_id, owner_id, name) values (30, 99, 'p4')",
+        "insert into Project (project_id, owner_id, name) values (40, 88, 'p5')"
+      ],
+      "steps": [
+        { "sql": "select account_id, Project.name as pname from Account right join Project on Account.account_id = Project.owner_id order by account_id, pname" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [null, { "t": "p4" }],
+            [null, { "t": "p5" }],
+            [{ "i": "1" }, { "t": "p1" }],
+            [{ "i": "1" }, { "t": "p2" }],
+            [{ "i": "2" }, { "t": "p3" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::right_join_with_empty_left_table_pads_every_right_row",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 左表为空时 RIGHT JOIN 仍输出全部右行，左侧列为 NULL。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p2')"
+      ],
+      "steps": [
+        { "sql": "select account_id, Project.name as pname from Account right join Project on Account.account_id = Project.owner_id order by account_id, pname" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [null, { "t": "p1" }],
+            [null, { "t": "p2" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::right_join_with_empty_right_table_yields_no_rows",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. RIGHT JOIN 只保留右表行，右表为空时结果为零行。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'seed@test', 't', 0, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id, Project.name as pname from Account right join Project on Account.account_id = Project.owner_id" }
+      ],
+      "expect": [{ "rows": [] }]
+    },
+    {
+      "source": "sql.rs::right_join_without_matches_pads_every_right_row",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 右表行没有匹配的左行时整行右侧保留、左侧补 NULL。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'seed@test', 't', 0, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'seed@test', 't', 0, 0)",
+        "insert into Project (project_id, owner_id, name) values (30, 99, 'p4')"
+      ],
+      "steps": [
+        { "sql": "select account_id, Project.name as pname from Account right join Project on Account.account_id = Project.owner_id" }
+      ],
+      "expect": [{ "rows": [[null, { "t": "p4" }]] }]
+    },
+    {
+      "source": "sql.rs::full_join_keeps_unmatched_rows_from_both_sides",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. FULL JOIN 同时保留两侧未匹配行并补齐 NULL。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')",
+        "insert into Project (project_id, owner_id, name) values (30, 99, 'p4')",
+        "insert into Project (project_id, owner_id, name) values (40, 88, 'p5')"
+      ],
+      "steps": [
+        { "sql": "select account_id, Project.name as pname from Account full join Project on Account.account_id = Project.owner_id order by account_id, pname" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [null, { "t": "p4" }],
+            [null, { "t": "p5" }],
+            [{ "i": "1" }, { "t": "p1" }],
+            [{ "i": "1" }, { "t": "p2" }],
+            [{ "i": "2" }, { "t": "p3" }],
+            [{ "i": "3" }, null]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::full_join_with_empty_right_table_pads_every_left_row",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 右表为空时 FULL JOIN 退化成 LEFT JOIN。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'seed@test', 't', 0, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'seed@test', 't', 0, 0)"
+      ],
+      "steps": [
+        { "sql": "select account_id, Project.name as pname from Account full join Project on Account.account_id = Project.owner_id order by account_id, pname" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, null],
+            [{ "i": "2" }, null]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::full_join_with_empty_tables_yields_no_rows",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 两张表都为空时 FULL JOIN 产出零行。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "steps": [
+        { "sql": "select account_id, Project.name as pname from Account full join Project on Account.account_id = Project.owner_id" }
+      ],
+      "expect": [{ "rows": [] }]
+    },
+    {
+      "source": "sql.rs::join_on_keeps_outer_rows_that_where_then_removes",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. ON 内的附加条件决定哪些行匹配，RIGHT JOIN 会把被排除的右行补 NULL。WHERE 在连接之后运行，会再次过滤掉这些补齐行。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')",
+        "insert into Project (project_id, owner_id, name) values (30, 99, 'p4')",
+        "insert into Project (project_id, owner_id, name) values (40, 88, 'p5')"
+      ],
+      "steps": [
+        { "sql": "select account_id, Project.name as pname from Account right join Project on Account.account_id = Project.owner_id and Project.name = 'p1' order by account_id, pname" },
+        { "sql": "select account_id, Project.name as pname from Account right join Project on Account.account_id = Project.owner_id where Project.name = 'p1'" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [null, { "t": "p2" }],
+            [null, { "t": "p3" }],
+            [null, { "t": "p4" }],
+            [null, { "t": "p5" }],
+            [{ "i": "1" }, { "t": "p1" }]
+          ]
+        },
+        { "rows": [[{ "i": "1" }, { "t": "p1" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::every_join_kind_emits_the_same_merged_row_shape",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. yydb 的合并行形状是未加前缀的基表列加带前缀的连接表列（Rust 以 BTreeMap 键序断言）；SQLite 无法产生 Project.name 这类带前缀的列名，因此按基表列在前、连接表列在后的顺序显式投影同样的 8 列，并用 ORDER BY 固定顺序。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')"
+      ],
+      "steps": [
+        { "sql": "select account_id, active, email, score, tenant, Project.project_id, Project.owner_id, Project.name from Account join Project on Account.account_id = Project.owner_id order by account_id, Project.name" },
+        { "sql": "select account_id, active, email, score, tenant, Project.project_id, Project.owner_id, Project.name from Account left join Project on Account.account_id = Project.owner_id order by account_id, Project.name" },
+        { "sql": "select account_id, active, email, score, tenant, Project.project_id, Project.owner_id, Project.name from Account right join Project on Account.account_id = Project.owner_id order by account_id, Project.name" },
+        { "sql": "select account_id, active, email, score, tenant, Project.project_id, Project.owner_id, Project.name from Account full join Project on Account.account_id = Project.owner_id order by account_id, Project.name" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, { "i": "1" }, { "t": "ada@test" }, { "i": "10" }, { "t": "t1" }, { "i": "10" }, { "i": "1" }, { "t": "p1" }],
+            [{ "i": "1" }, { "i": "1" }, { "t": "ada@test" }, { "i": "10" }, { "t": "t1" }, { "i": "11" }, { "i": "1" }, { "t": "p2" }],
+            [{ "i": "2" }, { "i": "0" }, { "t": "linus@test" }, { "i": "30" }, { "t": "t1" }, { "i": "20" }, { "i": "2" }, { "t": "p3" }]
+          ]
+        },
+        {
+          "rows": [
+            [{ "i": "1" }, { "i": "1" }, { "t": "ada@test" }, { "i": "10" }, { "t": "t1" }, { "i": "10" }, { "i": "1" }, { "t": "p1" }],
+            [{ "i": "1" }, { "i": "1" }, { "t": "ada@test" }, { "i": "10" }, { "t": "t1" }, { "i": "11" }, { "i": "1" }, { "t": "p2" }],
+            [{ "i": "2" }, { "i": "0" }, { "t": "linus@test" }, { "i": "30" }, { "t": "t1" }, { "i": "20" }, { "i": "2" }, { "t": "p3" }],
+            [{ "i": "3" }, { "i": "1" }, { "t": "grace@test" }, { "i": "20" }, { "t": "t2" }, null, null, null]
+          ]
+        },
+        {
+          "rows": [
+            [{ "i": "1" }, { "i": "1" }, { "t": "ada@test" }, { "i": "10" }, { "t": "t1" }, { "i": "10" }, { "i": "1" }, { "t": "p1" }],
+            [{ "i": "1" }, { "i": "1" }, { "t": "ada@test" }, { "i": "10" }, { "t": "t1" }, { "i": "11" }, { "i": "1" }, { "t": "p2" }],
+            [{ "i": "2" }, { "i": "0" }, { "t": "linus@test" }, { "i": "30" }, { "t": "t1" }, { "i": "20" }, { "i": "2" }, { "t": "p3" }]
+          ]
+        },
+        {
+          "rows": [
+            [{ "i": "1" }, { "i": "1" }, { "t": "ada@test" }, { "i": "10" }, { "t": "t1" }, { "i": "10" }, { "i": "1" }, { "t": "p1" }],
+            [{ "i": "1" }, { "i": "1" }, { "t": "ada@test" }, { "i": "10" }, { "t": "t1" }, { "i": "11" }, { "i": "1" }, { "t": "p2" }],
+            [{ "i": "2" }, { "i": "0" }, { "t": "linus@test" }, { "i": "30" }, { "t": "t1" }, { "i": "20" }, { "i": "2" }, { "t": "p3" }],
+            [{ "i": "3" }, { "i": "1" }, { "t": "grace@test" }, { "i": "20" }, { "t": "t2" }, null, null, null]
+          ]
+        }
+      ]
+    }
+  ]
+}
