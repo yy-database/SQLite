@@ -33,5 +33,5 @@ git clone --branch dev https://github.com/yy-database/SQLite.git
 
 ## Contract gate
 
-`node scripts/check-test-floor.mjs` builds `sqlite.node` and runs both `sqlite.ts` and `sqlite.py`. Each suite must execute at least 11 cases and report zero skips. Every case must also declare its external truth source and direction in `scripts/external-truth.json`, and each capability must be proven in both directions against Python `sqlite3`, `better-sqlite3` or `PRAGMA integrity_check`. CI runs the same script in `.github/workflows/contract.yml`.
+`node scripts/check-test-floor.mjs` builds `sqlite.node` and runs both `sqlite.ts` and `sqlite.py`. Each suite must execute at least 15 cases and report zero skips. Every case must also declare its external truth source and direction in `scripts/external-truth.json`, and each capability must be proven in both directions against Python `sqlite3`, `better-sqlite3` or `PRAGMA integrity_check`. CI runs the same script in `.github/workflows/contract.yml`, and it asserts the checkout has no prebuilt `sqlite.node` before the build step.
 
