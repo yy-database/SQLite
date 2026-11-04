@@ -1,16 +1,16 @@
 //! In-memory SQLite format-3 database for WebAssembly.
 //!
 //! The crate owns no file I/O: it keeps the whole format-3 image in memory and
-//! wraps the shared `sqlite-sql` execution core, which runs a fail-closed SQL
-//! subset over the pure-Rust writer from the `sqlite` facade. The raw page
-//! image is exported for an external engine to verify. See the readme for the
-//! build command and host contract.
+//! wraps the shared execution core of the `sqlite` facade, which runs a fail-closed
+//! SQL subset over the pure-Rust writer. The raw page image is exported for an
+//! external engine to verify. See the readme for the build command and host
+//! contract.
 
 #![deny(missing_docs)]
 
-pub use sqlite_sql::{Cell, Engine, ExecResult, results_json};
+pub use sqlite::{Cell, Engine, ExecResult, results_json};
 
-use sqlite_sql::SqlError;
+use sqlite::SqlError;
 use wasm_bindgen::prelude::*;
 
 fn js_error(error: SqlError) -> JsError {

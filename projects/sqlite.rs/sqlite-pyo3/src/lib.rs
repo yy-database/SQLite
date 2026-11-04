@@ -398,7 +398,7 @@ impl SqliteWriter {
     }
 }
 
-fn engine_error(error: sqlite_sql::SqlError) -> PyErr {
+fn engine_error(error: sqlite::SqlError) -> PyErr {
     PyRuntimeError::new_err(error.message)
 }
 
@@ -414,7 +414,7 @@ fn json_to_py<'py>(py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyAny>> {
 /// `RuntimeError`; `try_execute` returns `{"ok": False, "error": {...}}` instead.
 #[pyclass]
 pub struct SqliteEngine {
-    inner: sqlite_sql::Engine,
+    inner: sqlite::Engine,
 }
 
 #[pymethods]
@@ -423,14 +423,14 @@ impl SqliteEngine {
     #[staticmethod]
     #[pyo3(signature = (page_size=None))]
     fn create(page_size: Option<u32>) -> PyResult<Self> {
-        sqlite_sql::Engine::new(page_size).map(|inner| Self { inner }).map_err(engine_error)
+        sqlite::Engine::new(page_size).map(|inner| Self { inner }).map_err(engine_error)
     }
 
     /// Executes a semicolon-separated script and returns every result in order.
     #[pyo3(signature = (sql))]
     fn exec<'py>(&mut self, py: Python<'py>, sql: &str) -> PyResult<Bound<'py, PyAny>> {
         let results = self.inner.execute(sql).map_err(engine_error)?;
-        json_to_py(py, &sqlite_sql::results_json(&results))
+        json_to_py(py, &sqlite::results_json(&results))
     }
 
     /// Executes exactly one statement and returns `{statement, affected, columns, rows}`.
@@ -444,7 +444,7 @@ impl SqliteEngine {
     #[pyo3(signature = (statements))]
     fn execute_batch<'py>(&mut self, py: Python<'py>, statements: Vec<String>) -> PyResult<Bound<'py, PyAny>> {
         let results = self.inner.execute_batch(&statements).map_err(engine_error)?;
-        json_to_py(py, &sqlite_sql::results_json(&results))
+        json_to_py(py, &sqlite::results_json(&results))
     }
 
     /// Executes one statement without raising, returning `{ok, result}` or `{ok, error}`.

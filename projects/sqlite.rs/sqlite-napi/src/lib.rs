@@ -636,7 +636,7 @@ impl SqliteWriter {
     }
 }
 
-fn engine_error(error: sqlite_sql::SqlError) -> napi::Error {
+fn engine_error(error: sqlite::SqlError) -> napi::Error {
     napi::Error::from_reason(error.message)
 }
 
@@ -653,7 +653,7 @@ fn engine_json(text: String) -> napi::Result<serde_json::Value> {
 /// instead of throwing.
 #[napi]
 pub struct SqliteEngine {
-    engine: sqlite_sql::Engine,
+    engine: sqlite::Engine,
 }
 
 #[napi]
@@ -661,14 +661,14 @@ impl SqliteEngine {
     /// Creates a blank in-memory database image with the given page size (default 4096).
     #[napi(factory)]
     pub fn create(page_size: Option<u32>) -> napi::Result<Self> {
-        sqlite_sql::Engine::new(page_size).map(|engine| Self { engine }).map_err(engine_error)
+        sqlite::Engine::new(page_size).map(|engine| Self { engine }).map_err(engine_error)
     }
 
     /// Executes a semicolon-separated script and returns every result in order.
     #[napi]
     pub fn exec(&mut self, sql: String) -> napi::Result<serde_json::Value> {
         let results = self.engine.execute(&sql).map_err(engine_error)?;
-        engine_json(sqlite_sql::results_json(&results))
+        engine_json(sqlite::results_json(&results))
     }
 
     /// Executes exactly one statement and returns `{statement, affected, columns, rows}`.
@@ -682,7 +682,7 @@ impl SqliteEngine {
     #[napi]
     pub fn executeBatch(&mut self, statements: Vec<String>) -> napi::Result<serde_json::Value> {
         let results = self.engine.execute_batch(&statements).map_err(engine_error)?;
-        engine_json(sqlite_sql::results_json(&results))
+        engine_json(sqlite::results_json(&results))
     }
 
     /// Executes one statement without throwing, returning `{ok, result}` or `{ok, error}`.
@@ -725,3 +725,68 @@ impl SqliteEngine {
         Ok(1)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use sqlite::sql::{Cell, Engine};
+
+    // The Rust-side smoke test proves the workspace compiles and one
+    // create/insert/select round trip returns the row it wrote. The published
+    // host contract is judged by the `sqlite.ts` and `sqlite.py` suites.
+    #[test]
+    fn opens_and_round_trips_one_row() {
+        let mut engine = Engine::new(None).expect("open");
+        let results = engine
+            .execute(
+                "create table smoke (id integer primary key, label text not null); \
+                 insert into smoke (label) values ('alpha'); \
+                 select * from smoke;",
+            )
+            .expect("execute");
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[2].rows, vec![vec![Cell::Integer(1), Cell::Text("alpha".to_string())]]);
+    }
+
+    #[test]
+    fn rejections_carry_a_code_and_position() {
+        let mut engine = Engine::new(None).expect("open");
+        engine.execute("create table t (id integer primary key, label text)").expect("create");
+        let error = engine.execute_one("select * from t group by id").expect_err("group by is rejected");
+        assert_eq!(error.code, "unsupported-clause");
+        assert_eq!(error.statement, Some("select"));
+        assert_eq!(error.clause.as_deref(), Some("GROUP"));
+        assert_eq!(error.position, Some(16));
+        let unknown = engine.execute_one("insert into missing values (1)").expect_err("unknown table");
+        assert_eq!(unknown.code, "unknown-table");
+        assert_eq!(unknown.statement, Some("insert"));
+    }
+
+    #[test]
+    fn where_and_order_by_follow_sqlite_ordering() {
+        let mut engine = Engine::new(None).expect("open");
+        engine
+            .execute(
+                "create table t (id integer primary key, label text, score real); \
+                 insert into t (label, score) values ('b', 1.5), ('a', null), ('c', 2.0), (null, 0.0);",
+            )
+            .expect("seed");
+        // `NULL` sorts below every number, so `DESC` puts it last.
+        let ordered = engine.execute_one("select label from t order by score desc").expect("order");
+        assert_eq!(
+            ordered.rows,
+            vec![
+                vec![Cell::Text("c".to_string())],
+                vec![Cell::Text("b".to_string())],
+                vec![Cell::Null],
+                vec![Cell::Text("a".to_string())],
+            ]
+        );
+        let filtered = engine.execute_one("select label from t where score >= 1.5 order by id").expect("filter");
+        assert_eq!(filtered.rows, vec![vec![Cell::Text("b".to_string())], vec![Cell::Text("c".to_string())]]);
+        let counted = engine.execute_one("select count(*) from t where score is not null").expect("count");
+        assert_eq!(counted.rows, vec![vec![Cell::Integer(3)]]);
+        let unknown = engine.execute_one("select * from t where missing = 1").expect_err("unknown column");
+        assert_eq!(unknown.code, "unknown-column");
+    }
+}
+

@@ -15,5 +15,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 sqlite = { workspace = true }
-sqlite-sql = { path = "../sqlite-sql" }
 pyo3 = { workspace = true }

@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "sqlite-sql",
     "sqlite-napi",
     "sqlite-pyo3",
     "sqlite-wasm",
@@ -18,7 +17,7 @@ repository = "https://github.com/yy-database/SQLite"
 [workspace.dependencies]
 # Sole aggregated core dependency for the `sqlite` facade. Pin full 40-char rev.
 # Local absolute path overrides belong in `.cargo/config.toml`.
-sqlite = { git = "https://github.com/oovm/database.rs.git", rev = "3c2a735cd011cd3efbe31d203a9a86e6a1a4e00f" }
+sqlite = { git = "https://github.com/oovm/database.rs.git", rev = "eabd430b60e52d2a8dcdb08ce0632821789c73a7" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
