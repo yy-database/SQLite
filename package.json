@@ -10,6 +10,8 @@
     "test": "cargo test --manifest-path projects/sqlite.rs/Cargo.toml --workspace",
     "test:ts": "pnpm --dir projects/sqlite.ts test",
     "test:py": "python -m unittest discover -s projects/sqlite.py/tests -t projects/sqlite.py/tests",
+    "examples:ts": "pnpm build:napi && pnpm --dir projects/sqlite.ts examples",
+    "examples:py": "python projects/sqlite.py/examples/roundtrip.py",
     "test:gate": "node scripts/check-test-floor.mjs"
   },
   "packageManager": "pnpm@10.18.3",

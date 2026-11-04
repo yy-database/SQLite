@@ -25,3 +25,7 @@ jobs:
         run: pnpm --dir projects/sqlite.ts install --frozen-lockfile
       - name: TS and PY contract gate
         run: node scripts/check-test-floor.mjs
+      - name: Downstream examples
+        run: |
+          pnpm examples:ts
+          pnpm examples:py
