@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 import unittest
 
-from support import Workspace, build, columns, insert, native_rows, native_schema, oracle, table
+from support import Workspace, build, call, columns, insert, native_rows, native_schema, oracle, table
 
 
 def query(path, sql: str):
@@ -198,18 +198,21 @@ class Format3Test(unittest.TestCase):
             self.assertEqual(query(space.path, "select count(*) from u where label = 'rolled-back'")[0][0], 0)
             self.assertEqual(integrity(space.path), "ok")
 
-    def test_without_rowid_is_rejected_explicitly(self) -> None:
+    def test_without_rowid_rows_are_read_in_key_order(self) -> None:
         with Workspace("without-rowid") as space:
             connection = sqlite3.connect(space.path)
             try:
                 connection.execute("create table wo (k text primary key, v integer) without rowid")
-                connection.execute("insert into wo values ('a', 1)")
+                connection.executemany("insert into wo values (?, ?)", [("b", 2), ("a", 1), ("c", 3)])
                 connection.commit()
             finally:
                 connection.close()
 
-            with self.assertRaisesRegex(Exception, "WITHOUT ROWID|without rowid|index b-tree|unsupported"):
-                native_rows(space.path, "wo")
+            self.assertEqual(query(space.path, "select k, v from wo"), [("a", 1), ("b", 2), ("c", 3)])
+
+            rows = call("readWithoutRowid", {"path": str(space.path), "table": "wo"})
+            self.assertEqual([[column["value"] for column in row] for row in rows], [["a", "1"], ["b", "2"], ["c", "3"]])
+            self.assertEqual([column["kind"] for column in rows[0]], ["text", "integer"])
 
 
 if __name__ == "__main__":
