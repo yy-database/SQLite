@@ -24,6 +24,11 @@ interface Suite {
   readonly floor: number;
   readonly elapsedMs: number;
   readonly ok: boolean;
+  readonly detail: string;
+}
+
+function tail(output: string, lines = 40): string {
+  return output.trimEnd().split("\n").slice(-lines).join("\n");
 }
 
 function nativePath(): string {
@@ -56,6 +61,7 @@ function runTs(): Suite {
     floor: TS_FLOOR,
     elapsedMs: Math.round(result.elapsedMs),
     ok: fail === 0 && skip === 0 && tests >= TS_FLOOR,
+    detail: tail(result.stdout),
   };
 }
 
@@ -98,6 +104,7 @@ function runPy(): Suite {
     floor: PY_FLOOR,
     elapsedMs: Math.round(result.elapsedMs),
     ok: result.status === 0 && skipped === 0 && ran >= PY_FLOOR,
+    detail: tail(output),
   };
 }
 
@@ -141,6 +148,11 @@ export function commandTest(options: CliOptions): number {
     return 1;
   }
   const suites = [runTs(), runPy()];
+  // A red suite has to say why. Without the child output the gate only reports
+  // counts, which turns every platform-specific breakage into a blind search.
+  for (const suite of suites) {
+    if (!suite.ok) process.stderr.write(`\n${suite.name} output\n${suite.detail}\n`);
+  }
   const external = externalCheck();
   const platforms: PlatformStageResult[] = platformStages
     .filter((stage: { commands: string[] }) => stage.commands.includes("test"))
