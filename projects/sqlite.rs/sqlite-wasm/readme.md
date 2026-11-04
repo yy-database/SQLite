@@ -22,7 +22,7 @@ file-writing path, which this crate does not have.
 
 ```powershell
 cargo build -p sqlite-wasm --target wasm32-unknown-unknown --release
-wasm-bindgen --target nodejs --out-dir projects/sqlite.ts/platforms/sqlite-wasm/pkg --out-name sqlite_wasm projects/sqlite.rs/target/wasm32-unknown-unknown/release/sqlite_wasm.wasm
+wasm-bindgen --target nodejs --out-dir projects/sqlite.ts/platforms/sqlite-unknown-wasm32/pkg --out-name sqlite_wasm projects/sqlite.rs/target/wasm32-unknown-unknown/release/sqlite_wasm.wasm
 ```
 
 `projects/sqlite.ts/packages/sqlite-harness/stages/wasm/build.mjs` runs both steps and scopes the generated glue to

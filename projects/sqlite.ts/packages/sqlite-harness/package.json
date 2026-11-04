@@ -21,9 +21,9 @@
         "sql.js": "^1.15.2"
     },
     "optionalDependencies": {
-        "@yydb/sqlite-node-darwin-arm64": "workspace:*",
-        "@yydb/sqlite-node-darwin-x64": "workspace:*",
-        "@yydb/sqlite-node-linux-x64": "workspace:*",
-        "@yydb/sqlite-node-win32-x64": "workspace:*"
+        "@yydb/sqlite-darwin-arm64": "workspace:*",
+        "@yydb/sqlite-darwin-x64": "workspace:*",
+        "@yydb/sqlite-linux-x64": "workspace:*",
+        "@yydb/sqlite-win32-x64": "workspace:*"
     }
 }

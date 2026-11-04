@@ -40,7 +40,7 @@ export function nativeModulePath(): string {
   if (!key) {
     throw new Error(`SQLite native binding not available for ${process.platform}-${process.arch}`);
   }
-  const libDir = join(dirname(require.resolve(`@yydb/sqlite-node-${key}`)), "lib");
+  const libDir = join(dirname(require.resolve(`@yydb/sqlite-${key}`)), "lib");
   const fileName = existsSync(libDir)
     ? readdirSync(libDir).find((entry) => entry.endsWith(".node"))
     : undefined;
