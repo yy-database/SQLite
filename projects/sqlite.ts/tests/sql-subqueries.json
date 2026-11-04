@@ -1,0 +1,920 @@
+{
+  "group": "subqueries",
+  "cases": [
+    {
+      "source": "sql.rs::aliased_from_qualifies_every_output_column",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. SQLite 的 `SELECT *` 列名不带别名前缀（yydb 输出 `a.email`），harness 只比较列值，故按列顺序断言。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select * from Account as a where a.account_id = 1" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, { "t": "ada@example.test" }, { "t": "t1" }, { "i": "10" }, { "i": "1" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::aliased_self_join_reads_both_occurrences",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 自连接两侧分别用别名 `a` / `b`，同表同行只保留 `a.account_id < b.account_id` 的 (1,2) 组合。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select a.account_id as left_id, b.account_id as right_id from Account as a join Account as b on a.tenant = b.tenant where a.account_id < b.account_id order by a.account_id"
+        }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }, { "i": "2" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::aliased_join_prefixes_each_side_with_its_own_alias",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 两侧别名分别限定列；account 3 无项目，右表列补 NULL。yydb 输出 `a.email` / `p.name`，SQLite 只给裸列名，值顺序一致。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')"
+      ],
+      "steps": [
+        { "sql": "select * from Account as a left join Project as p on a.account_id = p.owner_id order by a.account_id" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [
+              { "i": "1" }, { "t": "ada@test" }, { "t": "t1" }, { "i": "10" }, { "i": "1" },
+              { "i": "10" }, { "i": "1" }, { "t": "p1" }
+            ],
+            [
+              { "i": "1" }, { "t": "ada@test" }, { "t": "t1" }, { "i": "10" }, { "i": "1" },
+              { "i": "11" }, { "i": "1" }, { "t": "p2" }
+            ],
+            [
+              { "i": "2" }, { "t": "linus@test" }, { "t": "t1" }, { "i": "30" }, { "i": "0" },
+              { "i": "20" }, { "i": "2" }, { "t": "p3" }
+            ],
+            [
+              { "i": "3" }, { "t": "grace@test" }, { "t": "t2" }, { "i": "20" }, { "i": "1" },
+              null, null, null
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::derived_table_scans_its_sub_pipeline_and_exposes_the_alias",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. Rust 先断言派生表 read_set 仍为 `Account`（lowering 内部，harness 不可见），随后按可观测结果断言。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select s.account_id as id, s.email as mail from (select account_id, email from Account where score >= 20) as s order by s.account_id"
+        }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "2" }, { "t": "linus@example.test" }],
+            [{ "i": "3" }, { "t": "grace@example.test" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::derived_table_joins_as_a_nested_pipeline",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 派生表先过滤 `project_id > 10`，account 1 因此只剩 p2，account 3 补 NULL。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')"
+      ],
+      "steps": [
+        {
+          "sql": "select a.account_id as id, p.name as project from Account as a left join (select owner_id, name from Project where project_id > 10) as p on a.account_id = p.owner_id order by a.account_id"
+        }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, { "t": "p2" }],
+            [{ "i": "2" }, { "t": "p3" }],
+            [{ "i": "3" }, null]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::exists_predicate_reads_the_subquery_result",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 非空 EXISTS 全部通过，空 EXISTS 过滤全部行。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where exists (select project_id from Project where project_id = 10) order by account_id" },
+        { "sql": "select account_id from Account where exists (select project_id from Project where project_id = 999) order by account_id" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::not_exists_predicate_inverts_the_subquery_result",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. NOT EXISTS 取反：空子查询保留全部，非空子查询丢弃全部。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where not exists (select project_id from Project where project_id = 999) order by account_id" },
+        { "sql": "select account_id from Account where not exists (select project_id from Project where project_id = 10)" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::correlated_exists_reads_the_enclosing_row",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 相关 EXISTS 每行求值一次，只有拥有项目的外层行通过；无关联版本只求值一次。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')"
+      ],
+      "steps": [
+        {
+          "sql": "select account_id from Account where exists (select project_id from Project where Project.owner_id = Account.account_id) order by account_id"
+        },
+        { "sql": "select account_id from Account where exists (select project_id from Project) order by account_id" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }]] },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::correlated_not_exists_reads_the_enclosing_row",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 相关 NOT EXISTS 只留下没有项目的外层行；无关联版本因项目表非空而丢弃全部行。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')"
+      ],
+      "steps": [
+        {
+          "sql": "select account_id from Account where not exists (select project_id from Project where Project.owner_id = Account.account_id) order by account_id"
+        },
+        { "sql": "select account_id from Account where not exists (select project_id from Project)" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "3" }]] },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::cte_feeds_the_main_statement",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. CTE 名是语句体的行来源，既可裸写也可作为限定名。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "with scored as (select account_id, score from Account where score >= 20) select account_id from scored order by account_id" },
+        {
+          "sql": "with scored as (select account_id, score from Account where score >= 20) select scored.account_id as account_id from scored order by account_id"
+        }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }]] },
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::cte_joins_like_a_table_and_a_later_cte_reads_an_earlier_one",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. CTE 可参与 LEFT JOIN，且后续 CTE 能看到前面已定义的 CTE。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')"
+      ],
+      "steps": [
+        {
+          "sql": "with projects as (select owner_id, name from Project where project_id > 10) select a.account_id as id, projects.name as project from Account as a left join projects on a.account_id = projects.owner_id order by a.account_id"
+        },
+        {
+          "sql": "with base as (select account_id, score from Account where score >= 20), scored as (select account_id from base where score > 20) select account_id from scored order by account_id"
+        }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, { "t": "p2" }],
+            [{ "i": "2" }, { "t": "p3" }],
+            [{ "i": "3" }, null]
+          ]
+        },
+        { "rows": [[{ "i": "2" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::ctes_reject_duplicate_names_and_forward_references",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 重名 CTE 在 SQLite 也报错。前向引用是差异点：yydb 要求被引用的 CTE 先定义，SQLite 会先收集全部 CTE 名再解析（缺省顺序为 `b`），因此同样语句在 SQLite 返回三行，按引擎真值断言。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "with x as (select account_id from Account), x as (select account_id from Account) select * from x" },
+        { "sql": "with a as (select account_id from b), b as (select account_id from Account) select * from a" }
+      ],
+      "expect": [
+        { "error": true },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::cte_column_lists_rename_the_leading_output_columns",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 完整 CTE 列表按位置改名，限定名仍可用，窗口列同样可改名。差异点：yydb 允许列表短于投影列数（只改前列、其余保留原名），SQLite 要求列名数与投影列数一致，`WITH top(id) AS (SELECT account_id, email ...)` 报 `table top has 2 values for 1 columns`，故该步按错误断言。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "with top(a, t) as (select account_id, tenant from Account where score >= 20) select a from top order by a" },
+        {
+          "sql": "with top(a, t) as (select account_id, tenant from Account where score >= 20) select top.a as id, top.t as tenant from top order by id"
+        },
+        { "sql": "with top(id) as (select account_id, email from Account where score >= 20) select id, email from top order by id" },
+        {
+          "sql": "with ranked(r) as (select row_number() over (order by score) as rn from Account) select r from ranked order by r"
+        }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }]] },
+        {
+          "rows": [
+            [{ "i": "2" }, { "t": "t1" }],
+            [{ "i": "3" }, { "t": "t2" }]
+          ]
+        },
+        { "error": true },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::union_all_keeps_duplicates",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. UNION ALL 保留两侧重复行，account 2 出现两次。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select account_id from Account where account_id <= 2 union all select account_id from Account where account_id >= 2"
+        }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::union_removes_duplicate_rows",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. UNION 去重后按 ORDER BY 输出 1、2、3。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select account_id from Account where account_id <= 2 union select account_id from Account where account_id >= 2 order by account_id"
+        }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::union_treats_nulls_as_duplicates",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 先把 account 3 的 tenant 置 NULL（写在 seed 里），UNION 认为两个 NULL 相等而只出一行，UNION ALL 保留两行。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)",
+        "update Account set tenant = null where account_id = 3"
+      ],
+      "steps": [
+        {
+          "sql": "select tenant from Account where account_id = 3 union select tenant from Account where account_id = 3"
+        },
+        {
+          "sql": "select tenant from Account where account_id = 3 union all select tenant from Account where account_id = 3"
+        }
+      ],
+      "expect": [
+        { "rows": [[null]] },
+        { "rows": [[null], [null]] }
+      ]
+    },
+    {
+      "source": "sql.rs::intersect_and_except_select_from_the_left_operand",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. INTERSECT 保留两侧共有值并按 score 排序，EXCEPT 只留下左侧独有的 10。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select score from Account intersect select score from Account where score >= 20 order by score"
+        },
+        { "sql": "select score from Account except select score from Account where score >= 20" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "20" }], [{ "i": "30" }]] },
+        { "rows": [[{ "i": "10" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::set_operations_drop_duplicates_of_both_operands",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 两侧各产生两行同值；INTERSECT 只留一行，EXCEPT 结果为空。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select tenant from Account where tenant = 't1' intersect select tenant from Account where tenant = 't1'"
+        },
+        { "sql": "select tenant from Account where tenant = 't1' except select tenant from Account where tenant = 't1'" }
+      ],
+      "expect": [
+        { "rows": [[{ "t": "t1" }]] },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::set_operations_return_an_empty_result_when_both_operands_are_empty",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. Rust 循环四个运算符，这里按四个 step 逐个断言空结果。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where account_id = 99 union select account_id from Account where account_id = 98" },
+        { "sql": "select account_id from Account where account_id = 99 union all select account_id from Account where account_id = 98" },
+        { "sql": "select account_id from Account where account_id = 99 intersect select account_id from Account where account_id = 98" },
+        { "sql": "select account_id from Account where account_id = 99 except select account_id from Account where account_id = 98" }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [] },
+        { "rows": [] },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::set_operation_orders_and_limits_the_merged_result",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 右操作数的 account_id 落入左操作数的 score 列，合并值降序 30、20、10、3、2、1，OFFSET 1 LIMIT 2 取 20、10。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select score from Account union all select account_id from Account order by score desc limit 2 offset 1" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "20" }], [{ "i": "10" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::with_clause_is_visible_to_both_operands",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. WITH 作用于整个集合表达式，两个操作数都读同一个 CTE。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "with scored as (select account_id from Account where score >= 20) select account_id from scored union all select account_id from scored order by account_id"
+        }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "2" }], [{ "i": "2" }], [{ "i": "3" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::set_operations_reject_mismatched_columns",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 第一、三条是 SQLite 也拒绝的列数不匹配与无输出列的 ORDER BY；第二条 yydb 因静态列类型报告 `mixes integer and text`，SQLite 动态类型允许混合，故以引擎真值断言（左操作数 1、2、3 后接右操作数的 t1、t1、t2）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id, score from Account union select account_id from Account" },
+        { "sql": "select account_id from Account union all select tenant from Account" },
+        { "sql": "select account_id from Account union select score from Account order by email" }
+      ],
+      "expect": [
+        { "error": true },
+        {
+          "rows": [
+            [{ "i": "1" }],
+            [{ "i": "2" }],
+            [{ "i": "3" }],
+            [{ "t": "t1" }],
+            [{ "t": "t1" }],
+            [{ "t": "t2" }]
+          ]
+        },
+        { "error": true }
+      ]
+    },
+    {
+      "source": "sql.rs::in_subquery_keeps_rows_whose_value_the_subquery_produces",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 项目 owner 为 account 1、2，IN 保留 1、2，NOT IN 只留 3。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where account_id in (select owner_id from Project) order by account_id" },
+        { "sql": "select account_id from Account where account_id not in (select owner_id from Project) order by account_id" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }]] },
+        { "rows": [[{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::in_subquery_over_an_empty_result_is_always_decided",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 空集合上 IN 恒为 FALSE；NOT IN 恒为 TRUE，即使被测值是 NULL（先把 account 3 的 tenant 置 NULL）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)",
+        "update Account set tenant = null where account_id = 3"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where account_id in (select account_id from Account where account_id = 99)" },
+        {
+          "sql": "select account_id from Account where tenant not in (select tenant from Account where account_id = 99) order by account_id"
+        }
+      ],
+      "expect": [
+        { "rows": [] },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::in_subquery_follows_three_valued_logic",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 集合含 NULL 时非匹配为 UNKNOWN：IN 只留精确匹配的 1、2，NOT IN 因 NULL 行丢弃全部；account 3 的 tenant 预先置 NULL。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)",
+        "update Account set tenant = null where account_id = 3"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where tenant in (select tenant from Account where account_id = 1) order by account_id" },
+        { "sql": "select account_id from Account where tenant in (select tenant from Account) order by account_id" },
+        { "sql": "select account_id from Account where tenant not in (select tenant from Account) order by account_id" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }]] },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }]] },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::in_subquery_rejects_a_multi_column_subquery",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. yydb 在 prepare 报 `single-column`，SQLite 也在编译期拒绝两列子查询，文案不同但结果同为错误。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where account_id in (select account_id, score from Account)" }
+      ],
+      "expect": [
+        { "error": true }
+      ]
+    },
+    {
+      "source": "sql.rs::in_subquery_accepts_expression_on_the_left",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 左值可为表达式：score + 1 只有 account 1（10 + 1 = 11）落在项目 id 集合 {10,11,20}。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where score + 1 in (select project_id from Project)" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::correlated_in_subquery_produces_one_set_per_row",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 相关 IN 为每行构造集合：account 1 的 score 10 属于自己 {10,11}；account 3 的集合为空。无关联版本共用 {10,11,20}，account 3 的 20 命中。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')"
+      ],
+      "steps": [
+        {
+          "sql": "select account_id from Account where score in (select project_id from Project where Project.owner_id = Account.account_id) order by account_id"
+        },
+        { "sql": "select account_id from Account where score in (select project_id from Project) order by account_id" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }]] },
+        { "rows": [[{ "i": "1" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::correlated_not_in_subquery_follows_three_valued_logic",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 相关 NOT IN 保留 2、3；共用集合只保留 2；第三步把 account 2 的 tenant 置 NULL（该 step 本身无返回行），之后外层行 a 的 tenant 与其它行的集合比较全为 UNKNOWN，结果为空。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')"
+      ],
+      "steps": [
+        {
+          "sql": "select account_id from Account where score not in (select project_id from Project where Project.owner_id = Account.account_id) order by account_id"
+        },
+        { "sql": "select account_id from Account where score not in (select project_id from Project) order by account_id" },
+        { "sql": "update Account set tenant = null where account_id = 2" },
+        {
+          "sql": "select a.account_id from Account as a where a.tenant not in (select tenant from Account where account_id <> a.account_id) order by a.account_id"
+        }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }]] },
+        { "rows": [[{ "i": "2" }]] },
+        { "rows": [] },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::scalar_subquery_projects_a_single_value",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 投影里的标量子查询取 account 2 的 score 30。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select account_id, (select score from Account where account_id = 2) as peer from Account where account_id = 1"
+        }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }, { "i": "30" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::scalar_subquery_with_no_rows_yields_null",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 空标量子查询产出 NULL，与 NULL 的比较为 UNKNOWN，因而不保留任何行。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select account_id, (select score from Account where account_id = 99) as missing from Account where account_id = 1"
+        },
+        { "sql": "select account_id from Account where score > (select score from Account where account_id = 99)" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }, null]] },
+        { "rows": [] }
+      ]
+    },
+    {
+      "source": "sql.rs::scalar_subquery_compares_in_where_on_either_side",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 标量子查询可出现在比较的右值或左值。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where score > (select score from Account where account_id = 1) order by account_id" },
+        { "sql": "select account_id from Account where (select score from Account where account_id = 2) > score order by account_id" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }]] },
+        { "rows": [[{ "i": "1" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::scalar_subquery_compares_inside_a_projection_case",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. CASE 内比较标量子查询：阈值是 account 3 的 score 20。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select account_id, case when score >= (select score from Account where account_id = 3) then 'big' else 'small' end as band from Account order by account_id"
+        }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, { "t": "small" }],
+            [{ "i": "2" }, { "t": "big" }],
+            [{ "i": "3" }, { "t": "big" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::scalar_subquery_rejects_multiple_rows_and_columns",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. yydb 要求标量子查询至多一行且只能一列；SQLite 只拒绝多列（`sub-select returns 2 columns`），多行时静默取第一行，故前两步按引擎真值断言（第一行是 account 1 的 score 10）。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id, (select score from Account) as bad from Account" },
+        { "sql": "select account_id from Account where score > (select score from Account)" },
+        { "sql": "select (select account_id, score from Account) as bad from Account" },
+        { "sql": "select (select * from Account where account_id = 1) as bad from Account where account_id = 1" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, { "i": "10" }],
+            [{ "i": "2" }, { "i": "10" }],
+            [{ "i": "3" }, { "i": "10" }]
+          ]
+        },
+        { "rows": [[{ "i": "2" }], [{ "i": "3" }]] },
+        { "error": true },
+        { "error": true }
+      ]
+    },
+    {
+      "source": "sql.rs::correlated_scalar_subquery_projects_one_value_per_row",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 相关标量子查询逐行求 SUM(project_id)：account 3 无项目，空集上的 SUM 为 NULL；无关联版本对每行都返回 41。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)",
+        "create table Project (project_id integer primary key, owner_id integer, name text)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@test', 't2', 20, 1)",
+        "insert into Project (project_id, owner_id, name) values (10, 1, 'p1')",
+        "insert into Project (project_id, owner_id, name) values (11, 1, 'p2')",
+        "insert into Project (project_id, owner_id, name) values (20, 2, 'p3')"
+      ],
+      "steps": [
+        {
+          "sql": "select account_id, (select sum(project_id) from Project where Project.owner_id = Account.account_id) as owned from Account order by account_id"
+        },
+        { "sql": "select account_id, (select sum(project_id) from Project) as owned from Account order by account_id" }
+      ],
+      "expect": [
+        {
+          "rows": [
+            [{ "i": "1" }, { "i": "21" }],
+            [{ "i": "2" }, { "i": "20" }],
+            [{ "i": "3" }, null]
+          ]
+        },
+        {
+          "rows": [
+            [{ "i": "1" }, { "i": "41" }],
+            [{ "i": "2" }, { "i": "41" }],
+            [{ "i": "3" }, { "i": "41" }]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "sql.rs::correlated_scalar_subquery_compares_against_the_enclosing_row",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 外层别名 `a` 让 `a.tenant` 指外层行（否则会解析到子查询自己的 Account）：t1 总和 40 使 account 1、2 通过；无关联版本总和 60，每行都通过。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        {
+          "sql": "select a.account_id as account_id from Account as a where a.score < (select sum(score) from Account where tenant = a.tenant) order by a.account_id"
+        },
+        {
+          "sql": "select a.account_id as account_id from Account as a where a.score < (select sum(score) from Account) order by a.account_id"
+        }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }]] },
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    },
+    {
+      "source": "sql.rs::bare_scalar_subquery_as_bool_predicate",
+      "note": "VOS schema → SQLite DDL: i64→integer, utf8→text, bool→integer(0/1), @@field→primary key. 裸标量子查询作为布尔谓词，值为 1（真）时保留全部行。",
+      "schema": [
+        "create table Account (account_id integer primary key, email text, tenant text, score integer, active integer)"
+      ],
+      "seed": [
+        "insert into Account (account_id, email, tenant, score, active) values (1, 'ada@example.test', 't1', 10, 1)",
+        "insert into Account (account_id, email, tenant, score, active) values (2, 'linus@example.test', 't1', 30, 0)",
+        "insert into Account (account_id, email, tenant, score, active) values (3, 'grace@example.test', 't2', 20, 1)"
+      ],
+      "steps": [
+        { "sql": "select account_id from Account where (select account_id from Account where account_id = 1)" }
+      ],
+      "expect": [
+        { "rows": [[{ "i": "1" }], [{ "i": "2" }], [{ "i": "3" }]] }
+      ]
+    }
+  ]
+}
