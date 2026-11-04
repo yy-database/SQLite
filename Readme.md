@@ -22,3 +22,16 @@ cargo check --manifest-path projects/sqlite.rs/Cargo.toml --workspace
 Pinned toolchain: `projects/sqlite.rs/rust-toolchain.toml` (`nightly-2026-07-20`).
 
 Core crates come from `database.rs` via git `rev` in `Cargo.toml`. Local absolute path overrides go in `projects/sqlite.rs/.cargo/config.toml` (see `config.example.toml`).
+
+## Branch
+
+Work happens on `dev`. The `master` branch only holds the initial commit, so a plain clone lands on an empty shell:
+
+```shell
+git clone --branch dev https://github.com/yy-database/SQLite.git
+```
+
+## Contract gate
+
+`node scripts/check-test-floor.mjs` builds `sqlite.node` and runs both `sqlite.ts` and `sqlite.py`. Each suite must execute at least 11 cases and report zero skips. CI runs the same script in `.github/workflows/contract.yml`.
+

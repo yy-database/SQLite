@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TS_FLOOR = 11;
 const PY_FLOOR = 11;
+const PYTHON = process.env.PYTHON ?? (process.platform === "win32" ? "python" : "python3");
 
 function count(text, pattern) {
   const match = text.match(pattern);
@@ -32,7 +33,7 @@ function runTs() {
 }
 
 function runPy() {
-  const result = spawnSync("python", ["-m", "unittest", "discover", "-s", "tests", "-t", "tests"], {
+  const result = spawnSync(PYTHON, ["-m", "unittest", "discover", "-s", "tests", "-t", "tests"], {
     cwd: join(root, "projects/sqlite.py"),
     encoding: "utf8",
   });
