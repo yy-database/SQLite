@@ -6,22 +6,22 @@
 
 - 真实 SQLite：CPython 3.12.10 的 `sqlite3` 3.49.1
 - 本仓产物：@yydb/sqlite createEngine 引擎 3.45.0（Node v24.18.0），安装态运行
-- 用例：81 条，`status` 一律为 `open`
+- 用例：83 条，`status` 一律为 `open`
 
 ## 按 direction 计数
 
 | direction | 条数 |
 |-----------|------|
-| `none` | 74 |
-| `sqlite-accepts-ours-rejects` | 6 |
+| `none` | 77 |
+| `sqlite-accepts-ours-rejects` | 5 |
 | `same-statement-different-result` | 1 |
 
 ## 按 class 计数
 
 | class | 条数 |
 |-------|------|
-| `none` | 42 |
-| `missing-feature` | 37 |
+| `none` | 45 |
+| `missing-feature` | 36 |
 | `intentional-divergence` | 1 |
 | `semantic-diff` | 1 |
 
@@ -30,11 +30,11 @@
 | direction | class | 条数 |
 |-----------|-------|------|
 | `none` | `missing-feature` | 31 |
-| `none` | `none` | 42 |
+| `none` | `none` | 45 |
 | `none` | `semantic-diff` | 1 |
 | `same-statement-different-result` | `missing-feature` | 1 |
 | `sqlite-accepts-ours-rejects` | `intentional-divergence` | 1 |
-| `sqlite-accepts-ours-rejects` | `missing-feature` | 5 |
+| `sqlite-accepts-ours-rejects` | `missing-feature` | 4 |
 
 ## 明细
 
@@ -599,6 +599,16 @@
 - 本仓：`[[3,2]]`
 - 备注：两侧 `count(*)` 与 `count(col)` 结果一致
 
+### `semantics.limit-expression`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE t1(a INTEGER)`，`INSERT INTO t1 VALUES (1), (2), (3)`
+- sql：`SELECT a FROM t1 ORDER BY a LIMIT 1 + 1`
+- SQLite：`[[1],[2]]`
+- 本仓：`[[1],[2]]`
+- 备注：`LIMIT`/`OFFSET` 已按表达式求值（算术、函数、子查询、文本/实数的 SQLite 转换规则）；`?`/`:name` 参数占位符仍报结构化 `unsupported-parameter`
+
 ### `semantics.null-order-asc`
 
 - direction：`none`
@@ -739,6 +749,26 @@
 - 本仓：`readonly-system-table: table sqlite_master may not be modified`
 - 备注：系统表只读；本仓报结构化错误码 `readonly-system-table`
 
+### `syntax.table-check`
+
+- direction：`none`
+- class：`none`
+- setup：无
+- sql：`CREATE TABLE chk(a INTEGER CHECK (a > 0))`
+- SQLite：`[]`
+- 本仓：`[]`
+- 备注：表级、列级与 `CONSTRAINT name CHECK (...)` 三种写法均已支持；插入违反时报结构化 `constraint-failed`，NULL 通过，未知列在建表期报 `unknown-column`
+
+### `syntax.window-function`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE wf(a INTEGER)`，`INSERT INTO wf VALUES (1), (2)`
+- sql：`SELECT row_number() OVER (ORDER BY a) FROM wf`
+- SQLite：`[[1],[2]]`
+- 本仓：`[[1],[2]]`
+- 备注：窗口函数已支持（`row_number`/`rank`/`dense_rank`/`ntile`/`percent_rank`/`cume_dist`、聚合默认帧、显式 `ROWS`/`RANGE` 帧、`lag`/`lead`/`first_value`/`last_value`/`nth_value`、命名窗口）；`GROUPS`/`EXCLUDE` 仍明确拒绝，见 `syntax.window-groups`、`syntax.window-exclude`
+
 ### `semantics.limit-negative`
 
 - direction：`none`
@@ -767,25 +797,6 @@
 - 本仓：`readonly-system-table: table sqlite_sequence may not be modified`
 - 备注：真实 SQLite 允许直接改自增水位；本仓选择只读（`readonly-system-table`），避免用户直接改自增计数器导致后续插入冲突或与 AUTOINCREMENT 语义不一致。若将来放开，改这一条即可
 
-### `semantics.limit-expression`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：`CREATE TABLE t1(a INTEGER)`，`INSERT INTO t1 VALUES (1), (2), (3)`
-- sql：`SELECT a FROM t1 ORDER BY a LIMIT 1 + 1`
-- SQLite：`[[1],[2]]`
-- 本仓：`unsupported-clause: unsupported `SELECT` clause starting at `+`; this engine supports `FROM`, `WHERE`, `ORDER BY`, `LIMIT` and `UNION` / `IN...`
-- 备注：`LIMIT` 表达式被拒绝，数值从未求值
-
-### `syntax.table-check`
-
-- direction：`sqlite-accepts-ours-rejects`
-- class：`missing-feature`
-- setup：无
-- sql：`CREATE TABLE chk(a INTEGER CHECK (a > 0))`
-- SQLite：`[]`
-- 本仓：`unsupported-column-constraint: unsupported column constraint in `a``
-
 ### `syntax.table-foreign-key`
 
 - direction：`sqlite-accepts-ours-rejects`
@@ -795,14 +806,25 @@
 - SQLite：`[]`
 - 本仓：`unsupported-column-constraint: unsupported column constraint in `a``
 
-### `syntax.window-function`
+### `syntax.window-exclude`
 
 - direction：`sqlite-accepts-ours-rejects`
 - class：`missing-feature`
-- setup：`CREATE TABLE wf(a INTEGER)`，`INSERT INTO wf VALUES (1), (2)`
-- sql：`SELECT row_number() OVER (ORDER BY a) FROM wf`
-- SQLite：`[[1],[2]]`
-- 本仓：`unknown-function: no such function: row_number`
+- setup：`CREATE TABLE we(a INTEGER)`，`INSERT INTO we VALUES (1), (2), (3)`
+- sql：`SELECT sum(a) OVER (ORDER BY a ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) FROM we`
+- SQLite：`[[null],[1],[3]]`
+- 本仓：`unsupported-clause: window frame `EXCLUDE` is not supported; frames always include every row between their edges`
+- 备注：`EXCLUDE` 子句尚未实现，解析期报 `unsupported-clause`（clause `EXCLUDE`），不静默忽略
+
+### `syntax.window-groups`
+
+- direction：`sqlite-accepts-ours-rejects`
+- class：`missing-feature`
+- setup：`CREATE TABLE wg(a INTEGER)`，`INSERT INTO wg VALUES (1), (2), (3)`
+- sql：`SELECT sum(a) OVER (ORDER BY a GROUPS 2 PRECEDING) FROM wg`
+- SQLite：`[[1],[3],[6]]`
+- 本仓：`unsupported-clause: window frame unit `GROUPS` is not supported`
+- 备注：`GROUPS` 帧单位尚未实现，解析期报 `unsupported-clause`（clause `GROUPS`），不静默忽略
 
 ### `syntax.with-recursive`
 
