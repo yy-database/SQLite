@@ -1,0 +1,268 @@
+{
+  "category": "table-checks",
+  "cases": [
+    {
+      "id": "check.table_level_ok",
+      "setup": [
+        "CREATE TABLE c(a INTEGER, CHECK (a > 0))",
+        "INSERT INTO c VALUES (5)"
+      ],
+      "sql": "SELECT a FROM c",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "check.table_level_violation",
+      "setup": [
+        "CREATE TABLE c(a INTEGER, CHECK (a > 0))"
+      ],
+      "sql": "INSERT INTO c VALUES (-1)",
+      "expect": {
+        "kind": "error",
+        "code": "constraint-failed",
+        "oracle": "CHECK constraint failed: a > 0"
+      }
+    },
+    {
+      "id": "check.named_table_level_violation",
+      "setup": [
+        "CREATE TABLE c(a INTEGER, CONSTRAINT positive CHECK (a > 0))"
+      ],
+      "sql": "INSERT INTO c VALUES (-1)",
+      "expect": {
+        "kind": "error",
+        "code": "constraint-failed",
+        "oracle": "CHECK constraint failed: positive"
+      }
+    },
+    {
+      "id": "check.column_level_ok",
+      "setup": [
+        "CREATE TABLE c(a INTEGER CHECK (a > 0))",
+        "INSERT INTO c VALUES (5)"
+      ],
+      "sql": "SELECT a FROM c",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "check.column_level_violation",
+      "setup": [
+        "CREATE TABLE c(a INTEGER CHECK (a > 0))"
+      ],
+      "sql": "INSERT INTO c VALUES (-1)",
+      "expect": {
+        "kind": "error",
+        "code": "constraint-failed",
+        "oracle": "CHECK constraint failed: a > 0"
+      }
+    },
+    {
+      "id": "check.named_column_level_violation",
+      "setup": [
+        "CREATE TABLE c(a INTEGER CONSTRAINT positive CHECK (a > 0))"
+      ],
+      "sql": "INSERT INTO c VALUES (-1)",
+      "expect": {
+        "kind": "error",
+        "code": "constraint-failed",
+        "oracle": "CHECK constraint failed: positive"
+      }
+    },
+    {
+      "id": "check.null_passes",
+      "setup": [
+        "CREATE TABLE c(a INTEGER CHECK (a > 0))",
+        "INSERT INTO c VALUES (NULL)"
+      ],
+      "sql": "SELECT a FROM c",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "check.always_false",
+      "setup": [
+        "CREATE TABLE c(a INTEGER CHECK (0))"
+      ],
+      "sql": "INSERT INTO c VALUES (1)",
+      "expect": {
+        "kind": "error",
+        "code": "constraint-failed",
+        "oracle": "CHECK constraint failed: 0"
+      }
+    },
+    {
+      "id": "check.always_null",
+      "setup": [
+        "CREATE TABLE c(a INTEGER CHECK (NULL))",
+        "INSERT INTO c VALUES (1)"
+      ],
+      "sql": "SELECT a FROM c",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "check.unknown_column",
+      "setup": [],
+      "sql": "CREATE TABLE c(a INTEGER CHECK (zz > 0))",
+      "expect": {
+        "kind": "error",
+        "code": "unknown-column",
+        "oracle": "no such column: zz"
+      }
+    },
+    {
+      "id": "check.aggregate_rejected",
+      "setup": [],
+      "sql": "CREATE TABLE c(a INTEGER CHECK (sum(a) > 0))",
+      "expect": {
+        "kind": "error",
+        "code": "misuse-of-aggregate",
+        "oracle": "misuse of aggregate function sum()"
+      }
+    },
+    {
+      "id": "check.subquery_rejected",
+      "setup": [],
+      "sql": "CREATE TABLE c(a INTEGER CHECK ((SELECT 1) > 0))",
+      "expect": {
+        "kind": "error",
+        "code": "unsupported-clause",
+        "oracle": "subqueries prohibited in CHECK constraints"
+      }
+    },
+    {
+      "id": "check.multi_row_insert_is_atomic",
+      "setup": [
+        "CREATE TABLE c(a INTEGER CHECK (a > 0))",
+        {
+          "sql": "INSERT INTO c VALUES (1), (2), (-3), (4)",
+          "expect": "error"
+        }
+      ],
+      "sql": "SELECT count(*) FROM c",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "check.rowid_reference",
+      "setup": [
+        "CREATE TABLE c(a INTEGER CHECK (rowid > 0))",
+        "INSERT INTO c VALUES (1)"
+      ],
+      "sql": "SELECT rowid, a FROM c",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "check.table_qualified",
+      "setup": [
+        "CREATE TABLE c(a INTEGER CHECK (c.a > 0))",
+        "INSERT INTO c VALUES (1)"
+      ],
+      "sql": "SELECT a FROM c",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "check.second_constraint_fails",
+      "setup": [
+        "CREATE TABLE c(a INTEGER, CHECK (a > 0), CHECK (a < 10))"
+      ],
+      "sql": "INSERT INTO c VALUES (20)",
+      "expect": {
+        "kind": "error",
+        "code": "constraint-failed",
+        "oracle": "CHECK constraint failed: a < 10"
+      }
+    },
+    {
+      "id": "check.default_satisfies",
+      "setup": [
+        "CREATE TABLE c(a INTEGER DEFAULT 5 CHECK (a > 0), b INTEGER)",
+        "INSERT INTO c(b) VALUES (1)"
+      ],
+      "sql": "SELECT a, b FROM c",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            5,
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "check.two_column_expression",
+      "setup": [
+        "CREATE TABLE c(a INTEGER, b INTEGER, CHECK (a + b > 0))"
+      ],
+      "sql": "INSERT INTO c VALUES (1, -2)",
+      "expect": {
+        "kind": "error",
+        "code": "constraint-failed",
+        "oracle": "CHECK constraint failed: a + b > 0"
+      }
+    },
+    {
+      "id": "check.null_comparison_passes",
+      "setup": [
+        "CREATE TABLE c(a INTEGER, CHECK (a = 5))",
+        "INSERT INTO c VALUES (NULL)"
+      ],
+      "sql": "SELECT a FROM c",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            null
+          ]
+        ]
+      }
+    }
+  ]
+}
