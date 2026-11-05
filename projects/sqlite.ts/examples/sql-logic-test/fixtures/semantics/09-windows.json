@@ -1,0 +1,1432 @@
+{
+  "category": "windows",
+  "cases": [
+    {
+      "id": "row_number.partition_order",
+      "setup": [
+        "CREATE TABLE w(g TEXT, v INTEGER)",
+        "INSERT INTO w VALUES ('a', 1), ('a', 2), ('b', 3), ('b', 4)"
+      ],
+      "sql": "SELECT g, v, row_number() OVER (PARTITION BY g ORDER BY v) FROM w",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "a",
+            1,
+            1
+          ],
+          [
+            "a",
+            2,
+            2
+          ],
+          [
+            "b",
+            3,
+            1
+          ],
+          [
+            "b",
+            4,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "row_number.partition_without_order",
+      "setup": [
+        "CREATE TABLE w(g TEXT, v INTEGER)",
+        "INSERT INTO w VALUES ('a', 1), ('a', 2), ('b', 3), ('b', 4)"
+      ],
+      "sql": "SELECT g, v, row_number() OVER (PARTITION BY g) FROM w",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "a",
+            1,
+            1
+          ],
+          [
+            "a",
+            2,
+            2
+          ],
+          [
+            "b",
+            3,
+            1
+          ],
+          [
+            "b",
+            4,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "row_number.order_desc",
+      "setup": [
+        "CREATE TABLE w(g TEXT, v INTEGER)",
+        "INSERT INTO w VALUES ('a', 1), ('a', 2), ('b', 3), ('b', 4)"
+      ],
+      "sql": "SELECT v, row_number() OVER (ORDER BY v DESC) FROM w",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            4,
+            1
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            1,
+            4
+          ]
+        ]
+      }
+    },
+    {
+      "id": "rank.ties_jump",
+      "setup": [
+        "CREATE TABLE r(v INTEGER)",
+        "INSERT INTO r VALUES (1), (1), (2), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, rank() OVER (ORDER BY v) FROM r",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1
+          ],
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            6
+          ]
+        ]
+      }
+    },
+    {
+      "id": "dense_rank.no_jump",
+      "setup": [
+        "CREATE TABLE r(v INTEGER)",
+        "INSERT INTO r VALUES (1), (1), (2), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, dense_rank() OVER (ORDER BY v) FROM r",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1
+          ],
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            2
+          ],
+          [
+            2,
+            2
+          ],
+          [
+            2,
+            2
+          ],
+          [
+            3,
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "row_number.ties",
+      "setup": [
+        "CREATE TABLE r(v INTEGER)",
+        "INSERT INTO r VALUES (1), (1), (2), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, row_number() OVER (ORDER BY v) FROM r",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            2,
+            4
+          ],
+          [
+            2,
+            5
+          ],
+          [
+            3,
+            6
+          ]
+        ]
+      }
+    },
+    {
+      "id": "percent_rank.cume_dist",
+      "setup": [
+        "CREATE TABLE r(v INTEGER)",
+        "INSERT INTO r VALUES (1), (1), (2), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, percent_rank() OVER (ORDER BY v), cume_dist() OVER (ORDER BY v) FROM r",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            0.0,
+            0.3333333333333333
+          ],
+          [
+            1,
+            0.0,
+            0.3333333333333333
+          ],
+          [
+            2,
+            0.4,
+            0.8333333333333334
+          ],
+          [
+            2,
+            0.4,
+            0.8333333333333334
+          ],
+          [
+            2,
+            0.4,
+            0.8333333333333334
+          ],
+          [
+            3,
+            1.0,
+            1.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ntile.two_buckets",
+      "setup": [
+        "CREATE TABLE seven(v INTEGER)",
+        "INSERT INTO seven VALUES (1), (2), (3), (4), (5), (6), (7)"
+      ],
+      "sql": "SELECT v, ntile(2) OVER (ORDER BY v) FROM seven",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            3,
+            1
+          ],
+          [
+            4,
+            1
+          ],
+          [
+            5,
+            2
+          ],
+          [
+            6,
+            2
+          ],
+          [
+            7,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ntile.three_buckets",
+      "setup": [
+        "CREATE TABLE seven(v INTEGER)",
+        "INSERT INTO seven VALUES (1), (2), (3), (4), (5), (6), (7)"
+      ],
+      "sql": "SELECT v, ntile(3) OVER (ORDER BY v) FROM seven",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            3,
+            1
+          ],
+          [
+            4,
+            2
+          ],
+          [
+            5,
+            2
+          ],
+          [
+            6,
+            3
+          ],
+          [
+            7,
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ntile.zero_buckets",
+      "setup": [
+        "CREATE TABLE seven(v INTEGER)",
+        "INSERT INTO seven VALUES (1), (2), (3), (4), (5), (6), (7)"
+      ],
+      "sql": "SELECT v, ntile(0) OVER (ORDER BY v) FROM seven",
+      "expect": {
+        "kind": "error",
+        "code": "invalid-argument",
+        "oracle": "argument of ntile must be a positive integer"
+      }
+    },
+    {
+      "id": "ntile.negative_buckets",
+      "setup": [
+        "CREATE TABLE seven(v INTEGER)",
+        "INSERT INTO seven VALUES (1), (2), (3), (4), (5), (6), (7)"
+      ],
+      "sql": "SELECT v, ntile(-2) OVER (ORDER BY v) FROM seven",
+      "expect": {
+        "kind": "error",
+        "code": "invalid-argument",
+        "oracle": "argument of ntile must be a positive integer"
+      }
+    },
+    {
+      "id": "ntile.integral_real",
+      "setup": [
+        "CREATE TABLE seven(v INTEGER)",
+        "INSERT INTO seven VALUES (1), (2), (3), (4), (5), (6), (7)"
+      ],
+      "sql": "SELECT v, ntile(2.0) OVER (ORDER BY v) FROM seven",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            3,
+            1
+          ],
+          [
+            4,
+            1
+          ],
+          [
+            5,
+            2
+          ],
+          [
+            6,
+            2
+          ],
+          [
+            7,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "sum.default_frame_peers",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, sum(v) OVER (ORDER BY v) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            5
+          ],
+          [
+            2,
+            5
+          ],
+          [
+            3,
+            8
+          ]
+        ]
+      }
+    },
+    {
+      "id": "count.default_frame",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, count(*) OVER (ORDER BY v) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            4
+          ]
+        ]
+      }
+    },
+    {
+      "id": "avg.default_frame",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, avg(v) OVER (ORDER BY v) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1.0
+          ],
+          [
+            2,
+            1.6666666666666667
+          ],
+          [
+            2,
+            1.6666666666666667
+          ],
+          [
+            3,
+            2.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "min_max.default_frame",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, min(v) OVER (ORDER BY v), max(v) OVER (ORDER BY v) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1,
+            1
+          ],
+          [
+            2,
+            1,
+            2
+          ],
+          [
+            2,
+            1,
+            2
+          ],
+          [
+            3,
+            1,
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "group_concat.over_rows",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, group_concat(v) OVER (ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            "1"
+          ],
+          [
+            2,
+            "1,2"
+          ],
+          [
+            2,
+            "1,2,2"
+          ],
+          [
+            3,
+            "1,2,2,3"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "frame.rows_unbounded_preceding",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, sum(v) OVER (ORDER BY v ROWS UNBOUNDED PRECEDING) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            2,
+            5
+          ],
+          [
+            3,
+            8
+          ]
+        ]
+      }
+    },
+    {
+      "id": "frame.rows_1_preceding_1_following",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, sum(v) OVER (ORDER BY v ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            3
+          ],
+          [
+            2,
+            5
+          ],
+          [
+            2,
+            7
+          ],
+          [
+            3,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "frame.rows_2_preceding_current",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, sum(v) OVER (ORDER BY v ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            2,
+            5
+          ],
+          [
+            3,
+            7
+          ]
+        ]
+      }
+    },
+    {
+      "id": "frame.rows_current_to_unbounded_following",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, sum(v) OVER (ORDER BY v ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            8
+          ],
+          [
+            2,
+            7
+          ],
+          [
+            2,
+            5
+          ],
+          [
+            3,
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "frame.rows_empty_window",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, sum(v) OVER (ORDER BY v ROWS BETWEEN 5 PRECEDING AND 3 PRECEDING) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            null
+          ],
+          [
+            2,
+            null
+          ],
+          [
+            2,
+            null
+          ],
+          [
+            3,
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "frame.range_1_preceding_1_following",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, sum(v) OVER (ORDER BY v RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            5
+          ],
+          [
+            2,
+            8
+          ],
+          [
+            2,
+            8
+          ],
+          [
+            3,
+            7
+          ]
+        ]
+      }
+    },
+    {
+      "id": "frame.range_2_preceding_2_following",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, sum(v) OVER (ORDER BY v RANGE BETWEEN 2 PRECEDING AND 2 FOLLOWING) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            8
+          ],
+          [
+            2,
+            8
+          ],
+          [
+            2,
+            8
+          ],
+          [
+            3,
+            8
+          ]
+        ]
+      }
+    },
+    {
+      "id": "frame.range_descending",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, sum(v) OVER (ORDER BY v DESC RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            3,
+            7
+          ],
+          [
+            2,
+            8
+          ],
+          [
+            2,
+            8
+          ],
+          [
+            1,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "frame.range_null_key_peers",
+      "setup": [
+        "CREATE TABLE n(v INTEGER)",
+        "INSERT INTO n VALUES (NULL), (NULL), (1), (2), (3)"
+      ],
+      "sql": "SELECT v, count(*) OVER (ORDER BY v RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM n",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            null,
+            2
+          ],
+          [
+            null,
+            2
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "frame.range_text_key_peers",
+      "setup": [
+        "CREATE TABLE s(x TEXT)",
+        "INSERT INTO s VALUES ('a'), ('b'), ('c'), ('b')"
+      ],
+      "sql": "SELECT x, count(*) OVER (ORDER BY x RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM s",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "a",
+            1
+          ],
+          [
+            "b",
+            2
+          ],
+          [
+            "b",
+            2
+          ],
+          [
+            "c",
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "frame.range_current_to_unbounded_with_null",
+      "setup": [
+        "CREATE TABLE n(v INTEGER)",
+        "INSERT INTO n VALUES (NULL), (NULL), (1), (2), (3)"
+      ],
+      "sql": "SELECT v, sum(v) OVER (ORDER BY v RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) FROM n",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            null,
+            6
+          ],
+          [
+            null,
+            6
+          ],
+          [
+            1,
+            6
+          ],
+          [
+            2,
+            5
+          ],
+          [
+            3,
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "lag.default_offset",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, lag(v) OVER (ORDER BY v) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            null
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            2,
+            2
+          ],
+          [
+            3,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "lag.offset_and_default",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, lag(v, 2, -1) OVER (ORDER BY v) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            -1
+          ],
+          [
+            2,
+            -1
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            3,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "lag.negative_offset",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, lag(v, -1) OVER (ORDER BY v) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "lag.fractional_offset_is_null",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, lag(v, 1.5) OVER (ORDER BY v) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            null
+          ],
+          [
+            2,
+            null
+          ],
+          [
+            2,
+            null
+          ],
+          [
+            3,
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "lag.without_order",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, lag(v) OVER () FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            null
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            2,
+            2
+          ],
+          [
+            3,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "lead.offset",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, lead(v, 2) OVER (ORDER BY v) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            2,
+            null
+          ],
+          [
+            3,
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "first_last_value.default_frame",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, first_value(v) OVER (ORDER BY v), last_value(v) OVER (ORDER BY v) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1,
+            1
+          ],
+          [
+            2,
+            1,
+            2
+          ],
+          [
+            2,
+            1,
+            2
+          ],
+          [
+            3,
+            1,
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "id": "nth_value.frame",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, nth_value(v, 2) OVER (ORDER BY v ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "nth_value.zero_position",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, nth_value(v, 0) OVER (ORDER BY v) FROM p",
+      "expect": {
+        "kind": "error",
+        "code": "invalid-argument",
+        "oracle": "second argument to nth_value must be a positive integer"
+      }
+    },
+    {
+      "id": "window.expression_plus_one",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v, row_number() OVER (ORDER BY v) + 1 FROM p",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            2,
+            4
+          ],
+          [
+            3,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "window.in_where",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v FROM p WHERE row_number() OVER (ORDER BY v) > 0",
+      "expect": {
+        "kind": "error",
+        "code": "misuse-of-window",
+        "oracle": "misuse of window function row_number()"
+      }
+    },
+    {
+      "id": "window.in_group_by",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT count(*) FROM p GROUP BY row_number() OVER (ORDER BY v)",
+      "expect": {
+        "kind": "error",
+        "code": "misuse-of-window",
+        "oracle": "misuse of window function row_number()"
+      }
+    },
+    {
+      "id": "window.in_having",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT v FROM p GROUP BY v HAVING row_number() OVER () > 0",
+      "expect": {
+        "kind": "error",
+        "code": "misuse-of-window",
+        "oracle": "misuse of window function row_number()"
+      }
+    },
+    {
+      "id": "window.in_order_by",
+      "setup": [
+        "CREATE TABLE w(g TEXT, v INTEGER)",
+        "INSERT INTO w VALUES ('a', 1), ('a', 2), ('b', 3), ('b', 4)"
+      ],
+      "sql": "SELECT v FROM w ORDER BY row_number() OVER (ORDER BY v DESC)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            4
+          ],
+          [
+            3
+          ],
+          [
+            2
+          ],
+          [
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "window.multiple_windows",
+      "setup": [
+        "CREATE TABLE w(g TEXT, v INTEGER)",
+        "INSERT INTO w VALUES ('a', 1), ('a', 2), ('b', 3), ('b', 4)"
+      ],
+      "sql": "SELECT row_number() OVER (ORDER BY g DESC), row_number() OVER (ORDER BY v DESC), g, v FROM w",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1,
+            "b",
+            4
+          ],
+          [
+            2,
+            2,
+            "b",
+            3
+          ],
+          [
+            3,
+            3,
+            "a",
+            2
+          ],
+          [
+            4,
+            4,
+            "a",
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "window.with_group_by",
+      "setup": [
+        "CREATE TABLE w(g TEXT, v INTEGER)",
+        "INSERT INTO w VALUES ('a', 1), ('a', 2), ('b', 3), ('b', 4)"
+      ],
+      "sql": "SELECT g, sum(v), sum(sum(v)) OVER (ORDER BY g) FROM w GROUP BY g",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "a",
+            3,
+            3
+          ],
+          [
+            "b",
+            7,
+            10
+          ]
+        ]
+      }
+    },
+    {
+      "id": "window.empty_input",
+      "setup": [
+        "CREATE TABLE w(g TEXT, v INTEGER)",
+        "INSERT INTO w VALUES ('a', 1), ('a', 2), ('b', 3), ('b', 4)"
+      ],
+      "sql": "SELECT v, row_number() OVER (ORDER BY v) FROM w WHERE 0",
+      "expect": {
+        "kind": "rows",
+        "rows": []
+      }
+    },
+    {
+      "id": "window.order_by_expression",
+      "setup": [
+        "CREATE TABLE w(g TEXT, v INTEGER)",
+        "INSERT INTO w VALUES ('a', 1), ('a', 2), ('b', 3), ('b', 4)"
+      ],
+      "sql": "SELECT g, v, sum(v) OVER (PARTITION BY g ORDER BY v * 2 DESC, upper(g)) FROM w",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            "a",
+            2,
+            2
+          ],
+          [
+            "a",
+            1,
+            3
+          ],
+          [
+            "b",
+            4,
+            4
+          ],
+          [
+            "b",
+            3,
+            7
+          ]
+        ]
+      }
+    },
+    {
+      "id": "named_window.basic",
+      "setup": [
+        "CREATE TABLE w(g TEXT, v INTEGER)",
+        "INSERT INTO w VALUES ('a', 1), ('a', 2), ('b', 3), ('b', 4)"
+      ],
+      "sql": "SELECT row_number() OVER w, sum(v) OVER w FROM w WINDOW w AS (PARTITION BY g ORDER BY v)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            1,
+            3
+          ],
+          [
+            2,
+            7
+          ]
+        ]
+      }
+    },
+    {
+      "id": "named_window.order_appended",
+      "setup": [
+        "CREATE TABLE w(g TEXT, v INTEGER)",
+        "INSERT INTO w VALUES ('a', 1), ('a', 2), ('b', 3), ('b', 4)"
+      ],
+      "sql": "SELECT row_number() OVER (w ORDER BY v DESC) FROM w WINDOW w AS (PARTITION BY g)",
+      "expect": {
+        "kind": "rows",
+        "rows": [
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "named_window.partition_override_rejected",
+      "setup": [
+        "CREATE TABLE w(g TEXT, v INTEGER)",
+        "INSERT INTO w VALUES ('a', 1), ('a', 2), ('b', 3), ('b', 4)"
+      ],
+      "sql": "SELECT row_number() OVER (w PARTITION BY v) FROM w WINDOW w AS (PARTITION BY g)",
+      "expect": {
+        "kind": "error",
+        "code": "window-override",
+        "oracle": "cannot override PARTITION clause of window: w"
+      }
+    },
+    {
+      "id": "named_window.unknown",
+      "setup": [
+        "CREATE TABLE w(g TEXT, v INTEGER)",
+        "INSERT INTO w VALUES ('a', 1), ('a', 2), ('b', 3), ('b', 4)"
+      ],
+      "sql": "SELECT row_number() OVER nope FROM w",
+      "expect": {
+        "kind": "error",
+        "code": "unknown-window",
+        "oracle": "no such window: nope"
+      }
+    },
+    {
+      "id": "frame.groups_rejected",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT sum(v) OVER (ORDER BY v GROUPS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM p",
+      "expect": {
+        "kind": "rejected",
+        "code": "unsupported-clause",
+        "clause": "GROUPS"
+      }
+    },
+    {
+      "id": "frame.exclude_rejected",
+      "setup": [
+        "CREATE TABLE p(v INTEGER)",
+        "INSERT INTO p VALUES (1), (2), (2), (3)"
+      ],
+      "sql": "SELECT sum(v) OVER (ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) FROM p",
+      "expect": {
+        "kind": "rejected",
+        "code": "unsupported-clause",
+        "clause": "EXCLUDE"
+      }
+    }
+  ]
+}
