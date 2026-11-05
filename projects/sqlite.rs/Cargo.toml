@@ -17,7 +17,7 @@ repository = "https://github.com/yy-database/SQLite"
 [workspace.dependencies]
 # Sole aggregated core dependency for the `sqlite` facade. Pin full 40-char rev.
 # Local absolute path overrides belong in `.cargo/config.toml`.
-sqlite = { git = "https://github.com/oovm/database.rs.git", rev = "d9d19b3d8c495b9df4578addfc5727a46cd0207c" }
+sqlite = { git = "https://github.com/oovm/database.rs.git", rev = "b44cd30c93ae49a14d534b3b1d3183a5c54905ab" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
