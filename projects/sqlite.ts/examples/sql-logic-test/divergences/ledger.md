@@ -6,22 +6,22 @@
 
 - 真实 SQLite：CPython 3.12.10 的 `sqlite3` 3.49.1
 - 本仓产物：@yydb/sqlite createEngine 引擎 3.45.0（Node v24.18.0），安装态运行
-- 用例：83 条，`status` 一律为 `open`
+- 用例：91 条，`status` 一律为 `open`
 
 ## 按 direction 计数
 
 | direction | 条数 |
 |-----------|------|
-| `none` | 77 |
-| `sqlite-accepts-ours-rejects` | 5 |
+| `none` | 82 |
+| `sqlite-accepts-ours-rejects` | 8 |
 | `same-statement-different-result` | 1 |
 
 ## 按 class 计数
 
 | class | 条数 |
 |-------|------|
-| `none` | 45 |
-| `missing-feature` | 36 |
+| `none` | 50 |
+| `missing-feature` | 39 |
 | `intentional-divergence` | 1 |
 | `semantic-diff` | 1 |
 
@@ -30,11 +30,11 @@
 | direction | class | 条数 |
 |-----------|-------|------|
 | `none` | `missing-feature` | 31 |
-| `none` | `none` | 45 |
+| `none` | `none` | 50 |
 | `none` | `semantic-diff` | 1 |
 | `same-statement-different-result` | `missing-feature` | 1 |
 | `sqlite-accepts-ours-rejects` | `intentional-divergence` | 1 |
-| `sqlite-accepts-ours-rejects` | `missing-feature` | 4 |
+| `sqlite-accepts-ours-rejects` | `missing-feature` | 7 |
 
 ## 明细
 
@@ -599,6 +599,16 @@
 - 本仓：`[[3,2]]`
 - 备注：两侧 `count(*)` 与 `count(col)` 结果一致
 
+### `semantics.delete-rowid-reuse`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE t(v TEXT)`，`INSERT INTO t VALUES ('a'), ('b'), ('c')`，`DELETE FROM t WHERE rowid = 3`
+- sql：`INSERT INTO t VALUES ('d') RETURNING rowid`
+- SQLite：`[[3]]`
+- 本仓：`[[3]]`
+- 备注：非 AUTOINCREMENT 表的 rowid 取“现存最大 rowid + 1”，所以删掉最大行后新插入复用该值；删空后从 1 重新开始，AUTOINCREMENT 则保留 `sqlite_sequence`
+
 ### `semantics.limit-expression`
 
 - direction：`none`
@@ -628,6 +638,26 @@
 - SQLite：`[[2],[1],[null]]`
 - 本仓：`[[2],[1],[null]]`
 - 备注：两侧都把 NULL 排在降序最后
+
+### `semantics.update-rowid-order`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)`，`INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')`
+- sql：`UPDATE t SET id = id - 1 RETURNING id`
+- SQLite：`[[0],[1],[2]]`
+- 本仓：`[[0],[1],[2]]`
+- 备注：改 rowid alias 走按 rowid 升序的逐行应用，`id = id - 1` 成功而 `id = id + 1` 与尚未移动的行冲突；唯一性按实时表校验，冲突时整条语句回滚
+
+### `semantics.update-simultaneous-assignment`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE t(a INTEGER, b INTEGER)`，`INSERT INTO t VALUES (1, 2)`
+- sql：`UPDATE t SET a = b, b = a RETURNING a, b`
+- SQLite：`[[2,1]]`
+- 本仓：`[[2,1]]`
+- 备注：多列赋值对所有右值取语句执行前的旧行再统一落地：`a = b, b = a` 真交换为 `(2, 1)`；重复左列按 SQLite 行为保留最后一次赋值，右值仍读旧行
 
 ### `syntax.autoincrement-non-integer`
 
@@ -759,6 +789,26 @@
 - 本仓：`[]`
 - 备注：表级、列级与 `CONSTRAINT name CHECK (...)` 三种写法均已支持；插入违反时报结构化 `constraint-failed`，NULL 通过，未知列在建表期报 `unknown-column`
 
+### `syntax.update-qualified-left-hand-side`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE t(a INTEGER, b INTEGER)`，`INSERT INTO t VALUES (1, 2)`
+- sql：`UPDATE t SET t.a = 1`
+- SQLite：`near ".": syntax error`
+- 本仓：`syntax: `UPDATE ... SET` takes a bare column name; a table qualifier is not accepted before `.``
+- 备注：两侧都拒绝 `SET` 左侧带表限定；SQLite 报 `near ".": syntax error`，本引擎报 `syntax` 并说明 `SET` 只收裸列名
+
+### `syntax.update-set-default`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE t(a INTEGER DEFAULT 7)`，`INSERT INTO t VALUES (1)`
+- sql：`UPDATE t SET a = DEFAULT`
+- SQLite：`near "DEFAULT": syntax error`
+- 本仓：`unsupported-clause: `SET <column> = DEFAULT` is not supported; SQLite has no column default in an `UPDATE`, so state the value explicitly`
+- 备注：SQLite 3.49.1 把 `SET <column> = DEFAULT` 判为语法错误；本引擎同样拒绝，但报结构化 `unsupported-clause` 并点名 `DEFAULT`
+
 ### `syntax.window-function`
 
 - direction：`none`
@@ -797,6 +847,16 @@
 - 本仓：`readonly-system-table: table sqlite_sequence may not be modified`
 - 备注：真实 SQLite 允许直接改自增水位；本仓选择只读（`readonly-system-table`），避免用户直接改自增计数器导致后续插入冲突或与 AUTOINCREMENT 语义不一致。若将来放开，改这一条即可
 
+### `syntax.returning-mixed-star`
+
+- direction：`sqlite-accepts-ours-rejects`
+- class：`missing-feature`
+- setup：`CREATE TABLE t(a INTEGER, b INTEGER)`，`INSERT INTO t VALUES (1, 2)`
+- sql：`UPDATE t SET a = 1 RETURNING *, b`
+- SQLite：`[[1,2,2]]`
+- 本仓：`unsupported-clause: `RETURNING *, ...` mixes `*` with further items; list the columns explicitly instead`
+- 备注：SQLite 允许 `RETURNING *` 与其它项混用；本引擎要求 `*` 独占或全部列名，解析期报 `unsupported-clause`（clause 为 `RETURNING`）
+
 ### `syntax.table-foreign-key`
 
 - direction：`sqlite-accepts-ours-rejects`
@@ -805,6 +865,26 @@
 - sql：`CREATE TABLE child(a INTEGER REFERENCES parent(a))`
 - SQLite：`[]`
 - 本仓：`unsupported-column-constraint: unsupported column constraint in `a``
+
+### `syntax.update-or-replace`
+
+- direction：`sqlite-accepts-ours-rejects`
+- class：`missing-feature`
+- setup：`CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)`，`INSERT INTO t VALUES (1, 'a'), (2, 'b')`
+- sql：`UPDATE OR REPLACE t SET id = 2 WHERE id = 1`
+- SQLite：`[]`
+- 本仓：`unsupported-clause: `UPDATE OR ...` conflict resolution is not supported; only the default ABORT policy is implemented (found `REPLACE`)`
+- 备注：SQLite 支持 `UPDATE OR REPLACE/IGNORE/...` 冲突策略；本引擎只实现默认 ABORT，解析期报 `unsupported-clause`（clause 为 `OR`）
+
+### `syntax.update-row-value-set`
+
+- direction：`sqlite-accepts-ours-rejects`
+- class：`missing-feature`
+- setup：`CREATE TABLE t(a INTEGER, b INTEGER)`，`INSERT INTO t VALUES (1, 2)`
+- sql：`UPDATE t SET (a, b) = (3, 4)`
+- SQLite：`[]`
+- 本仓：`unsupported-clause: row-value `SET (a, b) = (...)` assignments are not supported; assign one column per item`
+- 备注：SQLite 接受行值赋值 `SET (a, b) = (...)`；本引擎只支持逐列赋值，解析期报 `unsupported-clause`（clause 为 `SET`）
 
 ### `syntax.window-exclude`
 
