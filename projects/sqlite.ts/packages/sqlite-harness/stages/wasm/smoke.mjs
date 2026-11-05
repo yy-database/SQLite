@@ -75,8 +75,13 @@ function checkHostContract() {
   const deleted = JSON.parse(database.exec("delete from probe"));
   assertSql(deleted[0].statement === "delete" && deleted[0].affected === 1, "delete envelope reports one removed row");
   assertSql(JSON.parse(database.exec("select count(*) from probe"))[0].rows[0][0] === 0, "delete empties the table");
-  const dropped = throws(() => database.exec("drop table probe"));
-  assertSql(/unsupported statement/.test(dropped), `drop is still rejected, got ${dropped}`);
+  const dropped = JSON.parse(database.exec("drop table probe"));
+  assertSql(
+    dropped[0].statement === "drop-table" && dropped[0].affected === 1,
+    `drop-table envelope reports one dropped table, got ${JSON.stringify(dropped)}`,
+  );
+  const gone = throws(() => database.exec("select * from probe"));
+  assertSql(/unknown table/.test(gone), `the dropped table is gone, got ${gone}`);
 }
 
 // The orthogonal primitives: one statement, a statement list, and the

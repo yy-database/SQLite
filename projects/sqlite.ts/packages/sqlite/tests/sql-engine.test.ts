@@ -134,7 +134,7 @@ test("unsupported clauses return a structured rejection", () => {
   assert.equal(twoStatements.ok, false);
   assert.equal(twoStatements.error?.code, "multiple-statements");
 
-  assert.throws(() => engine.execute("drop table t"), /unsupported statement starting at/i);
+  assert.throws(() => engine.execute("vacuum"), /unsupported statement starting at/i);
 });
 
 test("where predicates and order by follow SQLite comparison rules", () => {
@@ -1056,3 +1056,215 @@ test("update and delete reject the shapes sqlite also rejects", () => {
   assert.equal(engine.tryExecute("delete from t order by a").error?.code, "unsupported-clause");
 });
 
+
+test("drop table clears catalog rows, index pages and its sequence row", () => {
+  const engine = createEngine(4096);
+  engine.exec(
+    "CREATE TABLE c(id INTEGER PRIMARY KEY AUTOINCREMENT, k TEXT UNIQUE); \
+     CREATE INDEX ix ON c(k); \
+     CREATE TABLE d(id INTEGER PRIMARY KEY AUTOINCREMENT, k TEXT)",
+  );
+  engine.exec("INSERT INTO c(k) VALUES ('x'); INSERT INTO d(k) VALUES ('y')");
+  assert.deepEqual(engine.execute("select name, seq from sqlite_sequence").rows, [
+    ["c", 1],
+    ["d", 1],
+  ]);
+
+  const dropped = engine.execute("DROP TABLE c");
+  assert.equal(dropped.statement, "drop-table");
+  assert.equal(dropped.affected, 1);
+  // The table row, the explicit index row and the automatic UNIQUE row all
+  // leave sqlite_master in the same statement; sqlite_sequence itself remains
+  // but no longer carries a row for `c`.
+  assert.deepEqual(
+    engine.execute("select type, name, tbl_name from sqlite_master").rows,
+    [
+      ["table", "sqlite_sequence", "sqlite_sequence"],
+      ["table", "d", "d"],
+    ],
+  );
+  assert.deepEqual(engine.execute("select * from sqlite_sequence").rows, [["d", 1]]);
+  assert.equal(engine.tryExecute("select * from c").error?.code, "unknown-table");
+  assert.equal(engine.execute("drop table if exists c").affected, 0);
+  // The freed root page is reused by the next table, exactly like SQLite.
+  engine.execute("CREATE TABLE e(a INTEGER)");
+  assert.deepEqual(engine.execute("select rootpage from sqlite_master where name = 'e'").rows, [[2]]);
+
+  const workspaceHandle = workspace();
+  try {
+    writeFileSync(workspaceHandle.path, engine.snapshot());
+    const external = new BetterSqlite(workspaceHandle.path);
+    try {
+      assert.equal(external.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+      assert.deepEqual(external.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all(), [
+        { name: "d" },
+        { name: "e" },
+        { name: "sqlite_sequence" },
+      ]);
+    } finally {
+      external.close();
+    }
+  } finally {
+    workspaceHandle.dispose();
+  }
+});
+
+test("drop table if exists and system tables keep sqlite's refusal shapes", () => {
+  const engine = createEngine();
+  const master = engine.tryExecute("drop table sqlite_master");
+  assert.equal(master.error?.code, "readonly-system-table");
+  assert.equal(master.error?.message, "table sqlite_master may not be dropped");
+  // `sqlite_sequence` only refuses once an AUTOINCREMENT table brought it into
+  // being; before that SQLite reports an ordinary missing table.
+  assert.equal(engine.tryExecute("drop table sqlite_sequence").error?.code, "unknown-table");
+  engine.execute("CREATE TABLE c(id INTEGER PRIMARY KEY AUTOINCREMENT)");
+  assert.equal(engine.tryExecute("drop table sqlite_sequence").error?.code, "readonly-system-table");
+  assert.equal(engine.tryExecute("drop table nope").error?.code, "unknown-table");
+  const missing = engine.execute("drop table if exists nope");
+  assert.equal(missing.affected, 0);
+  assert.deepEqual(engine.execute("select sql from sqlite_master where name = 'c'").rows, [["CREATE TABLE c(id INTEGER PRIMARY KEY AUTOINCREMENT)"]]);
+  // sqlite_master is an ordinary rowid table, so rowid resolves and `*` still
+  // projects the five stored columns.
+  assert.deepEqual(engine.execute("select rowid, name from sqlite_master order by rowid").rows, [
+    [1, "c"],
+    [2, "sqlite_sequence"],
+  ]);
+  assert.deepEqual(engine.execute("select * from sqlite_master").columns, ["type", "name", "tbl_name", "rootpage", "sql"]);
+});
+
+test("drop index removes explicit indexes but never automatic ones", () => {
+  const engine = createEngine(4096);
+  engine.exec("create table t(a text unique, b integer); create index ix on t(b)");
+  const automatic = engine.tryExecute("drop index sqlite_autoindex_t_1");
+  assert.equal(automatic.error?.code, "autoindex-immutable");
+  assert.equal(automatic.error?.message, "index associated with UNIQUE or PRIMARY KEY constraint cannot be dropped");
+  // Even `IF EXISTS` does not soften the refusal, matching SQLite 3.49.1.
+  assert.equal(engine.tryExecute("drop index if exists sqlite_autoindex_t_1").error?.code, "autoindex-immutable");
+  assert.equal(engine.tryExecute("drop index nope").error?.code, "unknown-index");
+  assert.equal(engine.execute("drop index if exists nope").affected, 0);
+
+  const dropped = engine.execute("drop index ix");
+  assert.equal(dropped.statement, "drop-index");
+  assert.equal(dropped.affected, 1);
+  assert.deepEqual(engine.execute("select name, sql from sqlite_master where type = 'index'").rows, [
+    ["sqlite_autoindex_t_1", null],
+  ]);
+  // The automatic index is the constraint, so UNIQUE still rejects a duplicate.
+  engine.execute("insert into t values ('a', 1)");
+  assert.throws(() => engine.execute("insert into t values ('a', 2)"), /UNIQUE constraint failed/i);
+  assert.deepEqual(engine.execute("select count(*) from t").rows, [[1]]);
+});
+
+test("rename table rewrites the stored DDL text byte for byte", () => {
+  const engine = createEngine(4096);
+  engine.exec("CREATE TABLE t ( a INTEGER , b TEXT UNIQUE ); CREATE INDEX Ix ON t ( b )");
+  const renamed = engine.execute("alter table t rename to u");
+  assert.equal(renamed.statement, "alter-table");
+  assert.equal(renamed.affected, 1);
+  // SQLite rewrites only the table-name token, always quoting the new name and
+  // leaving every other byte of the stored DDL untouched.
+  assert.deepEqual(engine.execute("select name, tbl_name, sql from sqlite_master order by rowid").rows, [
+    ["u", "u", 'CREATE TABLE "u" ( a INTEGER , b TEXT UNIQUE )'],
+    ["sqlite_autoindex_u_1", "u", null],
+    ["Ix", "u", 'CREATE INDEX Ix ON "u" ( b )'],
+  ]);
+  engine.execute("insert into u values (1, 'x')");
+  assert.throws(() => engine.execute("insert into u values (2, 'x')"), /UNIQUE constraint failed/i);
+  assert.equal(engine.tryExecute("alter table u rename to u").error?.code, "table-exists");
+  assert.equal(engine.tryExecute("alter table u rename to sqlite_x").error?.code, "reserved-name");
+  assert.equal(engine.tryExecute("alter table nope rename to v").error?.code, "unknown-table");
+  assert.equal(engine.tryExecute("alter table sqlite_master rename to v").error?.code, "readonly-system-table");
+
+  const workspaceHandle = workspace();
+  try {
+    writeFileSync(workspaceHandle.path, engine.snapshot());
+    const external = new BetterSqlite(workspaceHandle.path);
+    try {
+      assert.equal(external.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+      const schema = external.prepare("SELECT name, sql FROM sqlite_master ORDER BY rowid").all() as unknown as {
+        name: string;
+        sql: string | null;
+      }[];
+      assert.deepEqual(schema, [
+        { name: "u", sql: 'CREATE TABLE "u" ( a INTEGER , b TEXT UNIQUE )' },
+        { name: "sqlite_autoindex_u_1", sql: null },
+        { name: "Ix", sql: 'CREATE INDEX Ix ON "u" ( b )' },
+      ]);
+    } finally {
+      external.close();
+    }
+  } finally {
+    workspaceHandle.dispose();
+  }
+});
+
+test("rename table moves the sequence row and keeps autoincrement counting", () => {
+  const engine = createEngine();
+  engine.exec("create table a(x integer primary key autoincrement); insert into a default values");
+  engine.execute("alter table a rename to b");
+  assert.deepEqual(engine.execute("select name, seq from sqlite_sequence").rows, [["b", 1]]);
+  engine.execute("insert into b default values");
+  assert.deepEqual(engine.execute("select max(x) from b").rows, [[2]]);
+  const externalPath = workspace();
+  try {
+    writeFileSync(externalPath.path, engine.snapshot());
+    const external = new BetterSqlite(externalPath.path);
+    try {
+      assert.equal(external.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+      assert.deepEqual(external.prepare("SELECT name, seq FROM sqlite_sequence").all(), [{ name: "b", seq: 2 }]);
+    } finally {
+      external.close();
+    }
+  } finally {
+    externalPath.dispose();
+  }
+});
+
+test("rename column rewrites checks and index text but never string literals", () => {
+  const engine = createEngine();
+  engine.exec("CREATE TABLE t(t INTEGER, x TEXT DEFAULT 'a', y TEXT, CHECK (t > 0 AND x <> 't')); CREATE INDEX ix ON t(x, t)");
+  engine.execute("alter table t rename column t to tt");
+  assert.deepEqual(engine.execute("select name, sql from sqlite_master order by rowid").rows, [
+    ["t", "CREATE TABLE t(tt INTEGER, x TEXT DEFAULT 'a', y TEXT, CHECK (tt > 0 AND x <> 't'))"],
+    ["ix", "CREATE INDEX ix ON t(x, tt)"],
+  ]);
+  engine.execute("insert into t(tt) values (1)");
+  assert.deepEqual(engine.execute("select * from t").rows, [[1, "a", null]]);
+  assert.equal(engine.tryExecute("alter table t rename column ghost to g").error?.code, "unknown-column");
+  assert.equal(engine.tryExecute("alter table t rename column tt to x").error?.code, "duplicate-column");
+  // Renaming to the same name is a no-op, as in SQLite.
+  const same = engine.execute("alter table t rename column tt to tt");
+  assert.equal(same.statement, "alter-table");
+});
+
+test("add column default values reach existing rows and extend select order", () => {
+  const engine = createEngine(4096);
+  engine.exec("CREATE TABLE t(a INTEGER); INSERT INTO t VALUES (1), (2)");
+  engine.execute("ALTER TABLE t ADD COLUMN b TEXT DEFAULT 'z'");
+  assert.deepEqual(engine.execute("select * from t").rows, [
+    [1, "z"],
+    [2, "z"],
+  ]);
+  assert.deepEqual(engine.execute("select * from t").columns, ["a", "b"]);
+  // The stored DDL gains the column definition as written, before the closing
+  // parenthesis, and nothing else is re-rendered.
+  assert.deepEqual(engine.execute("select sql from sqlite_master where name = 't'").rows, [["CREATE TABLE t(a INTEGER, b TEXT DEFAULT 'z')"]]);
+
+  // A NOT NULL column without a default is only refused when a row would read
+  // back NULL, matching SQLite 3.49.1.
+  const rejected = engine.tryExecute("alter table t add column c integer not null");
+  assert.equal(rejected.error?.code, "invalid-alter");
+  assert.equal(rejected.error?.message, "Cannot add a NOT NULL column with default value NULL");
+  assert.equal(engine.tryExecute("alter table t add column b integer").error?.code, "duplicate-column");
+  assert.equal(engine.tryExecute("alter table t add column c integer primary key").error?.code, "invalid-alter");
+  assert.equal(engine.tryExecute("alter table t add column c integer unique").error?.code, "invalid-alter");
+  // On an empty table the identical definition is accepted.
+  engine.exec("CREATE TABLE empty(a INTEGER); ALTER TABLE empty ADD COLUMN b TEXT NOT NULL");
+  assert.deepEqual(engine.execute("select sql from sqlite_master where name = 'empty'").rows, [["CREATE TABLE empty(a INTEGER, b TEXT NOT NULL)"]]);
+
+  // DROP COLUMN stays a named gap lock rather than a silent half-removal.
+  const dropColumn = engine.tryExecute("alter table t drop column b");
+  assert.equal(dropColumn.error?.code, "unsupported-clause");
+  assert.equal(dropColumn.error?.clause, "DROP COLUMN");
+  assert.equal(dropColumn.error?.statement, "alter-table");
+});

@@ -6,22 +6,22 @@
 
 - 真实 SQLite：CPython 3.12.10 的 `sqlite3` 3.49.1
 - 本仓产物：@yydb/sqlite createEngine 引擎 3.45.0（Node v24.18.0），安装态运行
-- 用例：91 条，`status` 一律为 `open`
+- 用例：98 条，`status` 一律为 `open`
 
 ## 按 direction 计数
 
 | direction | 条数 |
 |-----------|------|
-| `none` | 82 |
-| `sqlite-accepts-ours-rejects` | 8 |
+| `none` | 86 |
+| `sqlite-accepts-ours-rejects` | 11 |
 | `same-statement-different-result` | 1 |
 
 ## 按 class 计数
 
 | class | 条数 |
 |-------|------|
-| `none` | 50 |
-| `missing-feature` | 39 |
+| `none` | 54 |
+| `missing-feature` | 42 |
 | `intentional-divergence` | 1 |
 | `semantic-diff` | 1 |
 
@@ -30,11 +30,11 @@
 | direction | class | 条数 |
 |-----------|-------|------|
 | `none` | `missing-feature` | 31 |
-| `none` | `none` | 50 |
+| `none` | `none` | 54 |
 | `none` | `semantic-diff` | 1 |
 | `same-statement-different-result` | `missing-feature` | 1 |
 | `sqlite-accepts-ours-rejects` | `intentional-divergence` | 1 |
-| `sqlite-accepts-ours-rejects` | `missing-feature` | 7 |
+| `sqlite-accepts-ours-rejects` | `missing-feature` | 10 |
 
 ## 明细
 
@@ -318,6 +318,46 @@
 - sql：`CREATE TABLE pkab(a INTEGER, b INTEGER, PRIMARY KEY (a, b))`
 - SQLite：`[]`
 - 本仓：`[]`
+
+### `ddl.add-column-not-null-empty`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE t(a INTEGER)`
+- sql：`ALTER TABLE t ADD COLUMN b TEXT NOT NULL`
+- SQLite：`[]`
+- 本仓：`[]`
+- 备注：空表没有需要回填的旧行，两侧都接受 `NOT NULL` 且无默认值的 `ADD COLUMN`
+
+### `ddl.add-column-not-null-nonempty`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE t(a INTEGER)`，`INSERT INTO t VALUES (1)`
+- sql：`ALTER TABLE t ADD COLUMN b TEXT NOT NULL`
+- SQLite：`Cannot add a NOT NULL column with default value NULL`
+- 本仓：`invalid-alter: Cannot add a NOT NULL column with default value NULL`
+- 备注：表内已有行时两侧都以 `Cannot add a NOT NULL column with default value NULL` 拒绝，拒绝与否取决于表是否为空
+
+### `ddl.drop-index-autoindex-refused`
+
+- direction：`none`
+- class：`none`
+- setup：`CREATE TABLE t(a TEXT UNIQUE)`
+- sql：`DROP INDEX sqlite_autoindex_t_1`
+- SQLite：`index associated with UNIQUE or PRIMARY KEY constraint cannot be dropped`
+- 本仓：`autoindex-immutable: index associated with UNIQUE or PRIMARY KEY constraint cannot be dropped`
+- 备注：两侧都以 `index associated with UNIQUE or PRIMARY KEY constraint cannot be dropped` 拒绝，自动索引属于约束本身
+
+### `ddl.drop-table-if-exists-missing`
+
+- direction：`none`
+- class：`none`
+- setup：无
+- sql：`DROP TABLE IF EXISTS missing`
+- SQLite：`[]`
+- 本仓：`[]`
+- 备注：两侧对不存在的表都成功返回且不做改动，`IF EXISTS` 是脚本首行的常规写法
 
 ### `implicit.autoincrement-ids`
 
@@ -846,6 +886,36 @@
 - SQLite：`[]`
 - 本仓：`readonly-system-table: table sqlite_sequence may not be modified`
 - 备注：真实 SQLite 允许直接改自增水位；本仓选择只读（`readonly-system-table`），避免用户直接改自增计数器导致后续插入冲突或与 AUTOINCREMENT 语义不一致。若将来放开，改这一条即可
+
+### `ddl.alter-table-drop-column`
+
+- direction：`sqlite-accepts-ours-rejects`
+- class：`missing-feature`
+- setup：`CREATE TABLE t(a INTEGER, b TEXT)`，`INSERT INTO t VALUES (1, 'x')`
+- sql：`ALTER TABLE t DROP COLUMN b`
+- SQLite：`[]`
+- 本仓：`unsupported-clause: `ALTER TABLE ... DROP COLUMN` is not supported (`b` would have to be removed from every stored row)`
+- 备注：SQLite 3.49.1 支持 `DROP COLUMN`；本引擎把它作为具名 gap lock，以 `unsupported-clause`（clause 为 `DROP COLUMN`）拒绝，不静默半删
+
+### `ddl.drop-index-schema-qualified`
+
+- direction：`sqlite-accepts-ours-rejects`
+- class：`missing-feature`
+- setup：`CREATE TABLE t(a INTEGER)`，`CREATE INDEX ix ON t(a)`
+- sql：`DROP INDEX main.ix`
+- SQLite：`[]`
+- 本仓：`unsupported-clause: schema-qualified object names are not supported (`main.` was written)`
+- 备注：SQLite 接受 schema 限定的 `DROP INDEX main.ix`；本引擎在解析期以 `unsupported-clause`（clause 为 `schema`）拒绝
+
+### `ddl.drop-table-schema-qualified`
+
+- direction：`sqlite-accepts-ours-rejects`
+- class：`missing-feature`
+- setup：`CREATE TABLE t(a INTEGER)`
+- sql：`DROP TABLE main.t`
+- SQLite：`[]`
+- 本仓：`unsupported-clause: schema-qualified object names are not supported (`main.` was written)`
+- 备注：SQLite 接受 schema 限定的 `DROP TABLE main.t`；本引擎在解析期以 `unsupported-clause`（clause 为 `schema`）拒绝
 
 ### `syntax.returning-mixed-star`
 
