@@ -65,8 +65,6 @@ function checkHostContract() {
   assertSql(/unknown table/.test(missing), `unknown table is rejected, got ${missing}`);
   const arity = throws(() => database.exec("insert into probe values (1)"));
   assertSql(/expects 2 values/.test(arity), `arity mismatch is rejected, got ${arity}`);
-  const deleted = throws(() => database.exec("delete from probe"));
-  assertSql(/unsupported statement/.test(deleted), `delete is rejected, got ${deleted}`);
   const rightJoin = JSON.parse(database.exec("select * from probe right join probe as other on probe.id = other.id"));
   assertSql(
     rightJoin[0].columns.join(",") === "id,label,id,label" && JSON.stringify(rightJoin[0].rows) === '[[1,"a",1,"a"]]',
@@ -74,6 +72,11 @@ function checkHostContract() {
   );
   const rejected = throws(() => database.exec("select * from probe for update"));
   assertSql(/unsupported .*clause/i.test(rejected), `unsupported clause is rejected, got ${rejected}`);
+  const deleted = JSON.parse(database.exec("delete from probe"));
+  assertSql(deleted[0].statement === "delete" && deleted[0].affected === 1, "delete envelope reports one removed row");
+  assertSql(JSON.parse(database.exec("select count(*) from probe"))[0].rows[0][0] === 0, "delete empties the table");
+  const dropped = throws(() => database.exec("drop table probe"));
+  assertSql(/unsupported statement/.test(dropped), `drop is still rejected, got ${dropped}`);
 }
 
 // The orthogonal primitives: one statement, a statement list, and the
