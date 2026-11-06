@@ -1623,3 +1623,23 @@ test("unsupported foreign key shapes keep structured rejections", () => {
     assert.equal(result.error?.clause, clause, sql);
   }
 });
+
+// Found by the seeded differential corpus. `round_cell` scales the operand
+// first and rounds ties away from zero, while SQLite rounds through the shortest
+// decimal representation of the operand. Both external engines agree with each
+// other and disagree with this engine, so this test pins the known split rather
+// than claiming this engine is correct. Upstream: engine.rs:5540-5565.
+test("known differential drift pins round ties and negative precision", () => {
+  const engine = createEngine();
+  const cases: Array<[string, unknown[][], unknown[][]]> = [
+    ["select round(1.2345, 3)", [[1.235]], [[1.234]]],
+    ["select round(123.456, -1)", [[120]], [[123]]],
+    ["select round(2.675, 2)", [[2.68]], [[2.67]]],
+  ];
+  withOracle([], (db) => {
+    for (const [sql, ours, oracle] of cases) {
+      assert.deepEqual(engine.execute(sql).rows, ours, sql);
+      assert.deepEqual(oracleRows(db, sql), oracle, sql);
+    }
+  });
+});

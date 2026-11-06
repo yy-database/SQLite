@@ -201,11 +201,39 @@ asserted as structured rejections by `unsupported foreign key shapes keep struct
 
 | Item | This engine | Both oracles | Coordinates |
 |------|-------------|--------------|-------------|
-| `round(1.2345, 3)` | `1.235` | `1.234` | `engine.rs:4960-4985` (scale/round path at 4974-4981) |
-| `round(123.456, -1)` | `120` | `123` (SQLite clamps `n` to `>= 0`) | `engine.rs:4960-4985` (scale/round path at 4974-4981) |
+| `round(1.2345, 3)` | `1.235` | `1.234` | `engine.rs:5540-5565` (scale/round path at 5554-5561) |
+| `round(123.456, -1)` | `120` | `123` (SQLite clamps `n` to `>= 0`) | `engine.rs:5540-5565` (scale/round path at 5554-5561) |
+| `round(2.675, 2)` | `2.68` | `2.67` | `engine.rs:5540-5565` (scale/round path at 5554-5561) |
 
-The gate asserts only the ties (`round(±2.5)`) and the two-digit case, both of which match. The two rows above
-need a fix in `round_cell` before they can be asserted.
+The gate pins these three as known differences in `known differential drift pins round ties and negative
+precision`, asserting both this engine's current value and both oracles' value. The tie forms (`round(±2.5)`)
+and `round(1.2345, 2)` match both oracles and are asserted without any drift.
+
+## Differential corpus
+
+`npm run corpus -- --seed 20261106 --count 200` generates the corpus and runs every case on the same fixture
+through this engine and both live oracles. Seed and count fully determine the result; the digest for this run is
+`e3d6c1d1baf823086965286e4725e7921b79e6406ec29e72a96d03b08c1456b1`.
+
+Distribution: DDL 40, DML 40, expressions 40, aggregates 30, windows 30, transactions 20. Result: 139 passed,
+51 mismatched, 10 discarded because `better-sqlite3` and CPython `sqlite3` disagreed with each other.
+
+The only value-level differences are the `round` rows above. The other 45 mismatches are structured rejections
+against two successful oracles, all already listed in the cluster tables:
+
+| Cluster | Cases | Shapes |
+|---------|-------|--------|
+| DDL | 16 | expression index 4, trigger 3, temp table 2, partial index 2, `WITHOUT ROWID` 2, `DROP COLUMN` 1, view 1, `STRICT` 1 |
+| DML | 10 | `INSERT OR REPLACE` 3, `INSERT ... SELECT` 3, UPSERT 2, `REPLACE INTO` 2 |
+| Expressions | 5 | `IS DISTINCT FROM` 2, modulo 1, `GLOB` 1, `NULLS FIRST` 1 |
+| Aggregates | 4 | `group_concat` with `ORDER BY` 1, `FILTER` 1, `count(DISTINCT)` 1, multi-argument `min`/`max` 1 |
+| Windows | 6 | `GROUPS` frame 3, `EXCLUDE` 3 |
+| Transactions | 4 | `SAVEPOINT` 4 |
+
+The 10 discarded cases are all transaction statements. CPython's default isolation keeps an implicit transaction
+open after the fixture inserts, while `better-sqlite3` stays in autocommit, so `BEGIN` / `COMMIT` / `ROLLBACK`
+disagree between the two oracles and are never compared with this engine. `SAVEPOINT` and its release forms agree
+between the oracles, which is why the transaction mismatches above are `SAVEPOINT` rejections.
 
 ## How this was measured
 
@@ -214,7 +242,7 @@ need a fix in `round_cell` before they can be asserted.
 2. Each case ran in a fresh in-memory engine; the same setup and statement ran in `better-sqlite3` and in
    CPython `sqlite3`; rows came back as JSON and were compared value by value. CPython keeps foreign keys
    disabled by default, so the oracle turns them on explicitly for every foreign key case.
-3. The eight gate cases added by this change use the live `better-sqlite3` oracle (`withOracle`) exactly like
-   the existing window and CTE cases.
+3. The gate cases added by this change and the known-drift test use the live `better-sqlite3` oracle
+   (`withOracle`) exactly like the existing window and CTE cases.
 
 `readme.md` still describes the early `SELECT`-only subset; this file is the current surface description.
