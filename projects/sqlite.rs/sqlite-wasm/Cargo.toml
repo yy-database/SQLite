@@ -20,6 +20,11 @@ wasm-bindgen = { workspace = true }
 # the default `v4` source cannot exist.
 uuid = { version = "1", features = ["js"] }
 
+# `oak-core` reaches `getrandom` 0.4 through `twox-hash`; on `wasm32-unknown-unknown`
+# that backend is gated behind `wasm_js`, so unify the feature for this target only.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+
 [package.metadata.wasm-pack.profile.release]
 # `wasm-opt` is not installed in this environment; sizes are reported post
 # `cargo build --release` plus `wasm-bindgen` glue generation.
