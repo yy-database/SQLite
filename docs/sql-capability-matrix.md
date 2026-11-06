@@ -1,6 +1,6 @@
 # SQL capability matrix
 
-Measured against the pinned `database.rs` facade rev `aa62b52` (`aa62b527202b2e241bc9f5cf8edfb9228a33be93`,
+Measured against the pinned `database.rs` facade rev `2af4c32` (`2af4c325b02abce08a0d107dc90deb2d3e008121`,
 `projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
 through both live oracles; the oracle value, not an internal expectation, decides whether a row is correct.
 
@@ -9,8 +9,8 @@ through both live oracles; the oracle value, not an internal expectation, decide
 | Engine under test | `sqlite.node` built from the pin, `createEngine()` |
 | Oracle A | `better-sqlite3` 12.11.1 (SQLite 3.53.2) |
 | Oracle B | CPython `sqlite3` (SQLite 3.49.1) |
-| Probes | 94 statements/cases, one or more per cluster |
-| Local facade override | Temporarily disabled so Cargo resolved the pin instead of the working tree |
+| Probes | 115 statements/cases, one or more per cluster |
+| Local facade override | None; Cargo resolved the pin directly |
 
 Status legend:
 
@@ -18,8 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (99 feature rows): **31 gated / 17 uncovered / 51 missing** at the pin.
-After the gate additions in this change: **48 gated / 0 uncovered / 51 missing**.
+Cluster totals (103 feature rows): **52 gated / 0 uncovered / 51 missing** at the pin.
 
 ## DDL
 
@@ -39,8 +38,12 @@ After the gate additions in this change: **48 gated / 0 uncovered / 51 missing**
 | Index `COLLATE` | `create index cix on ci (s collate nocase)` | missing | `syntax`: index column list stops at `collate` |
 | `CREATE VIEW` | `create view vv as select a from vt where a > 1` | missing | `syntax`: expected `table` but found `view` |
 | `CREATE TRIGGER` | `create trigger trg after insert on tg begin insert into tlog values (new.a); end` | missing | `syntax`: expected `table` but found `trigger` |
-| Foreign key, column level | `create table fk2 (id integer primary key, pid integer references fk1 (id))` | missing | `unsupported-column-constraint` `REFERENCES` (facade line is implementing it) |
-| Foreign key, table level | `create table fk4 (..., foreign key (pid) references fk3 (id))` | missing | `unsupported-column-constraint` `FOREIGN` (facade line is implementing it) |
+| Foreign key, column level `REFERENCES` | `create table fk2 (id integer primary key, pid integer references fk1 (id))` | gated | orphan insert, parent delete and parent update all fail with `SQLITE_CONSTRAINT_FOREIGNKEY` |
+| Foreign key, table level `FOREIGN KEY` with an implicit parent primary key | `create table fk4 (..., foreign key (pid) references fk3 (id))` | gated | composite orphan and composite rollback covered by `composite foreign keys and statement rollback match better-sqlite3` |
+| `ON DELETE CASCADE` / `ON UPDATE CASCADE` | `create table c1 (pid integer references parent (id) on delete cascade)` | missing | `unsupported-foreign-key-action` with clause `CASCADE`; separately asserted |
+| `ON UPDATE SET NULL` / `ON UPDATE SET DEFAULT` | `create table c2 (pid integer references parent (id) on update set null)` | missing | `unsupported-foreign-key-action` with clause `SET NULL` / `SET DEFAULT`; separately asserted |
+| `DEFERRABLE INITIALLY DEFERRED` | `create table c3 (pid integer references parent (id) deferrable initially deferred)` | missing | `unsupported-deferred-foreign-key` with clause `DEFERRABLE`; separately asserted |
+| `ALTER TABLE ... ADD COLUMN ... REFERENCES` | `alter table plain add column pid integer references parent (id)` | missing | `unsupported-column-constraint` with clause `REFERENCES`; separately asserted |
 | `ALTER TABLE ... DROP COLUMN` | `alter table dc drop column b` | missing | `unsupported-clause` `DROP COLUMN`; the gate pins this rejection |
 
 ## DML
@@ -53,8 +56,8 @@ After the gate additions in this change: **48 gated / 0 uncovered / 51 missing**
 | `UPDATE` assignments / `WHERE` / ascending row order / constraint rollback | `update t set v = v + 1 where id >= 2 returning id, v` | gated | covered by the update gate |
 | `UPDATE ... RETURNING` (including `*`) | `update t set v = v where id = 1 returning *` | gated | covered by the update gate |
 | `DELETE ... RETURNING` | `delete from dr where id = 2 returning id, v` | gated | rows equal both oracles |
-| Multi-row `INSERT ... RETURNING` | `insert into mr (v) values ('a'), ('b') returning id, v` | uncovered | oracle-matching; now gated |
-| `DELETE FROM ... AS alias` | `delete from da as x where x.a = 2 returning a` | uncovered | oracle-matching; now gated |
+| Multi-row `INSERT ... RETURNING` | `insert into mr (v) values ('a'), ('b') returning id, v` | gated | oracle-matching with both oracles |
+| `DELETE FROM ... AS alias` | `delete from da as x where x.a = 2 returning a` | gated | oracle-matching with both oracles |
 | `INSERT ... SELECT` | `insert into is2 (a) select a from is1 where a > 1` | missing | `syntax`: expected `values` but found `select` |
 | `INSERT OR REPLACE` / `INSERT OR IGNORE` | `insert or replace into orr values (1,'b')` | missing | `syntax`: expected `into` but found `or` |
 | UPSERT `ON CONFLICT DO UPDATE` | `insert into up values (1, 20) on conflict (id) do update set v = excluded.v` | missing | `unsupported-statement` at `on` |
@@ -80,19 +83,19 @@ After the gate additions in this change: **48 gated / 0 uncovered / 51 missing**
 | Set operators (`UNION`/`INTERSECT`/`EXCEPT`) | `select 1 union select 2` | gated | `sql-engine.test.ts` |
 | Non-recursive CTE | `with c(x, y) as (select a, b + 10 from t) select x, y from c order by x` | gated | `sql-engine.test.ts` |
 | Column affinity applied on insert | `insert into af values ('12', '1.5', '3.0', 5)` | gated | covered by `bracketed column types keep SQLite affinity` |
-| Storage-class comparison (`'10' < 9`) and mixed `ORDER BY` | `select typeof(v) from mt order by v` | uncovered | oracle-matching; now gated |
-| Hex integer literal | `select 0x1f` | uncovered | oracle-matching; now gated |
-| `TRUE` / `FALSE` literals | `select true, false, true = 1, false = 0` | uncovered | oracle-matching; now gated |
-| `BETWEEN` / `NOT BETWEEN` with NULL | `select 2 between 1 and 3, null between 1 and 2` | uncovered | oracle-matching; now gated |
-| `ORDER BY` an output alias | `select a as x from ob2 order by x desc` | uncovered | oracle-matching; now gated |
-| `GROUP BY` an expression | `select a + 1 as k, count(*) from gb group by a + 1 order by k` | uncovered | oracle-matching; now gated |
+| Storage-class comparison (`'10' < 9`) and mixed `ORDER BY` | `select typeof(v) from mt order by v` | gated | oracle-matching with both oracles |
+| Hex integer literal | `select 0x1f` | gated | oracle-matching with both oracles |
+| `TRUE` / `FALSE` literals | `select true, false, true = 1, false = 0` | gated | oracle-matching with both oracles |
+| `BETWEEN` / `NOT BETWEEN` with NULL | `select 2 between 1 and 3, null between 1 and 2` | gated | oracle-matching with both oracles |
+| `ORDER BY` an output alias | `select a as x from ob2 order by x desc` | gated | oracle-matching with both oracles |
+| `GROUP BY` an expression | `select a + 1 as k, count(*) from gb group by a + 1 order by k` | gated | oracle-matching with both oracles |
 | Modulo `%` | `select 7 % 3, -7 % 3, 7.5 % 2` | missing | `syntax` at `%` |
 | `GLOB` | `select 'abc' glob 'a*'` | missing | `syntax` at `glob` |
 | `COLLATE` (column, expression, `ORDER BY`) | `select 'a' = 'A' collate nocase` | missing | `unsupported-column-constraint` `COLLATE`; expression form is `syntax` |
 | `IS DISTINCT FROM` / `IS NOT DISTINCT FROM` | `select 1 is distinct from 2` | missing | `syntax` at `distinct` |
 | `ORDER BY ... NULLS FIRST/LAST` | `select a from onf order by a asc nulls first` | missing | `unsupported-clause` at `nulls` |
 | `SELECT DISTINCT` | `select distinct a from sd order by a` | missing | `syntax` in the projection |
-| Self-referencing `WITH RECURSIVE` | `with recursive c(x) as (select 1 union all select x + 1 from c where x < 3) select x from c` | missing | `unsupported-clause` (facade line is implementing it) |
+| Self-referencing `WITH RECURSIVE` (keyword optional), `UNION ALL` duplicates, `UNION` fixed-point de-duplication, outer `LIMIT` truncation | `with c(x) as (select 1 union all select x + 1 from c where x < 3) select x from c` | gated | six oracle-backed shapes in `recursive CTEs match better-sqlite3 without and with the keyword` |
 
 ## Scalar and aggregate functions
 
@@ -101,9 +104,9 @@ After the gate additions in this change: **48 gated / 0 uncovered / 51 missing**
 | `abs`, `coalesce`, `length`, `lower`, `upper`, `substr`, `round`, `typeof`, `hex`, `quote`, `random`, `randomblob` | `select hex('abc'), quote('a''b'), quote(null), quote(1.5)` | gated | `sql-expression.test.ts`, `bitwise and inspection functions follow sqlite` |
 | `group_concat` with a custom separator and NULL skipping | `select group_concat(v, '|') from ag` | gated | `bitwise and inspection functions follow sqlite` |
 | `count` / `avg` / `sum` / `total` / `min` / `max` | `select avg(v), sum(v), total(v), min(v), max(v), count(v) from ae` | gated | `whole-result aggregates cover count, avg, sum, min and max` |
-| `substr` bounds (`0`, `-n`, past end) | `select substr('abcdef', 0, 2), substr('abcdef', 2, 99)` | uncovered | oracle-matching; now gated |
-| `round` tie behaviour (`±2.5`) | `select round(2.5), round(-2.5)` | uncovered | oracle-matching; now gated |
-| Aggregates over an empty table | `select avg(v), min(v), max(v), count(v) from empty` | uncovered | oracle-matching; now gated |
+| `substr` bounds (`0`, `-n`, past end) | `select substr('abcdef', 0, 2), substr('abcdef', 2, 99)` | gated | oracle-matching with both oracles |
+| `round` tie behaviour (`±2.5`) | `select round(2.5), round(-2.5)` | gated | oracle-matching with both oracles |
+| Aggregates over an empty table | `select avg(v), min(v), max(v), count(v) from empty` | gated | oracle-matching with both oracles |
 | `group_concat ... ORDER BY` | `select group_concat(v, '|' order by v) from ago` | missing | `syntax`: argument list stops at `order` |
 | `count(DISTINCT x)` | `select count(distinct v) from cd` | missing | `syntax`: argument list stops at `v` |
 | Aggregate `FILTER (WHERE ...)` | `select sum(v) filter (where v > 1) from afi` | missing | `syntax` at `filter` |
@@ -121,12 +124,12 @@ After the gate additions in this change: **48 gated / 0 uncovered / 51 missing**
 | Feature | Probe | Status | Evidence |
 |---------|-------|--------|----------|
 | `row_number` / `rank` / `dense_rank`, `sum() OVER`, partitions, named windows, empty input | `select g, a, sum(a) over (partition by g order by a) from w` | gated | `window functions match better-sqlite3 across partitions and frames` |
-| `percent_rank` / `cume_dist` / `ntile` | `select percent_rank() over (order by a), cume_dist() over (order by a), ntile(2) over (order by a) from w` | uncovered | oracle-matching; now gated |
-| `lag` / `lead` with offset and default | `select a, lag(a, 1, 99) over (order by a), lead(a, 1, -1) over (order by a) from w` | uncovered | oracle-matching; now gated |
-| `first_value` / `last_value` / `nth_value` | `select first_value(a) over (order by a), nth_value(a, 2) over (order by a) from w` | uncovered | oracle-matching; now gated |
-| `ROWS` frame with numeric offsets | `select sum(a) over (order by a rows between 1 preceding and 1 following) from w` | uncovered | oracle-matching; now gated |
-| `RANGE` frame with numeric offsets | `select sum(a) over (order by a range between 1 preceding and 1 following) from w` | uncovered | oracle-matching; now gated |
-| Aggregate over the whole result / `group_concat` as a window aggregate | `select count(*) over (), sum(a) over () from w` | uncovered | oracle-matching; now gated |
+| `percent_rank` / `cume_dist` / `ntile` | `select percent_rank() over (order by a), cume_dist() over (order by a), ntile(2) over (order by a) from w` | gated | oracle-matching with both oracles |
+| `lag` / `lead` with offset and default | `select a, lag(a, 1, 99) over (order by a), lead(a, 1, -1) over (order by a) from w` | gated | oracle-matching with both oracles |
+| `first_value` / `last_value` / `nth_value` | `select first_value(a) over (order by a), nth_value(a, 2) over (order by a) from w` | gated | oracle-matching with both oracles |
+| `ROWS` frame with numeric offsets | `select sum(a) over (order by a rows between 1 preceding and 1 following) from w` | gated | oracle-matching with both oracles |
+| `RANGE` frame with numeric offsets | `select sum(a) over (order by a range between 1 preceding and 1 following) from w` | gated | oracle-matching with both oracles |
+| Aggregate over the whole result / `group_concat` as a window aggregate | `select count(*) over (), sum(a) over () from w` | gated | oracle-matching with both oracles |
 | `GROUPS` frame unit | `select sum(a) over (order by a groups between 1 preceding and current row) from w` | missing | `unsupported-clause` `GROUPS` |
 | Frame `EXCLUDE` clause | `select sum(a) over (order by a rows between 1 preceding and 1 following exclude ties) from w` | missing | parser rejects at `sql.rs:2499-2505` |
 
@@ -144,10 +147,10 @@ After the gate additions in this change: **48 gated / 0 uncovered / 51 missing**
 
 | Feature | Probe | Status | Evidence |
 |---------|-------|--------|----------|
-| `PRAGMA table_info(t)` | `pragma table_info(pt)` | missing | `unsupported-statement` at `pragma` |
-| `PRAGMA user_version` | `pragma user_version` | missing | `unsupported-statement` at `pragma` |
-| `PRAGMA foreign_keys=ON` | `pragma foreign_keys = on` | missing | `unsupported-statement` at `pragma` |
-| `PRAGMA integrity_check` | `pragma integrity_check` | missing | `unsupported-statement` at `pragma` (the gate only calls it on external files) |
+| `PRAGMA foreign_keys` read-back and session toggle | `pragma foreign_keys` / `pragma foreign_keys = off` | gated | defaults to `1`, reads back `0` after `off`; enforcement behaviour asserted |
+| `PRAGMA table_info(t)` | `pragma table_info(pt)` | missing | `unsupported-pragma` at `PRAGMA` |
+| `PRAGMA user_version` | `pragma user_version` | missing | `unsupported-pragma` at `PRAGMA` |
+| `PRAGMA integrity_check` | `pragma integrity_check` | missing | `unsupported-pragma` at `PRAGMA` (the gate only calls it on external files) |
 
 ## EXPLAIN
 
@@ -167,9 +170,8 @@ After the gate additions in this change: **48 gated / 0 uncovered / 51 missing**
 
 ## Unimplemented: top 5 by impact
 
-Ranked by how many ordinary SQLite clients would break on the first statement they send. The two items the
-facade line is already implementing (foreign keys, recursive CTEs) are excluded from this list and tracked
-separately below.
+Ranked by how many ordinary SQLite clients would break on the first statement they send. Foreign keys and
+recursive CTEs are no longer on this list: both landed at this pin and are asserted by the gate.
 
 | # | Gap | Impact | Upstream coordinates |
 |---|-----|--------|---------------------|
@@ -184,12 +186,16 @@ Next tier, lower blast radius but still visible: `CREATE VIEW` / `CREATE TRIGGER
 (`sql.rs:3488-3537`, no operator in `BinaryOp`), `count(DISTINCT x)` and aggregate `FILTER`
 (`sql.rs:417`, aggregate argument parser), JSON functions and `->` (`sql.rs:342-357`, `BinaryOp`).
 
-## In flight on the facade line
+## Landed at this pin
 
-| Gap | Upstream coordinates | Note |
+| Gap | Upstream coordinates | Gate |
 |-----|---------------------|------|
-| Foreign keys (column/table `REFERENCES`, `PRAGMA foreign_keys`) | `sql.rs:2939`, `sql.rs:3098-3110`, `engine.rs:403` | Facade branch is implementing it; measured as missing at the pin |
-| Self-referencing `WITH RECURSIVE` | `engine.rs:2229` | Facade branch is implementing it; the current `sql-expression` rejection assertion will need updating when the pin moves |
+| Foreign keys (column/table `REFERENCES`, `PRAGMA foreign_keys`, orphan/delete/update checks, composite keys, statement rollback) | `sql.rs:2939`, `sql.rs:3098-3110`, `engine.rs:403` | `foreign keys enforce orphan, delete and update checks per session pragma`, `composite foreign keys and statement rollback match better-sqlite3` |
+| Self-referencing recursive CTE (keyword optional, `UNION ALL` duplicates, `UNION` fixed-point de-duplication, outer `LIMIT` truncation) | `engine.rs:2229` | `recursive CTEs match better-sqlite3 without and with the keyword` |
+
+The four foreign key shapes still missing at this pin (`ON DELETE CASCADE`, `ON UPDATE SET NULL` / `SET DEFAULT`,
+`DEFERRABLE INITIALLY DEFERRED`, `ALTER TABLE ... ADD COLUMN ... REFERENCES`) are listed in the DDL table and
+asserted as structured rejections by `unsupported foreign key shapes keep structured rejections`.
 
 ## Known drift (implemented but not oracle-equal)
 
@@ -203,11 +209,12 @@ need a fix in `round_cell` before they can be asserted.
 
 ## How this was measured
 
-1. The local `patch` in `.cargo/config.toml` was disabled so Cargo compiled the pinned facade rev instead of
-   the `database.rs` working tree, then `node scripts/build-napi.mjs` rebuilt `sqlite.node`.
+1. Cargo has no local facade override, so it compiled the pinned rev directly, then `node scripts/build-napi.mjs`
+   rebuilt `sqlite.node`.
 2. Each case ran in a fresh in-memory engine; the same setup and statement ran in `better-sqlite3` and in
-   CPython `sqlite3`; rows came back as JSON and were compared value by value.
-3. The four gate cases added by this change use the live `better-sqlite3` oracle (`withOracle`) exactly like
+   CPython `sqlite3`; rows came back as JSON and were compared value by value. CPython keeps foreign keys
+   disabled by default, so the oracle turns them on explicitly for every foreign key case.
+3. The eight gate cases added by this change use the live `better-sqlite3` oracle (`withOracle`) exactly like
    the existing window and CTE cases.
 
 `readme.md` still describes the early `SELECT`-only subset; this file is the current surface description.

@@ -1508,3 +1508,118 @@ test("group by expression, order by alias, empty aggregates and aliased delete m
     [2, "b"],
   ]);
 });
+
+// The engine evaluates a self reference in a CTE body as recursion even without
+// the RECURSIVE keyword. UNION ALL keeps duplicates, UNION de-duplicates the
+// whole fixed point, and an outer LIMIT truncates an otherwise unbounded walk.
+test("recursive CTEs match better-sqlite3 without and with the keyword", () => {
+  const steps = ["create table edges (parent integer, child integer)", "insert into edges values (1,2),(1,3),(2,4),(3,5),(5,6)"];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  const cases = [
+    "with c(x) as (select 1 union all select x + 1 from c where x < 3) select x from c",
+    "with recursive c(x) as (select 1 union all select x from c limit 3) select x from c",
+    "with recursive c(x) as (select 1 union select x + 1 from c where x < 3) select x from c",
+    "with recursive c(x) as (select 1 union all select x + 1 from c) select x from c limit 5",
+    "with recursive c(n, f) as (select 1, 1 union all select n + 1, f * (n + 1) from c where n < 5) select n, f from c",
+    "with recursive d(id, depth) as (select 1, 0 union all select e.child, d.depth + 1 from edges e, d where e.parent = d.id) select id, depth from d order by id",
+    "with recursive c as (select a from t) select * from c",
+  ];
+  engine.execute("create table t (a integer)");
+  engine.execute("insert into t values (1), (2), (3)");
+  withOracle([...steps, "create table t (a integer)", "insert into t values (1), (2), (3)"], (db) => {
+    for (const sql of cases) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+  });
+});
+
+// Foreign keys are on when a session starts, can be toggled per session, and a
+// failure rolls the whole statement back. Every expected value comes from the
+// live oracle.
+test("foreign keys enforce orphan, delete and update checks per session pragma", () => {
+  const steps = [
+    "create table parent (id integer primary key)",
+    "create table child (id integer primary key, pid integer references parent (id))",
+    "insert into parent values (1), (2)",
+  ];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+
+  assert.deepEqual(engine.execute("pragma foreign_keys").rows, [[1]]);
+  const orphan = engine.tryExecute("insert into child values (10, 99)");
+  assert.equal(orphan.ok, false);
+  assert.equal(orphan.error?.code, "SQLITE_CONSTRAINT_FOREIGNKEY");
+  assert.match(orphan.error?.message ?? "", /FOREIGN KEY constraint failed/);
+
+  // NULL child keys never need a parent row.
+  engine.execute("insert into child values (11, null)");
+
+  // Turning enforcement off admits the same orphan insert and delete.
+  engine.execute("pragma foreign_keys = off");
+  assert.deepEqual(engine.execute("pragma foreign_keys").rows, [[0]]);
+  engine.execute("insert into child values (12, 99)");
+  engine.execute("insert into child values (13, 1)");
+  engine.execute("insert into child values (14, 2)");
+  engine.execute("delete from parent where id = 1");
+  assert.deepEqual(engine.execute("select count(*) from parent").rows, [[1]]);
+
+  // Back on, the delete of a still-referenced row and an update of its key fail.
+  engine.execute("pragma foreign_keys = on");
+  assert.equal(engine.tryExecute("delete from parent where id = 2").ok, false);
+  assert.equal(engine.tryExecute("update parent set id = 7 where id = 2").ok, false);
+  assert.deepEqual(engine.execute("select id from parent order by id").rows, [[2]]);
+  assert.equal(engine.execute("select count(*) from child").rows[0][0], 4);
+});
+
+test("composite foreign keys and statement rollback match better-sqlite3", () => {
+  const steps = [
+    "create table parent (a integer, b integer, primary key (a, b))",
+    "create table child (id integer primary key, x integer, y integer, foreign key (x, y) references parent)",
+    "insert into parent values (1, 2)",
+  ];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+
+  // The column list is omitted, so the parent primary key is implicit.
+  const orphan = engine.tryExecute("insert into child values (2, 1, 3)");
+  assert.equal(orphan.ok, false);
+  assert.equal(orphan.error?.code, "SQLITE_CONSTRAINT_FOREIGNKEY");
+  engine.execute("insert into child values (3, 1, 2)");
+  assert.deepEqual(engine.execute("select id from child").rows, [[3]]);
+
+  // One bad tuple aborts the whole multi-row statement.
+  const batch = engine.tryExecute("insert into child values (4, 1, 2), (5, 9, 9)");
+  assert.equal(batch.ok, false);
+  assert.equal(batch.error?.code, "SQLITE_CONSTRAINT_FOREIGNKEY");
+  assert.deepEqual(engine.execute("select id from child order by id").rows, [[3]]);
+
+  withOracle([...steps, "insert into child values (3, 1, 2)"], (db) => {
+    const sql = "select id from child order by id";
+    assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+  });
+});
+
+// Referential actions, deferred checks and adding a reference through
+// `ALTER TABLE` stay rejected with a structured code instead of silently
+// weakening the constraint.
+test("unsupported foreign key shapes keep structured rejections", () => {
+  const engine = createEngine(4096);
+  engine.execute("create table parent (id integer primary key)");
+  engine.execute("create table plain (id integer primary key)");
+
+  const cases: Array<[string, string, string]> = [
+    ["create table c1 (id integer primary key, pid integer references parent (id) on delete cascade)", "unsupported-foreign-key-action", "CASCADE"],
+    ["create table c2 (id integer primary key, pid integer references parent (id) on update cascade)", "unsupported-foreign-key-action", "CASCADE"],
+    ["create table c3 (id integer primary key, pid integer references parent (id) on update set null)", "unsupported-foreign-key-action", "SET NULL"],
+    ["create table c4 (id integer primary key, pid integer references parent (id) on update set default)", "unsupported-foreign-key-action", "SET DEFAULT"],
+    ["create table c5 (id integer primary key, pid integer references parent (id) deferrable initially deferred)", "unsupported-deferred-foreign-key", "DEFERRABLE"],
+    ["alter table plain add column pid integer references parent (id)", "unsupported-column-constraint", "REFERENCES"],
+  ];
+  for (const [sql, code, clause] of cases) {
+    const result = engine.tryExecute(sql);
+    assert.equal(result.ok, false, sql);
+    assert.equal(result.error?.code, code, sql);
+    assert.equal(result.error?.clause, clause, sql);
+  }
+});
