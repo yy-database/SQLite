@@ -755,11 +755,16 @@ mod tests {
     fn rejections_carry_a_code_and_position() {
         let mut engine = Engine::new(None).expect("open");
         engine.execute("create table t (id integer primary key, label text)").expect("create");
-        let error = engine.execute_one("select * from t group by id").expect_err("group by is rejected");
-        assert_eq!(error.code, "unsupported-clause");
-        assert_eq!(error.statement, Some("select"));
-        assert_eq!(error.clause.as_deref(), Some("GROUP"));
-        assert_eq!(error.position, Some(16));
+        engine.execute("insert into t values (1, 'a'), (2, 'b'), (3, 'a')").expect("seed");
+        // `GROUP BY` is supported; the grouped rows match SQLite 3.49.1.
+        let grouped = engine.execute_one("select label, count(*) from t group by label order by label").expect("group by");
+        assert_eq!(
+            grouped.rows,
+            vec![
+                vec![Cell::Text("a".to_string()), Cell::Integer(2)],
+                vec![Cell::Text("b".to_string()), Cell::Integer(1)],
+            ]
+        );
         let unknown = engine.execute_one("insert into missing values (1)").expect_err("unknown table");
         assert_eq!(unknown.code, "unknown-table");
         assert_eq!(unknown.statement, Some("insert"));
