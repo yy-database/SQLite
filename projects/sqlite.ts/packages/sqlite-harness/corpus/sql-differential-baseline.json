@@ -165,10 +165,10 @@
       "check": "select count(*) from probe",
       "kind": "mismatch",
       "reason": "not-implemented",
-      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `strict`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
+      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `strict`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
       "coordinates": "sql.rs:2980-3420 (create_table)",
       "signal": [
-        "ours error unsupported-statement unsupported statement starting at `strict`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
+        "ours error unsupported-statement unsupported statement starting at `strict`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
         "better check [[\"n:0\"]]",
         "python check [[\"n:0\"]]"
       ]
@@ -180,10 +180,10 @@
       "check": "select count(*) from probe",
       "kind": "mismatch",
       "reason": "not-implemented",
-      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `without`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
+      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `without`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
       "coordinates": "sql.rs:2980-3420 (create_table)",
       "signal": [
-        "ours error unsupported-statement unsupported statement starting at `without`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
+        "ours error unsupported-statement unsupported statement starting at `without`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
         "better check [[\"n:0\"]]",
         "python check [[\"n:0\"]]"
       ]
@@ -225,10 +225,10 @@
       "check": "select count(*) from probe",
       "kind": "mismatch",
       "reason": "not-implemented",
-      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `without`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
+      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `without`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
       "coordinates": "sql.rs:2980-3420 (create_table)",
       "signal": [
-        "ours error unsupported-statement unsupported statement starting at `without`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
+        "ours error unsupported-statement unsupported statement starting at `without`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
         "better check [[\"n:0\"]]",
         "python check [[\"n:0\"]]"
       ]
@@ -270,10 +270,10 @@
       "check": "select id, name, age, score, grp, note from users order by id",
       "kind": "mismatch",
       "reason": "not-implemented",
-      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `on`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
+      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `on`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
       "coordinates": "sql.rs:3450-3513 (insert)",
       "signal": [
-        "ours error unsupported-statement unsupported statement starting at `on`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
+        "ours error unsupported-statement unsupported statement starting at `on`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
         "better check [[\"n:1\",\"t:ada\",\"n:20\",\"n:9.5\",\"n:1\",\"t:alpha\"],[\"n:2\",\"t:bob\",\"n:28\",\"n:7.25\",\"n:1\",\"null\"],[\"n:3\",\"t:cy\",\"n:45\",\"n:8\",\"n:2\",\"t:beta\"],[\"n:4\",\"t:dan\",\"n:19\",\"n:6.5\",\"n:2\",\"t:\"],[\"n:5\",\"t:eve\",\"n:52\",\"n:9\",\"n:3\",\"t:gamma\"],[\"n:6\",\"t:fay\",\"n:31\",\"n:7.75\",\"n:3\",\"t:delta\"]]",
         "python check [[\"n:1\",\"t:ada\",\"n:20\",\"n:9.5\",\"n:1\",\"t:alpha\"],[\"n:2\",\"t:bob\",\"n:28\",\"n:7.25\",\"n:1\",\"null\"],[\"n:3\",\"t:cy\",\"n:45\",\"n:8\",\"n:2\",\"t:beta\"],[\"n:4\",\"t:dan\",\"n:19\",\"n:6.5\",\"n:2\",\"t:\"],[\"n:5\",\"t:eve\",\"n:52\",\"n:9\",\"n:3\",\"t:gamma\"],[\"n:6\",\"t:fay\",\"n:31\",\"n:7.75\",\"n:3\",\"t:delta\"]]"
       ]
@@ -285,10 +285,10 @@
       "check": "select id, name, age, score, grp, note from users order by id",
       "kind": "mismatch",
       "reason": "not-implemented",
-      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `replace`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
+      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `replace`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
       "coordinates": "sql.rs:3450-3513 (insert)",
       "signal": [
-        "ours error unsupported-statement unsupported statement starting at `replace`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
+        "ours error unsupported-statement unsupported statement starting at `replace`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
         "better check [[\"n:1\",\"t:z\",\"n:20\",\"n:1\",\"n:1\",\"null\"],[\"n:2\",\"t:bob\",\"n:28\",\"n:7.25\",\"n:1\",\"null\"],[\"n:3\",\"t:cy\",\"n:45\",\"n:8\",\"n:2\",\"t:beta\"],[\"n:4\",\"t:dan\",\"n:19\",\"n:6.5\",\"n:2\",\"t:\"],[\"n:5\",\"t:eve\",\"n:52\",\"n:9\",\"n:3\",\"t:gamma\"],[\"n:6\",\"t:fay\",\"n:31\",\"n:7.75\",\"n:3\",\"t:delta\"]]",
         "python check [[\"n:1\",\"t:z\",\"n:20\",\"n:1\",\"n:1\",\"null\"],[\"n:2\",\"t:bob\",\"n:28\",\"n:7.25\",\"n:1\",\"null\"],[\"n:3\",\"t:cy\",\"n:45\",\"n:8\",\"n:2\",\"t:beta\"],[\"n:4\",\"t:dan\",\"n:19\",\"n:6.5\",\"n:2\",\"t:\"],[\"n:5\",\"t:eve\",\"n:52\",\"n:9\",\"n:3\",\"t:gamma\"],[\"n:6\",\"t:fay\",\"n:31\",\"n:7.75\",\"n:3\",\"t:delta\"]]"
       ]
@@ -300,10 +300,10 @@
       "check": "select id, name, age, score, grp, note from users order by id",
       "kind": "mismatch",
       "reason": "not-implemented",
-      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `on`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
+      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `on`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
       "coordinates": "sql.rs:3450-3513 (insert)",
       "signal": [
-        "ours error unsupported-statement unsupported statement starting at `on`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
+        "ours error unsupported-statement unsupported statement starting at `on`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
         "better check [[\"n:1\",\"t:ada\",\"n:20\",\"n:9.5\",\"n:1\",\"t:alpha\"],[\"n:2\",\"t:bob\",\"n:28\",\"n:7.25\",\"n:1\",\"null\"],[\"n:3\",\"t:cy\",\"n:45\",\"n:8\",\"n:2\",\"t:beta\"],[\"n:4\",\"t:dan\",\"n:19\",\"n:6.5\",\"n:2\",\"t:\"],[\"n:5\",\"t:eve\",\"n:52\",\"n:9\",\"n:3\",\"t:gamma\"],[\"n:6\",\"t:fay\",\"n:31\",\"n:7.75\",\"n:3\",\"t:delta\"]]",
         "python check [[\"n:1\",\"t:ada\",\"n:20\",\"n:9.5\",\"n:1\",\"t:alpha\"],[\"n:2\",\"t:bob\",\"n:28\",\"n:7.25\",\"n:1\",\"null\"],[\"n:3\",\"t:cy\",\"n:45\",\"n:8\",\"n:2\",\"t:beta\"],[\"n:4\",\"t:dan\",\"n:19\",\"n:6.5\",\"n:2\",\"t:\"],[\"n:5\",\"t:eve\",\"n:52\",\"n:9\",\"n:3\",\"t:gamma\"],[\"n:6\",\"t:fay\",\"n:31\",\"n:7.75\",\"n:3\",\"t:delta\"]]"
       ]
@@ -330,10 +330,10 @@
       "check": "select id, name, age, score, grp, note from users order by id",
       "kind": "mismatch",
       "reason": "not-implemented",
-      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `replace`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
+      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `replace`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
       "coordinates": "sql.rs:3450-3513 (insert)",
       "signal": [
-        "ours error unsupported-statement unsupported statement starting at `replace`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
+        "ours error unsupported-statement unsupported statement starting at `replace`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, transaction control, and `SELECT` only",
         "better check [[\"n:1\",\"t:z\",\"n:20\",\"n:1\",\"n:1\",\"null\"],[\"n:2\",\"t:bob\",\"n:28\",\"n:7.25\",\"n:1\",\"null\"],[\"n:3\",\"t:cy\",\"n:45\",\"n:8\",\"n:2\",\"t:beta\"],[\"n:4\",\"t:dan\",\"n:19\",\"n:6.5\",\"n:2\",\"t:\"],[\"n:5\",\"t:eve\",\"n:52\",\"n:9\",\"n:3\",\"t:gamma\"],[\"n:6\",\"t:fay\",\"n:31\",\"n:7.75\",\"n:3\",\"t:delta\"]]",
         "python check [[\"n:1\",\"t:z\",\"n:20\",\"n:1\",\"n:1\",\"null\"],[\"n:2\",\"t:bob\",\"n:28\",\"n:7.25\",\"n:1\",\"null\"],[\"n:3\",\"t:cy\",\"n:45\",\"n:8\",\"n:2\",\"t:beta\"],[\"n:4\",\"t:dan\",\"n:19\",\"n:6.5\",\"n:2\",\"t:\"],[\"n:5\",\"t:eve\",\"n:52\",\"n:9\",\"n:3\",\"t:gamma\"],[\"n:6\",\"t:fay\",\"n:31\",\"n:7.75\",\"n:3\",\"t:delta\"]]"
       ]
@@ -399,36 +399,6 @@
       ]
     },
     {
-      "id": 81,
-      "cluster": "expression",
-      "sql": "select round(1.2345, 3)",
-      "check": null,
-      "kind": "mismatch",
-      "reason": "known-drift",
-      "detail": "same result shape, different value: rows row 1 column 1: n:1.235 vs n:1.234",
-      "coordinates": "engine.rs:5540-5565 (round_cell)",
-      "signal": [
-        "ours rows [[\"n:1.235\"]]",
-        "better rows [[\"n:1.234\"]]",
-        "python rows [[\"n:1.234\"]]"
-      ]
-    },
-    {
-      "id": 86,
-      "cluster": "expression",
-      "sql": "select 7 % 3 from users where id = 1",
-      "check": null,
-      "kind": "mismatch",
-      "reason": "structured-rejection",
-      "detail": "this repository rejects the statement: syntax expected `,` or `FROM` in the projection but found `%`",
-      "coordinates": "sql.rs:2139-2181 (multiplicative_expr)",
-      "signal": [
-        "ours error syntax expected `,` or `FROM` in the projection but found `%`",
-        "better rows [[\"n:1\"]]",
-        "python rows [[\"n:1\"]]"
-      ]
-    },
-    {
       "id": 90,
       "cluster": "expression",
       "sql": "select 1 is distinct from 2 from users where id = 1",
@@ -441,21 +411,6 @@
         "ours error syntax expected `null`, `true` or `false` after `IS` but found `distinct`",
         "better rows [[\"n:1\"]]",
         "python rows [[\"n:1\"]]"
-      ]
-    },
-    {
-      "id": 91,
-      "cluster": "expression",
-      "sql": "select round(123.456, -1)",
-      "check": null,
-      "kind": "mismatch",
-      "reason": "known-drift",
-      "detail": "same result shape, different value: rows row 1 column 1: n:120 vs n:123",
-      "coordinates": "engine.rs:5540-5565 (round_cell)",
-      "signal": [
-        "ours rows [[\"n:120\"]]",
-        "better rows [[\"n:123\"]]",
-        "python rows [[\"n:123\"]]"
       ]
     },
     {
@@ -474,36 +429,6 @@
       ]
     },
     {
-      "id": 101,
-      "cluster": "expression",
-      "sql": "select round(1.005, 2), round(2.675, 2), round(-1.005, 2)",
-      "check": null,
-      "kind": "mismatch",
-      "reason": "known-drift",
-      "detail": "same result shape, different value: rows row 1 column 2: n:2.68 vs n:2.67",
-      "coordinates": "engine.rs:5540-5565 (round_cell)",
-      "signal": [
-        "ours rows [[\"n:1\",\"n:2.68\",\"n:-1\"]]",
-        "better rows [[\"n:1\",\"n:2.67\",\"n:-1\"]]",
-        "python rows [[\"n:1\",\"n:2.67\",\"n:-1\"]]"
-      ]
-    },
-    {
-      "id": 102,
-      "cluster": "expression",
-      "sql": "select round(1.005, 2), round(2.675, 2), round(-1.005, 2)",
-      "check": null,
-      "kind": "mismatch",
-      "reason": "known-drift",
-      "detail": "same result shape, different value: rows row 1 column 2: n:2.68 vs n:2.67",
-      "coordinates": "engine.rs:5540-5565 (round_cell)",
-      "signal": [
-        "ours rows [[\"n:1\",\"n:2.68\",\"n:-1\"]]",
-        "better rows [[\"n:1\",\"n:2.67\",\"n:-1\"]]",
-        "python rows [[\"n:1\",\"n:2.67\",\"n:-1\"]]"
-      ]
-    },
-    {
       "id": 106,
       "cluster": "expression",
       "sql": "select id from users order by score nulls first",
@@ -516,36 +441,6 @@
         "ours error unsupported-clause [NULLS] unsupported `SELECT` clause starting at `nulls`; this engine supports `FROM`, `WHERE`, `ORDER BY`, `LIMIT` and `UNION` / `INTERSECT` / `EXCEPT` only",
         "better rows [[\"n:4\"],[\"n:2\"],[\"n:6\"],[\"n:3\"],[\"n:5\"],[\"n:1\"]]",
         "python rows [[\"n:4\"],[\"n:2\"],[\"n:6\"],[\"n:3\"],[\"n:5\"],[\"n:1\"]]"
-      ]
-    },
-    {
-      "id": 108,
-      "cluster": "expression",
-      "sql": "select round(1.005, 2), round(2.675, 2), round(-1.005, 2)",
-      "check": null,
-      "kind": "mismatch",
-      "reason": "known-drift",
-      "detail": "same result shape, different value: rows row 1 column 2: n:2.68 vs n:2.67",
-      "coordinates": "engine.rs:5540-5565 (round_cell)",
-      "signal": [
-        "ours rows [[\"n:1\",\"n:2.68\",\"n:-1\"]]",
-        "better rows [[\"n:1\",\"n:2.67\",\"n:-1\"]]",
-        "python rows [[\"n:1\",\"n:2.67\",\"n:-1\"]]"
-      ]
-    },
-    {
-      "id": 112,
-      "cluster": "expression",
-      "sql": "select round(1.005, 2), round(2.675, 2), round(-1.005, 2)",
-      "check": null,
-      "kind": "mismatch",
-      "reason": "known-drift",
-      "detail": "same result shape, different value: rows row 1 column 2: n:2.68 vs n:2.67",
-      "coordinates": "engine.rs:5540-5565 (round_cell)",
-      "signal": [
-        "ours rows [[\"n:1\",\"n:2.68\",\"n:-1\"]]",
-        "better rows [[\"n:1\",\"n:2.67\",\"n:-1\"]]",
-        "python rows [[\"n:1\",\"n:2.67\",\"n:-1\"]]"
       ]
     },
     {
@@ -714,36 +609,6 @@
       ]
     },
     {
-      "id": 182,
-      "cluster": "transaction",
-      "sql": "savepoint sp1",
-      "check": null,
-      "kind": "mismatch",
-      "reason": "not-implemented",
-      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `savepoint`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
-      "coordinates": "sql.rs:2769-2858 (statement dispatch), engine.rs:451 (run_statement)",
-      "signal": [
-        "ours error unsupported-statement unsupported statement starting at `savepoint`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
-        "better no rows",
-        "python no rows"
-      ]
-    },
-    {
-      "id": 183,
-      "cluster": "transaction",
-      "sql": "savepoint sp1",
-      "check": null,
-      "kind": "mismatch",
-      "reason": "not-implemented",
-      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `savepoint`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
-      "coordinates": "sql.rs:2769-2858 (statement dispatch), engine.rs:451 (run_statement)",
-      "signal": [
-        "ours error unsupported-statement unsupported statement starting at `savepoint`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
-        "better no rows",
-        "python no rows"
-      ]
-    },
-    {
       "id": 184,
       "cluster": "transaction",
       "sql": "commit",
@@ -768,21 +633,6 @@
       "coordinates": "n/a (oracle self-disagreement)",
       "signal": [
         "better error cannot commit - no transaction is active",
-        "python no rows"
-      ]
-    },
-    {
-      "id": 186,
-      "cluster": "transaction",
-      "sql": "savepoint sp1",
-      "check": null,
-      "kind": "mismatch",
-      "reason": "not-implemented",
-      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `savepoint`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
-      "coordinates": "sql.rs:2769-2858 (statement dispatch), engine.rs:451 (run_statement)",
-      "signal": [
-        "ours error unsupported-statement unsupported statement starting at `savepoint`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
-        "better no rows",
         "python no rows"
       ]
     },
@@ -895,21 +745,6 @@
       "coordinates": "n/a (oracle self-disagreement)",
       "signal": [
         "better error cannot rollback - no transaction is active",
-        "python no rows"
-      ]
-    },
-    {
-      "id": 197,
-      "cluster": "transaction",
-      "sql": "savepoint sp1",
-      "check": null,
-      "kind": "mismatch",
-      "reason": "not-implemented",
-      "detail": "this repository rejects the statement: unsupported-statement unsupported statement starting at `savepoint`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
-      "coordinates": "sql.rs:2769-2858 (statement dispatch), engine.rs:451 (run_statement)",
-      "signal": [
-        "ours error unsupported-statement unsupported statement starting at `savepoint`; this engine accepts `CREATE TABLE`, `CREATE INDEX`, `INSERT`, `UPDATE`, `DELETE`, `DROP TABLE`, `DROP INDEX`, `ALTER TABLE`, `PRAGMA foreign_keys`, and `SELECT` only",
-        "better no rows",
         "python no rows"
       ]
     }

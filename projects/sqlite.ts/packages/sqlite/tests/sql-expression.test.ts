@@ -528,3 +528,30 @@ test("right joins and USING execute while non-aggregate HAVING reports a structu
   assert.equal(having.error?.clause, "HAVING");
   assert.match(having.error?.message ?? "", /HAVING clause on a non-aggregate query/);
 });
+
+test("instr, round and modulo follow the oracle exactly", () => {
+  const engine = createEngine();
+  assert.deepEqual(
+    engine.execute("select instr('abcabc', 'bc'), instr('abc', 'z'), instr('abc', ''), instr('AbC', 'b')").rows,
+    [[2, 0, 1, 2]],
+  );
+  // Rounding is fixed-point like SQLite: a half rounds away from zero on the
+  // stored double, so `2.675` rounds down while `1.2345` rounds down too.
+  assert.deepEqual(
+    engine.execute("select round(1.2345, 3), round(123.456, -1), round(2.675, 2), round(1.005, 2)").rows,
+    [[1.234, 123, 2.67, 1]],
+  );
+  // `%` truncates both operands to integers, keeps the dividend's sign, and
+  // returns a real whenever either operand was real.
+  assert.deepEqual(engine.execute("select 7 % 3, -7 % 3, 7.5 % 2, 7 % 2.5, 5 % 0").rows, [[1, -1, 1, 1, null]]);
+  assert.deepEqual(engine.execute("select typeof(7.5 % 2), typeof(7 % 3)").rows, [["real", "integer"]]);
+});
+
+test("select distinct collapses duplicates before order by and limit", () => {
+  const engine = createEngine();
+  engine.exec("create table d (a integer, b text); insert into d values (1, 'x'), (1, 'x'), (2, 'y'), (null, 'z')");
+  assert.deepEqual(engine.execute("select distinct a from d order by a").rows, [[null], [1], [2]]);
+  assert.deepEqual(engine.execute("select distinct a from d order by a limit 2").rows, [[null], [1]]);
+  assert.deepEqual(engine.execute("select distinct b, a from d order by a").rows, [["z", null], ["x", 1], ["y", 2]]);
+  assert.deepEqual(engine.execute("select distinct 1 from d").rows, [[1]]);
+});

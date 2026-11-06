@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createEngine } from "../src/index.ts";
+import { createEngine, createEngineFromSnapshot } from "../src/index.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -548,9 +548,10 @@ test("index trees track interleaved writes to several indexed tables", () => {
      create unique index right8_key on right8(key)",
   );
 
-  // The engine is single-connection and has no transaction statement, so a
-  // snapshot can never carry a pending writer transaction.
-  assert.equal(engine.tryExecute("begin").error?.code, "unsupported-statement");
+  // Every statement commits before it returns unless a caller opened a
+  // transaction, so a snapshot always carries only closed scopes.
+  assert.equal(engine.execute("begin").statement, "begin");
+  assert.equal(engine.tryExecute("commit").ok, true);
 
   const workspaceHandle = workspace();
   try {
@@ -1624,22 +1625,99 @@ test("unsupported foreign key shapes keep structured rejections", () => {
   }
 });
 
-// Found by the seeded differential corpus. `round_cell` scales the operand
-// first and rounds ties away from zero, while SQLite rounds through the shortest
-// decimal representation of the operand. Both external engines agree with each
-// other and disagree with this engine, so this test pins the known split rather
-// than claiming this engine is correct. Upstream: engine.rs:5540-5565.
-test("known differential drift pins round ties and negative precision", () => {
+// Was one of the seeded corpus drift rows: `round_cell` used to scale the
+// operand and round ties away from zero. Upstream now rounds like SQLite, so
+// both oracles and this engine agree and the row left the baseline.
+test("rounding matches both oracles at ties and negative precision", () => {
   const engine = createEngine();
-  const cases: Array<[string, unknown[][], unknown[][]]> = [
-    ["select round(1.2345, 3)", [[1.235]], [[1.234]]],
-    ["select round(123.456, -1)", [[120]], [[123]]],
-    ["select round(2.675, 2)", [[2.68]], [[2.67]]],
+  const cases = [
+    "select round(1.2345, 3)",
+    "select round(123.456, -1)",
+    "select round(2.675, 2)",
+    "select round(1.005, 2)",
   ];
   withOracle([], (db) => {
-    for (const [sql, ours, oracle] of cases) {
-      assert.deepEqual(engine.execute(sql).rows, ours, sql);
-      assert.deepEqual(oracleRows(db, sql), oracle, sql);
+    for (const sql of cases) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
     }
   });
+});
+
+test("explicit transactions roll back rows and schema exactly as better-sqlite3", () => {
+  const engine = createEngine();
+  const external = new BetterSqlite(":memory:");
+  const steps = [
+    "create table tx (id integer primary key, note text)",
+    "insert into tx (note) values ('kept')",
+    "begin",
+    "insert into tx (note) values ('dropped')",
+    "savepoint s1",
+    "insert into tx (note) values ('also dropped')",
+    "rollback to savepoint s1",
+    "release savepoint s1",
+    "commit",
+    "begin",
+    "create table undone (v integer)",
+    "rollback",
+  ];
+  try {
+    for (const statement of steps) {
+      engine.execute(statement);
+      external.prepare(statement).run();
+    }
+    const query = "select id, note from tx order by id";
+    assert.deepEqual(
+      engine.execute(query).rows,
+      external.prepare(query).all().map((row) => Object.values(row as Record<string, unknown>)),
+    );
+    // `last_insert_rowid` is connection state that a rollback never undoes.
+    assert.equal(engine.lastInsertRowid(), 3);
+    assert.equal((external.prepare("select last_insert_rowid() as id").get() as { id: number }).id, 3);
+    // The rolled back `create table` left no row in the catalog.
+    assert.equal(engine.tryExecute("select v from undone").ok, false);
+    assert.throws(() => external.prepare("select v from undone"));
+    const commit = engine.tryExecute("commit");
+    assert.equal(commit.ok, false);
+    assert.equal(commit.error?.code, "transaction-missing");
+    assert.equal(commit.error?.message, "cannot commit - no transaction is active");
+    const missing = engine.tryExecute("rollback to missing");
+    assert.equal(missing.error?.message, "no such savepoint: missing");
+  } finally {
+    external.close();
+  }
+});
+
+test("bound parameters fill placeholders on insert and select", () => {
+  const engine = createEngine();
+  const external = new BetterSqlite(":memory:");
+  const create = "create table p (id integer primary key, name text, score real)";
+  engine.execute(create);
+  external.prepare(create).run();
+  const insert = "insert into p (name, score) values (?, ?)";
+  for (const row of [["ada", 9.5], ["bob", null]] as const) {
+    const result = engine.executeWithParameters(insert, [...row]).at(-1);
+    assert.equal(result?.affected, 1);
+    external.prepare(insert).run(...row);
+  }
+  const query = "select id, name, score from p where name = ? order by id";
+  assert.deepEqual(engine.executeWithParameters(query, ["ada"]).at(-1)?.rows, [[1, "ada", 9.5]]);
+  assert.deepEqual(
+    external.prepare(query).all("ada").map((row) => Object.values(row as Record<string, unknown>)),
+    [[1, "ada", 9.5]],
+  );
+  engine.exec("insert into p (name, score) values ('eve', 7.25)");
+  assert.equal(engine.lastInsertRowid(), 3);
+  external.close();
+});
+
+test("fromSnapshot reopens an image with its catalog and rejects a broken header", () => {
+  const engine = createEngine();
+  engine.exec("create table parent (id integer primary key, name text); insert into parent values (1, 'ada')");
+  const image = Buffer.from(engine.snapshot());
+  const reopened = createEngineFromSnapshot(image);
+  assert.deepEqual(reopened.execute("select id, name from parent").rows, [[1, "ada"]]);
+  // Reading a reopened image must not rewrite it.
+  assert.equal(Buffer.compare(reopened.snapshot(), image), 0);
+  assert.deepEqual(reopened.execute("select count(*) from sqlite_master").rows, [[1]]);
+  assert.throws(() => createEngineFromSnapshot(Buffer.from("not a database")));
 });
