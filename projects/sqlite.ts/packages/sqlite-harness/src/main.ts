@@ -17,6 +17,8 @@ Commands
 
 Corpus parameters are explicit:
   --seed <n>   --count <n>   --json
+  --check             require every difference to match the baseline and fail otherwise
+  --update-baseline   rewrite the baseline from the current run and drop fixed entries
 
 Bench parameters are environment variables, not config files:
   BENCH_ROWS  BENCH_TXN  BENCH_POINT  BENCH_RANGE  BENCH_PAGE  BENCH_ROUNDS
