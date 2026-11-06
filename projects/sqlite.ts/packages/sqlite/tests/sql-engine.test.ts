@@ -1268,3 +1268,100 @@ test("add column default values reach existing rows and extend select order", ()
   assert.equal(dropColumn.error?.clause, "DROP COLUMN");
   assert.equal(dropColumn.error?.statement, "alter-table");
 });
+
+interface OracleDatabase {
+  exec(sql: string): void;
+  prepare(sql: string): { columns(): Array<{ name: string }>; all(): Array<Record<string, unknown>> };
+  close(): void;
+}
+
+function oracleRows(db: OracleDatabase, sql: string): unknown[][] {
+  const statement = db.prepare(sql);
+  const columns = statement.columns().map((column) => column.name);
+  return statement.all().map((row) => columns.map((column) => row[column]));
+}
+
+function withOracle(steps: string[], run: (db: OracleDatabase) => void): void {
+  const db = new BetterSqlite(":memory:") as unknown as OracleDatabase;
+  try {
+    for (const step of steps) db.exec(step);
+    run(db);
+  } finally {
+    db.close();
+  }
+}
+
+// Every expected row below is read from better-sqlite3 at run time; no value
+// is copied from this engine.
+test("limit expressions, offsets and out-of-range values match better-sqlite3", () => {
+  const steps = ["create table t (a integer)", "insert into t values (1), (2), (3)"];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  const cases = [
+    "select a from t order by a limit 1 + 1",
+    "select a from t order by a limit abs(-3)",
+    "select a from t order by a limit (select 2)",
+    "select a from t order by a limit 2 offset 1",
+    "select a from t order by a limit 1 + 1 offset 0 + 1",
+    "select a from t order by a limit -2",
+    "select a from t order by a limit -2 offset 1",
+    "select a from t order by a limit 999",
+    "select a from t order by a limit '2'",
+    "select a from t order by a limit 3 offset -1",
+  ];
+  withOracle(steps, (db) => {
+    for (const sql of cases) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+    // A fractional limit is "datatype mismatch" on both sides.
+    assert.throws(() => db.prepare("select a from t order by a limit 2.9").all(), /datatype mismatch/i);
+  });
+  const fractional = engine.tryExecute("select a from t order by a limit 2.9");
+  assert.equal(fractional.ok, false);
+  assert.equal(fractional.error?.code, "datatype-mismatch");
+  assert.equal(fractional.error?.clause, "LIMIT");
+});
+
+// Rows come from better-sqlite3; partitions, empty input and an explicit frame
+// are all compared against the live oracle.
+test("window functions match better-sqlite3 across partitions and frames", () => {
+  const steps = ["create table w (g text, a integer)", "insert into w values ('x', 1), ('x', 2), ('y', 2), ('z', 3)"];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  const cases = [
+    "select row_number() over (order by a) from w",
+    "select rank() over (order by a) from w",
+    "select dense_rank() over (order by a) from w",
+    "select a, sum(a) over (order by a) from w",
+    "select g, a, sum(a) over (partition by g order by a) from w",
+    "select g, a, sum(a) over (partition by g order by a rows between unbounded preceding and current row) from w",
+    "select g, sum(a) over win from w window win as (partition by g)",
+  ];
+  withOracle(steps, (db) => {
+    for (const sql of cases) {
+      assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+    }
+  });
+
+  // An empty table yields no rows for a partitioned window on both sides.
+  const emptySteps = ["create table e (g text, a integer)"];
+  const empty = createEngine(4096);
+  for (const step of emptySteps) empty.execute(step);
+  const emptySql = "select g, row_number() over (partition by g) from e";
+  withOracle(emptySteps, (db) => {
+    assert.deepEqual(empty.execute(emptySql).rows, oracleRows(db, emptySql));
+  });
+});
+
+// The statement shape still differs, but the stored row must equal what real
+// SQLite stores after `INSERT ... DEFAULT VALUES`.
+test("insert default values stores the row better-sqlite3 stores", () => {
+  const steps = ["create table dv (a integer default 7, b text default 'x', c integer)"];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  engine.execute("insert into dv default values");
+  const stored = engine.execute("select a, b, c from dv").rows;
+  withOracle([...steps, "insert into dv default values"], (db) => {
+    assert.deepEqual(stored, oracleRows(db, "select a, b, c from dv"));
+  });
+});
