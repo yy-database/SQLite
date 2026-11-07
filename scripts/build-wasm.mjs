@@ -7,7 +7,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 process.exit(
   spawnSync(
     process.execPath,
-    [join(root, "projects/sqlite.ts/packages/sqlite-harness/stages/wasm/build.mjs")],
+    [join(root, "projects/sqlite.ts/packages/sqlite-wasm/build.mjs")],
     { stdio: "inherit" },
   ).status ?? 1,
 );

@@ -24,17 +24,17 @@ does not have.
 
 ```powershell
 cargo build -p sqlite-wasm --target wasm32-unknown-unknown --release
-wasm-bindgen --target nodejs --out-dir projects/sqlite.ts/platforms/sqlite-unknown-wasm32/pkg --out-name sqlite_wasm projects/sqlite.rs/target/wasm32-unknown-unknown/release/sqlite_wasm.wasm
+wasm-bindgen --target nodejs --out-dir projects/sqlite.ts/platforms/sqlite-unknown-wasm32/lib --out-name sqlite_wasm projects/sqlite.rs/target/wasm32-unknown-unknown/release/sqlite_wasm.wasm
 ```
 
-`projects/sqlite.ts/packages/sqlite-harness/stages/wasm/build.mjs` runs both steps and scopes the generated glue to
+`../../sqlite.ts/packages/sqlite-wasm` runs both steps and scopes the generated glue to
 CommonJS. `wasm-opt -Oz` is optional; the reported size below was measured with
 `binaryen` release `version_123`.
 
 ## Host contract
 
 ```js
-const { MemoryDatabase } = require("./pkg/sqlite_wasm.js");
+const { MemoryDatabase } = require("@yydb/sqlite-unknown-wasm32");
 const database = new MemoryDatabase(4096);
 database.exec("create table bench (id integer primary key, label text)");
 for (let index = 1; index <= 1000; index += 1) {

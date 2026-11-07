@@ -100,8 +100,8 @@
 node projects/sqlite.ts/packages/sqlite-harness/stages/node/smoke.mjs
 
 # WebAssembly：内存库写 1000 行，导出快照后外部校验
-node projects/sqlite.ts/packages/sqlite-harness/stages/wasm/build.mjs
-node projects/sqlite.ts/packages/sqlite-harness/stages/wasm/smoke.mjs
+node projects/sqlite.ts/packages/sqlite-wasm/build.mjs
+node projects/sqlite.ts/packages/sqlite-wasm/smoke.mjs
 
 # PyO3：maturin wheel + 干净 venv + 5 项特性测试
 node projects/sqlite.ts/packages/sqlite-harness/stages/python/run_tests.mjs</code></pre>

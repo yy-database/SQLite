@@ -65,12 +65,13 @@ function runNode() {
 }
 
 function runWasm() {
-  const build = spawn(process.execPath, [join(here, "wasm", "build.mjs")], repository);
+  const wasmPackage = join(here, "..", "..", "sqlite-wasm");
+  const build = spawn(process.execPath, [join(wasmPackage, "build.mjs")], repository);
   return summarize({
     name: "platforms/wasm",
     assertionsFloor: 45,
     sqlFloor: 42,
-    steps: [build, spawn(process.execPath, [join(here, "wasm", "smoke.mjs")], repository)],
+    steps: [build, spawn(process.execPath, [join(wasmPackage, "smoke.mjs")], repository)],
     truth: (text) => text.includes('"status": "PASS"') && text.includes('"integrity_check": "ok"'),
   });
 }

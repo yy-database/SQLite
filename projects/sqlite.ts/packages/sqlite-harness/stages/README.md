@@ -7,7 +7,7 @@ against an external engine.
 | Layer | Binding crate | Command | Verification |
 |-------|---------------|---------|--------------|
 | `node/` | `sqlite-napi` | `node projects/sqlite.ts/packages/sqlite-harness/stages/node/smoke.mjs` | 1000 rows through the Node-API writer, then CPython `sqlite3` `PRAGMA integrity_check` |
-| `wasm/` | `sqlite-wasm` | `node projects/sqlite.ts/packages/sqlite-harness/stages/wasm/build.mjs` then `.../smoke.mjs` | 1000 rows through in-memory SQL, snapshot written to disk, then CPython `sqlite3` check |
+| `../../sqlite-wasm` | `sqlite-wasm` | `node projects/sqlite.ts/packages/sqlite-wasm/build.mjs` then `.../smoke.mjs` | 1000 rows through in-memory SQL, snapshot written to disk, then CPython `sqlite3` check |
 | `python/` | `sqlite-pyo3` | `node projects/sqlite.ts/packages/sqlite-harness/stages/python/run_tests.mjs` | maturin wheel in a clean venv, five feature tests (roundtrip, WAL, hot journal, `WITHOUT ROWID`, UTF-16) |
 
 `verify_sqlite.py` is the shared external oracle: it opens a `.sqlite3` file
@@ -22,4 +22,4 @@ platform scripts on its own, so there is one entry and one result contract.
 The python stage performs the clean virtual-environment install as part of
 `test`, not as a separate check.
 
-Build artifacts (`pkg/`, `out/`, `wheels/`, `.venv/`) are ignored.
+Build artifacts (`lib/`, `out/`, `wheels/`, `.venv/`) are ignored.
