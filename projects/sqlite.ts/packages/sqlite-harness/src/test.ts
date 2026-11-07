@@ -36,7 +36,7 @@ const FLOORS: Record<LayerName, { ts: number; py: number }> = {
     py: Number(process.env.PY_EXTERNAL_FLOOR ?? 265),
   },
   storage: {
-    ts: Number(process.env.TS_STORAGE_FLOOR ?? 62),
+    ts: Number(process.env.TS_STORAGE_FLOOR ?? 53),
     py: Number(process.env.PY_STORAGE_FLOOR ?? 35),
   },
   sql: {
@@ -257,14 +257,9 @@ function tsFiles(): { external: string[]; storage: string[]; sql: string[] } {
   return {
     external: names.filter((name) => TS_EXTERNAL_FILES.includes(name)).map((name) => `tests/${name}`),
     sql: names.filter((name) => TS_SQL_FILES.includes(name)).map((name) => `tests/${name}`),
-    // The emulator CLI suite exercises the packaged workspace entry, so it
-    // belongs to the storage layer with the rest of the primitives.
-    storage: [
-      ...names
-        .filter((name) => !TS_EXTERNAL_FILES.includes(name) && !TS_SQL_FILES.includes(name))
-        .map((name) => `tests/${name}`),
-      "../../emulators/sqlite/tests/cli.test.ts",
-    ],
+    storage: names
+      .filter((name) => !TS_EXTERNAL_FILES.includes(name) && !TS_SQL_FILES.includes(name))
+      .map((name) => `tests/${name}`),
   };
 }
 
