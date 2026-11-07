@@ -36,7 +36,7 @@ const FLOORS: Record<LayerName, { ts: number; py: number }> = {
     py: Number(process.env.PY_EXTERNAL_FLOOR ?? 265),
   },
   storage: {
-    ts: Number(process.env.TS_STORAGE_FLOOR ?? 53),
+    ts: Number(process.env.TS_STORAGE_FLOOR ?? 58),
     py: Number(process.env.PY_STORAGE_FLOOR ?? 35),
   },
   sql: {
