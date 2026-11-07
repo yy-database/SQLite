@@ -2418,18 +2418,42 @@ test("composite foreign keys and statement rollback match better-sqlite3", () =>
   });
 });
 
-// Deferred checks still stay rejected: this engine only implements SQLite's
-// immediate constraint timing.
-test("deferred foreign keys stay rejected", () => {
-  const engine = createEngine(4096);
-  engine.execute("create table parent (id integer primary key)");
-  const deferred = engine.tryExecute(
+// `DEFERRABLE INITIALLY DEFERRED` moves the reference check to COMMIT inside an
+// explicit transaction, while autocommit still checks at the statement end.
+test("deferred foreign keys wait for commit like better-sqlite3", () => {
+  const steps = [
+    "pragma foreign_keys = on",
+    "create table parent (id integer primary key)",
     "create table c (id integer primary key, pid integer references parent (id) deferrable initially deferred)",
-  );
-  assert.equal(deferred.ok, false);
-  assert.equal(deferred.error?.code, "unsupported-deferred-foreign-key");
-  assert.equal(deferred.error?.clause, "DEFERRABLE");
-  engine.execute("create table ok (id integer primary key, pid integer references parent (id) not deferrable)");
+  ];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+
+  // Without a transaction the statement boundary is the commit boundary.
+  const orphan = engine.tryExecute("insert into c values (1, 7)");
+  assert.equal(orphan.ok, false);
+  assert.equal(orphan.error?.code, "SQLITE_CONSTRAINT_FOREIGNKEY");
+
+  // A broken reference that is repaired before COMMIT is accepted.
+  engine.execute("begin");
+  engine.execute("insert into c values (2, 8)");
+  engine.execute("insert into parent values (8)");
+  engine.execute("commit");
+
+  // An unresolvable reference fails COMMIT and leaves the transaction open.
+  engine.execute("begin");
+  engine.execute("insert into c values (3, 9)");
+  const failed = engine.tryExecute("commit");
+  assert.equal(failed.ok, false);
+  assert.equal(failed.error?.message, "FOREIGN KEY constraint failed");
+  engine.execute("insert into parent values (9)");
+  engine.execute("commit");
+  assert.deepEqual(engine.execute("select id, pid from c order by id").rows, [[2, 8], [3, 9]]);
+
+  withOracle([...steps, "insert into parent values (8), (9)", "insert into c values (2, 8), (3, 9)"], (db) => {
+    const sql = "select id, pid from c order by id";
+    assert.deepEqual(engine.execute(sql).rows, oracleRows(db, sql), sql);
+  });
 });
 
 // The live oracle decides every row edit, the rollback and the child-table
