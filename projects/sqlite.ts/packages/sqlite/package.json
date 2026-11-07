@@ -24,11 +24,11 @@
         "typecheck": "tsc --noEmit -p tsconfig.json"
     },
     "optionalDependencies": {
-        "@yydb/sqlite-darwin-arm64": "0.0.0",
-        "@yydb/sqlite-darwin-x64": "0.0.0",
-        "@yydb/sqlite-linux-x64": "0.0.0",
-        "@yydb/sqlite-unknown-wasm32": "0.0.0",
-        "@yydb/sqlite-win32-x64": "0.0.0"
+        "@yydb/sqlite-darwin-arm64": "workspace:*",
+        "@yydb/sqlite-darwin-x64": "workspace:*",
+        "@yydb/sqlite-linux-x64": "workspace:*",
+        "@yydb/sqlite-unknown-wasm32": "workspace:*",
+        "@yydb/sqlite-win32-x64": "workspace:*"
     },
     "engines": {
         "node": ">=18"
