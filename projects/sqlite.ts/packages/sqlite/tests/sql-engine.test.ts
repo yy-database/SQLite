@@ -1692,6 +1692,46 @@ test("pragma integrity_check reports ok across tables, indexes, views and a free
   }
 });
 
+test("explain reports this engine's program and plan without executing", () => {
+  const steps = ["create table t (a integer, b text)", "insert into t values (1, 'x')"];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+
+  // The column layout is SQLite's stable contract even though the step rows
+  // describe this engine's own interpreter.
+  const program = engine.execute("explain select a from t where b = 'x'");
+  withOracle(steps, (db) => {
+    assert.deepEqual(
+      program.columns,
+      db.prepare("explain select a from t where b = 'x'").columns().map((column) => column.name),
+    );
+    assert.deepEqual(
+      engine.execute("explain query plan select a from t where b = 'x'").columns,
+      db.prepare("explain query plan select a from t where b = 'x'").columns().map((column) => column.name),
+    );
+  });
+  assert.deepEqual(program.columns, ["addr", "opcode", "p1", "p2", "p3", "p4", "p5", "comment"]);
+  assert.equal(program.rows.length > 0, true);
+  assert.equal(
+    program.rows.every((row) => row.length === program.columns.length),
+    true,
+  );
+
+  // This engine has no index-driven lookup path, so the plan is an honest scan.
+  const plan = engine.execute("explain query plan select a from t where b = 'x'");
+  assert.deepEqual(plan.columns, ["id", "parent", "notused", "detail"]);
+  assert.deepEqual(plan.rows, [[1, 0, 0, "SCAN t"]]);
+
+  // EXPLAIN is not a side channel that executes the statement.
+  const before = engine.execute("select count(*) from t").rows[0][0];
+  engine.execute("explain insert into t values (2, 'y')");
+  engine.execute("explain query plan delete from t");
+  assert.equal(engine.execute("select count(*) from t").rows[0][0], before);
+
+  // A missing source still fails at prepare time with SQLite's wording.
+  assert.throws(() => engine.execute("explain select * from nope"), /no such table: nope/);
+});
+
 test("rename column rewrites checks and index text but never string literals", () => {
   const engine = createEngine();
   engine.exec("CREATE TABLE t(t INTEGER, x TEXT DEFAULT 'a', y TEXT, CHECK (t > 0 AND x <> 't')); CREATE INDEX ix ON t(x, t)");
