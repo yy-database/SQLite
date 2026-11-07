@@ -1,7 +1,7 @@
 // Test-only bridge: exposes the `sqlite.node` surface and `better-sqlite3`
 // oracle to the Python suite. It is not a product entry point.
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,10 +16,10 @@ function oracleRequire(specifier) {
   return require(require.resolve(specifier, { paths: [repository] }));
 }
 
-// The binding is staged in `../sqlite.ts/platforms/<pkg>/lib` by
-// `scripts/build-napi.mjs`. The bridge is test-only glue, so it reads that
-// staged artefact directly instead of resolving an optional dependency that
-// this Python project does not declare.
+// The binding is staged at the platform package root by `scripts/build-napi.mjs`
+// and `package.json#main` owns its filename. The bridge is test-only glue, so it
+// reads that staged artefact directly instead of resolving an optional dependency
+// that this Python project does not declare.
 function platformKey() {
   if (process.platform === "win32" && process.arch === "x64") return "win32-x64";
   if (process.platform === "linux" && process.arch === "x64") return "linux-x64";
@@ -33,12 +33,13 @@ function nativePath() {
   if (fromEnv) return resolve(fromEnv);
   const key = platformKey();
   if (!key) throw new Error(`no SQLite native binding for ${process.platform}-${process.arch}`);
-  const libDir = join(project, "..", "sqlite.ts", "platforms", `sqlite-${key}`, "lib");
-  const fileName = existsSync(libDir)
-    ? readdirSync(libDir).find((entry) => entry.endsWith(".node"))
-    : undefined;
-  if (!fileName) throw new Error(`missing .node binary in ${libDir}, run pnpm build:napi`);
-  return join(libDir, fileName);
+  const packageDir = join(project, "..", "sqlite.ts", "platforms", `sqlite-${key}`);
+  const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
+  const main = typeof manifest.main === "string" ? manifest.main : undefined;
+  if (!main) throw new Error(`missing main in ${join(packageDir, "package.json")}, run pnpm build:napi`);
+  const binding = join(packageDir, main);
+  if (!existsSync(binding)) throw new Error(`missing .node binary at ${binding}, run pnpm build:napi`);
+  return binding;
 }
 
 const native = require(nativePath());
