@@ -1,6 +1,6 @@
 # SQL capability matrix
 
-Measured against the pinned `database.rs` facade rev `86c4fb1` (`86c4fb1f056d4c2d7d7bc70a9957337137182efd`,
+Measured against the pinned `database.rs` facade rev `3a184c7` (`3a184c775fbf6b4aab29703c316caee63ee81a45`,
 `projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
 through both live oracles; the oracle value, not an internal expectation, decides whether a row is correct.
 
@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (121 feature rows): **110 gated / 0 uncovered / 11 missing** at the pin.
+Cluster totals (121 feature rows): **114 gated / 0 uncovered / 7 missing** at the pin.
 
 ## DDL
 
@@ -70,12 +70,12 @@ Cluster totals (121 feature rows): **110 gated / 0 uncovered / 11 missing** at t
 | `DELETE FROM ... AS alias` | `delete from da as x where x.a = 2 returning a` | gated | oracle-matching with both oracles |
 | `INSERT ... SELECT` | `insert into is2 (a) select a from is1 where a > 1` | gated | the query is evaluated before any row is written, so a self-referencing insert reads the original rows and then hits the primary key; a column subset follows the `VALUES` mapping, arity errors report `table t has N columns but M values were supplied` / `N values for M columns`, and `ON CONFLICT` / `RETURNING` trail the query; `insert select and replace follow better-sqlite3` |
 | `INSERT OR REPLACE` | `insert or replace into orr values (1,'b')` | gated | every stored row that conflicts on any unique key (including a rowid alias) is deleted before the new row is written, so one row can displace several; the message wording and statement-level rollback on a later `NOT NULL` failure match better-sqlite3; `insert select and replace follow better-sqlite3` |
-| `INSERT OR IGNORE` | `insert or ignore into orr values (1,'b')` | missing | `unsupported-clause` `OR` |
+| `INSERT OR IGNORE` | `insert or ignore into orr values (1,'b')` | gated | a row that violates a rowid alias, a `UNIQUE` column, `NOT NULL` or `CHECK` is skipped while later rows in the same statement still land, and the statement reports only the rows it wrote; `insert or ignore, values expressions, update from and row values match the oracles` |
 | UPSERT `ON CONFLICT DO NOTHING` / `DO UPDATE` | `insert into up values (1, 20) on conflict (id) do update set v = excluded.v` | gated | targets match a rowid alias, a column key, a table-level `UNIQUE`, or a partial unique index whose `WHERE` text equals the target's, `excluded.<column>` reads the supplied tuple while a bare column reads the stored row, a false `DO UPDATE ... WHERE` leaves the row alone, a target naming no uniqueness constraint reports `ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint` (including a partial-index table addressed without `WHERE` or with a different predicate), `excluded` in the target predicate reports `no such column: excluded.a` while `p.a` resolves, a supplied row outside the partial predicate inserts even when the target names that index, a full and partial index on the same column resolve through the one the target's `WHERE` selects, two same-column partial indexes resolve only the selected one while a row violating the other still aborts with `UNIQUE constraint failed: r.a`, skipped rows report `affected = 0` and no `RETURNING` row, rewritten rows survive a reopen and better-sqlite3 `integrity_check = ok`, a `DO UPDATE` rewrite fires `BEFORE INSERT` / `BEFORE UPDATE` / `AFTER UPDATE` with the rewritten values while `WHEN` and `UPDATE OF` follow the assignment list, and parent-side and child-side reference failures match `SQLITE_CONSTRAINT_FOREIGNKEY`; `upsert DO NOTHING and DO UPDATE follow better-sqlite3`, `upsert targets partial unique indexes by their predicate like better-sqlite3`, `upsert DO UPDATE fires update triggers like better-sqlite3`, `upsert DO UPDATE runs foreign key checks like better-sqlite3` |
 | `REPLACE INTO` | `replace into rp values (1,'b')` | gated | same conflict-resolution path as `INSERT OR REPLACE`, also accepting a `SELECT` source; `DELETE` triggers stay silent unless `recursive_triggers` is on, foreign-key `ON DELETE` actions still run, and an insert that then violates `NOT NULL` rolls the whole statement back; `replace only fires delete triggers with recursive_triggers and applies foreign keys` |
-| Expression inside a `VALUES` tuple | `insert into ie values (1 + 1)` | missing | `syntax`: `VALUES` tuple only accepts literals |
-| `UPDATE ... FROM` | `update ua set v = ub.w from ub where ua.id = ub.id` | missing | `unsupported-clause` after `UPDATE` |
-| Row-value assignment `SET (a, b) = (...)` | `update rv set (a, b) = (1, 2)` | missing | `unsupported-clause` (deliberate rejection) |
+| Expression inside a `VALUES` tuple | `insert into ie values (1 + 1)` | gated | every tuple element is a full expression, so operators, functions and `CAST` evaluate per row and the column affinity then applies as usual; `insert or ignore, values expressions, update from and row values match the oracles` |
+| `UPDATE ... FROM` | `update ua set v = ub.w from ub where ua.id = ub.id` | gated | the target row joins the `FROM` product, `SET` and `WHERE` resolve the target, its alias and every source alias, an empty source leaves every target row untouched with `affected = 0`, `RETURNING` sees the target columns only, and a view target rejects the clause as `unsupported-clause`; `insert or ignore, values expressions, update from and row values match the oracles` |
+| Row-value assignment `SET (a, b) = (...)` | `update rv set (a, b) = (1, 2)` | gated | the tuple expands to one assignment per column, every right-hand side reads the pre-statement row so `SET (a, b) = (b + 1, a + 10)` is a real rotation, `WHERE` still filters rows, an arity mismatch reports `N columns assigned M values`, and a row-value subquery on the right stays `unsupported-clause`; `insert or ignore, values expressions, update from and row values match the oracles` |
 
 ## Expressions, type affinity and NULL semantics
 

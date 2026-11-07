@@ -170,6 +170,73 @@ class SqlEngineTests(unittest.TestCase):
         )
         self.assertEqual(selected["rows"], [["[1,2]", 30, None, '{"a":1,"b":2}']])
 
+    def test_insert_or_ignore_values_expressions_update_from_and_row_values_match_oracle(self):
+        self.engine.execute("create table ci(a integer primary key, b text unique, c text not null)")
+        for statement in (
+            "insert or ignore into ci values (1, 'x', 'n')",
+            "insert or ignore into ci values (1, 'y', 'n')",
+            "insert or ignore into ci values (2, 'x', 'n')",
+            "insert or ignore into ci values (2, 'y', null)",
+            "insert or ignore into ci values (3, 'z', 'n')",
+        ):
+            self.engine.execute(statement)
+        self.assertEqual(
+            self.engine.execute("select a, b, c from ci order by a")["rows"],
+            [[1, "x", "n"], [3, "z", "n"]],
+        )
+
+        self.engine.execute("create table ve(a integer, b text)")
+        for statement in (
+            "insert into ve values (1 + 1, upper('ab'))",
+            "insert into ve values (abs(-2), 'x' || 'y')",
+            "insert into ve values (length('abc'), cast(3.9 as integer))",
+            "insert into ve(a, b) values (10 * 2 + 1, 'p')",
+        ):
+            self.engine.execute(statement)
+        self.assertEqual(
+            self.engine.execute("select a, b from ve order by a")["rows"],
+            [[2, "AB"], [2, "xy"], [3, "3"], [21, "p"]],
+        )
+
+        self.engine.execute("create table ua(id integer primary key, v text)")
+        self.engine.execute("create table ub(id integer primary key, w text)")
+        self.engine.execute("insert into ua values (1, 'a'), (2, 'b'), (3, 'c')")
+        self.engine.execute("insert into ub values (1, 'W1'), (3, 'W3')")
+        updated = self.engine.execute("update ua set v = ub.w from ub where ua.id = ub.id returning id, v")
+        self.assertEqual(updated["rows"], [[1, "W1"], [3, "W3"]])
+        self.assertEqual(updated["affected"], 2)
+        self.assertEqual(
+            self.engine.execute("select id, v from ua order by id")["rows"],
+            [[1, "W1"], [2, "b"], [3, "W3"]],
+        )
+
+        self.engine.execute("create table ea(id integer primary key, v text)")
+        self.engine.execute("create table eb(id integer primary key, w text)")
+        self.engine.execute("insert into ea values (1, 'a')")
+        self.assertEqual(self.engine.execute("update ea set v = eb.w from eb where ea.id = eb.id")["affected"], 0)
+        self.assertEqual(self.engine.execute("select id, v from ea")["rows"], [[1, "a"]])
+
+        self.engine.execute("create table ca(id integer primary key, v text)")
+        self.engine.execute("create table cb(id integer primary key, w text)")
+        self.engine.execute("insert into ca values (1, 'a'), (2, 'b')")
+        self.engine.execute("insert into cb values (1, 'X'), (2, 'Y')")
+        self.engine.execute("update ca as x set v = y.w from cb as y where x.id = y.id")
+        self.assertEqual(
+            self.engine.execute("select id, v from ca order by id")["rows"],
+            [[1, "X"], [2, "Y"]],
+        )
+
+        self.engine.execute("create table rv(a integer, b integer, c integer)")
+        self.engine.execute("insert into rv values (9, 9, 9)")
+        self.engine.execute("update rv set (a, b) = (1, 2)")
+        self.assertEqual(self.engine.execute("select a, b, c from rv")["rows"], [[1, 2, 9]])
+        self.engine.execute("update rv set (a, b) = (b + 1, a + 10)")
+        self.assertEqual(self.engine.execute("select a, b from rv")["rows"], [[3, 11]])
+        rejected = self.engine.try_execute("update rv set (a, b) = (5)")
+        self.assertIs(rejected["ok"], False)
+        self.assertEqual(rejected["error"]["code"], "arity-mismatch")
+        self.assertEqual(rejected["error"]["message"], "2 columns assigned 1 values")
+
     def test_rejections_carry_a_code_and_clause(self):
         right_join = self.engine.try_execute("select * from people right join people as p2 on people.id = p2.id")
         self.assertIs(right_join["ok"], True)
