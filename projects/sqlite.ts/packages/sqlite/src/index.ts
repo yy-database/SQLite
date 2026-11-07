@@ -69,7 +69,8 @@ export interface ExecResult {
     | "rollback"
     | "savepoint"
     | "release"
-    | "rollback-to";
+    | "rollback-to"
+    | "explain";
   affected: number;
   columns: string[];
   rows: ExecValue[][];

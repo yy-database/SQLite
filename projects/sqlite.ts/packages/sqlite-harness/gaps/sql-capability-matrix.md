@@ -1,6 +1,6 @@
 # SQL capability matrix
 
-Measured against the pinned `database.rs` facade rev `643a344` (`643a344ed66aee8a57aab98ac64ec44093549ed1`,
+Measured against the pinned `database.rs` facade rev `24ff44d` (`24ff44d7f931a453ffe1fa1d357c898491e72fc6`,
 `projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
 through both live oracles; the oracle value, not an internal expectation, decides whether a row is correct.
 
@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (121 feature rows): **115 gated / 0 uncovered / 6 missing** at the pin.
+Cluster totals (121 feature rows): **117 gated / 0 uncovered / 4 missing** at the pin.
 
 ## DDL
 
@@ -179,8 +179,8 @@ Cluster totals (121 feature rows): **115 gated / 0 uncovered / 6 missing** at th
 
 | Feature | Probe | Status | Evidence |
 |---------|-------|--------|----------|
-| `EXPLAIN <select>` | `explain select a from ex where a = 1` | missing | `unsupported-statement` at `explain` |
-| `EXPLAIN QUERY PLAN <select>` | `explain query plan select a from eq where a = 1` | missing | `unsupported-statement` at `explain` |
+| `EXPLAIN <select>` | `explain select a from ex where a = 1` | gated | parses `EXPLAIN` and `EXPLAIN QUERY PLAN` over any statement, rejects a missing source table with `no such table`, returns SQLite's eight columns `addr/opcode/p1/p2/p3/p4/p5/comment` and never executes the statement; rows describe this interpreter's own steps rather than a VDBE disassembly, so only the column contract is compared with better-sqlite3; `explain reports this engine's program and plan without executing` |
+| `EXPLAIN QUERY PLAN <select>` | `explain query plan select a from eq where a = 1` | gated | returns SQLite's four columns `id/parent/notused/detail` and reports the accesses that really run, which is `SCAN <name>` per source because this engine has no index-driven lookup, plus `USE TEMP B-TREE FOR GROUP BY` / `DISTINCT` / `ORDER BY`; ids are allocated locally and `notused` stays zero since the real value is an internal bitmap; `explain reports this engine's program and plan without executing` |
 
 ## Attached databases and export
 
@@ -205,7 +205,7 @@ asserted by the gate.
 | 1 | `COLLATE` (column, expression, `ORDER BY`) | Case-insensitive comparisons and sorted output | `sql.rs`, no collation hook in the key comparators |
 | 2 | JSON functions and `->` / `->>` | Structured payloads stored as text | `sql.rs:333-357` (`ScalarFunction`), `BinaryOp` |
 
-Next tier, lower blast radius but still visible: `EXPLAIN`, `VACUUM`,
+Next tier, lower blast radius but still visible: `VACUUM`,
 `INSERT OR IGNORE`, `UPDATE ... FROM`, row-value assignment and expression tuples inside `VALUES`.
 
 ## Landed at this pin
