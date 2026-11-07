@@ -3,10 +3,10 @@ import { createRequire } from "node:module";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { stagesDir, wasmPlatform } from "../paths.mjs";
+import { stagesDir, wasmPlatform } from "../sqlite-harness/stages/paths.mjs";
 
 const require = createRequire(import.meta.url);
-const { MemoryDatabase } = require(resolve(wasmPlatform, "pkg/sqlite_wasm.js"));
+const { MemoryDatabase } = require(resolve(wasmPlatform, "lib/sqlite_wasm.js"));
 
 const outDir = resolve(stagesDir, "wasm/out");
 const databasePath = resolve(outDir, "smoke.sqlite3");
@@ -176,7 +176,7 @@ checkHostContract();
 checkPrimitives();
 checkThreeValuedLogic();
 
-const wasmBytes = readFileSync(resolve(wasmPlatform, "pkg/sqlite_wasm_bg.wasm")).length;
+const wasmBytes = readFileSync(resolve(wasmPlatform, "lib/sqlite_wasm_bg.wasm")).length;
 const database = new MemoryDatabase(4096);
 const created = JSON.parse(database.exec("create table bench (id integer primary key, label text not null, score real)"));
 assertSql(created[0].statement === "create-table", "create table result shape");

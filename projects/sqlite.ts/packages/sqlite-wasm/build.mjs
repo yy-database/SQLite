@@ -1,12 +1,19 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 
-import { repository, wasmPlatform } from "../paths.mjs";
+import { repository, wasmPlatform } from "../sqlite-harness/stages/paths.mjs";
 
 const rustWorkspace = resolve(repository, "projects/sqlite.rs");
-const packageDir = resolve(wasmPlatform, "pkg");
-const rawWasm = resolve(rustWorkspace, "target/wasm32-unknown-unknown/release/sqlite_wasm.wasm");
+// The glue belongs to the platform package, not to the crate or to a second
+// `sqlite-wasm` package.
+const packageDir = resolve(wasmPlatform, "lib");
+const targetRoot = process.env.CARGO_TARGET_DIR
+  ? isAbsolute(process.env.CARGO_TARGET_DIR)
+    ? process.env.CARGO_TARGET_DIR
+    : resolve(rustWorkspace, process.env.CARGO_TARGET_DIR)
+  : resolve(rustWorkspace, "target");
+const rawWasm = resolve(targetRoot, "wasm32-unknown-unknown/release/sqlite_wasm.wasm");
 
 function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, stdio: "inherit" });

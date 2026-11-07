@@ -3,9 +3,17 @@
     "version": "0.0.0",
     "license": "MPL-2.0",
     "description": "WASM binding for @yydb/sqlite",
-    "main": "sqlite.unknown-wasm32.node",
+    "main": "lib/sqlite_wasm.js",
+    "types": "lib/sqlite_wasm.d.ts",
+    "exports": {
+        ".": {
+            "types": "./lib/sqlite_wasm.d.ts",
+            "require": "./lib/sqlite_wasm.js",
+            "default": "./lib/sqlite_wasm.js"
+        }
+    },
     "files": [
-        "sqlite.unknown-wasm32.node",
+        "lib",
         "readme.md"
     ],
     "engines": {

@@ -32,10 +32,9 @@ __pycache__/
 # Build artifacts
 projects/sqlite.ts/packages/sqlite/dist/
 projects/sqlite.ts/packages/sqlite-harness/stages/node/out/
-projects/sqlite.ts/packages/sqlite-harness/stages/wasm/pkg/
 projects/sqlite.ts/packages/sqlite-harness/stages/python/wheels/
 projects/sqlite.ts/packages/sqlite-harness/stages/python/.venv/
-projects/sqlite.ts/platforms/sqlite-unknown-wasm32/pkg/
+projects/sqlite.ts/platforms/sqlite-unknown-wasm32/lib/
 projects/sqlite.ts/platforms/*/*.node
 
 # Local npm 2FA (never commit)

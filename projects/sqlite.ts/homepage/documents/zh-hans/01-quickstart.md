@@ -38,7 +38,7 @@ print(len(SqliteDatabase.open("bench.sqlite3").table("bench")))  # 1000
 ## WebAssembly
 
 ```js
-const { MemoryDatabase } = require("./pkg/sqlite_wasm.js");
+const { MemoryDatabase } = require("@yydb/sqlite-unknown-wasm32");
 const database = new MemoryDatabase(4096);
 database.exec("create table bench (id integer primary key, label text not null)");
 for (let index = 1; index <= 1000; index += 1) {
