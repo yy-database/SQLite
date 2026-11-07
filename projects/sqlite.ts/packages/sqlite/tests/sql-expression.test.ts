@@ -745,6 +745,43 @@ test("date, time and strftime follow the oracle exactly", () => {
   assert.deepEqual(engine.execute("select date('2024-01-02','bogus')").rows, [[null]]);
 });
 
+test("JSON functions and arrows follow the oracle exactly", () => {
+  const engine = createEngine();
+  // 期望值来自 better-sqlite3 3.53.2 与 CPython sqlite3 3.49.1 的实测结果。
+  assert.deepEqual(engine.execute("select json_extract('{\"a\":1}', '$.a'), json_array(1, 2), json_object('k', 1), json_type('{\"a\":1}'), json_array_length('[1,2,3]')").rows, [
+    [1, "[1,2]", '{"k":1}', "object", 3],
+  ]);
+  // `json_valid(x)` 只认严格 JSON，双参数形式按位选择严格 JSON / JSON5。
+  assert.deepEqual(engine.execute("select json_valid('{\"a\":1}'), json_valid('{a:1}'), json_valid('{a:1}', 2), json_valid('{\"a\":1}', 4), json_valid(null, 1)").rows, [
+    [1, 0, 1, 0, null],
+  ]);
+  // JSON 函数本身宽松接受 JSON5 输入，裸键会归一成双引号。
+  assert.deepEqual(engine.execute("select json_extract('{a:1}', '$.a'), json_set('{a:1}', '$.b', 2)").rows, [[1, '{"a":1,"b":2}']]);
+  // 标准写法的数字保留原始文本，SQL 值生成的实数按 SQLite 规范化为 `1.0`。
+  assert.deepEqual(engine.execute("select json_remove('{\"a\":1e2,\"b\":2}', '$.b'), json_set('{\"a\":1.0}', '$.b', 2)").rows, [
+    ['{"a":1e2}', '{"a":1.0,"b":2}'],
+  ]);
+  // `->` 返回 JSON 文本，`->>` 按存储类返回 SQL 值，缺失路径是 SQL NULL。
+  assert.deepEqual(engine.execute("select '{\"a\":{\"b\":2}}' -> '$.a.b', '{\"a\":2}' ->> '$.a', '{\"a\":null}' -> '$.a', '{\"a\":1}' -> '$.b'").rows, [
+    ["2", 2, "null", null],
+  ]);
+  assert.deepEqual(engine.execute("select '[10,20,30]' -> 1, '[10,20,30]' -> -1").rows, [["20", "30"]]);
+  // `[#]` 追加，`[#-N]` 从末尾倒数，删除根路径得到 NULL。
+  assert.deepEqual(engine.execute("select json_set('[1]', '$[#]', 2), json_extract('[10,20,30]', '$[#-1]'), json_remove('{\"a\":1}', '$')").rows, [
+    ["[1,2]", 30, null],
+  ]);
+  assert.deepEqual(engine.execute("select json_patch('{\"a\":1}', '{\"b\":2}'), json_quote('a\"b'), json_quote(1.5), json_quote(null)").rows, [
+    ['{"a":1,"b":2}', '"a\\"b"', "1.5", "null"],
+  ]);
+  // 坏 JSON 与坏路径是结构化错误，而不是静默返回 NULL。
+  const malformed = engine.tryExecute("select json_extract('{', '$')");
+  assert.equal(malformed.ok, false);
+  assert.equal(malformed.error?.code, "malformed-json");
+  const badPath = engine.tryExecute("select json_extract('{\"a\":1}', '$[]')");
+  assert.equal(badPath.ok, false);
+  assert.equal(badPath.error?.code, "bad-json-path");
+});
+
 test("select distinct collapses duplicates before order by and limit", () => {
   const engine = createEngine();
   engine.exec("create table d (a integer, b text); insert into d values (1, 'x'), (1, 'x'), (2, 'y'), (null, 'z')");
