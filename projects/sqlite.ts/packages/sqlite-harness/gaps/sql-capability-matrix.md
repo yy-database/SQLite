@@ -1,6 +1,6 @@
 # SQL capability matrix
 
-Measured against the pinned `database.rs` facade rev `24ff44d` (`24ff44d7f931a453ffe1fa1d357c898491e72fc6`,
+Measured against the pinned `database.rs` facade rev `3d08fa5` (`3d08fa541d73f2a696b81394ee424db1008adbc7`,
 `projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
 through both live oracles; the oracle value, not an internal expectation, decides whether a row is correct.
 
@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (121 feature rows): **117 gated / 0 uncovered / 4 missing** at the pin.
+Cluster totals (121 feature rows): **118 gated / 0 uncovered / 3 missing** at the pin.
 
 ## DDL
 
@@ -51,7 +51,7 @@ Cluster totals (121 feature rows): **117 gated / 0 uncovered / 4 missing** at th
 | Foreign key, table level `FOREIGN KEY` with an implicit parent primary key | `create table fk4 (..., foreign key (pid) references fk3 (id))` | gated | composite orphan and composite rollback covered by `composite foreign keys and statement rollback match better-sqlite3` |
 | `ON DELETE CASCADE` / `ON UPDATE CASCADE` | `create table c1 (pid integer references parent (id) on delete cascade)` | gated | parent deletes remove the child rows, parent key rewrites move them through every cascade level, composite keys move both columns, a self-referencing table walks the whole subtree, the statement reports only the directly removed parent rows, and child `BEFORE` / `AFTER` triggers fire between the parent events in oracle order; `referential actions cascade, set null and set default like better-sqlite3` |
 | `ON DELETE SET NULL` / `ON UPDATE SET NULL` / `SET DEFAULT` | `create table c2 (pid integer references parent (id) on update set null)` | gated | the child key becomes `NULL` or its declared default on both parent deletes and rewrites, a `NOT NULL` child aborts with `NOT NULL constraint failed: <table>.<column>` and rolls the whole statement back, a default that names no parent fails with `FOREIGN KEY constraint failed`, and the rewrites keep better-sqlite3 `integrity_check = ok` after a reopen; same gate |
-| `DEFERRABLE INITIALLY DEFERRED` | `create table c3 (pid integer references parent (id) deferrable initially deferred)` | missing | `unsupported-deferred-foreign-key` with clause `DEFERRABLE`; `deferred foreign keys stay rejected` |
+| `DEFERRABLE INITIALLY DEFERRED` | `create table c3 (pid integer references parent (id) deferrable initially deferred)` | gated | accepts the clause, keeps autocommit checking at the statement end, and inside `BEGIN` moves the reference check to `COMMIT` so a row repaired before commit is accepted while an unresolvable one fails `COMMIT` with `FOREIGN KEY constraint failed` and leaves the transaction open for repair; final rows equal better-sqlite3; `deferred foreign keys wait for commit like better-sqlite3` |
 | `ALTER TABLE ... ADD COLUMN ... REFERENCES` | `alter table plain add column pid integer references parent (id)` | gated | appends the definition verbatim, refuses a non-NULL default, keeps existing rows at NULL, and checks the parent on later inserts; `add column with REFERENCES enforces the parent like better-sqlite3` |
 | `ALTER TABLE ... DROP COLUMN` | `alter table dc drop column b` | gated | removes the definition and its value slot from every row, rewrites `sqlite_master.sql` byte for byte (inline constraints go with the column), and refuses PK / UNIQUE / indexed / view / trigger / table-check / table-FK readers exactly where `better-sqlite3` refuses them; `drop column rewrites rows and stored schema like better-sqlite3` |
 
@@ -230,8 +230,8 @@ Next tier, lower blast radius but still visible: `VACUUM`,
 | `IS DISTINCT FROM` / `GLOB` / `ORDER BY ... NULLS FIRST` / `NULLS LAST` | `sql.rs` (`comparison_expr`, `order_key`), `engine.rs` (`glob_match`, `SortDirection`) | `is distinct from treats null as a value like better-sqlite3`, `glob follows sqlite class and case rules`, `order by nulls first and last override the default placement` |
 | Aggregate `FILTER` / `DISTINCT` / argument `ORDER BY`, window `GROUPS` frames and `EXCLUDE` clauses | `sql.rs` (`function_expr`, `window_function`, `frame`), `engine.rs` (`compute_aggregate`, `shape_aggregate_inputs`, `evaluate_frame_aggregate`, `groups_edge`, `frame_row_excluded`) | `aggregate filter, distinct and argument order follow better-sqlite3`, `window groups frames and exclude clauses follow better-sqlite3` |
 
-The one foreign key shape still missing at this pin (`DEFERRABLE INITIALLY DEFERRED`) is listed in the DDL
-table and asserted as a structured rejection by `deferred foreign keys stay rejected`.
+All foreign key shapes in the DDL table are gated at this pin, including `DEFERRABLE INITIALLY DEFERRED`,
+which defers the reference check to `COMMIT` inside an explicit transaction.
 
 ## Differential corpus
 
