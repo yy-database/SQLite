@@ -1656,6 +1656,42 @@ test("rename table moves the sequence row and keeps autoincrement counting", () 
   }
 });
 
+test("pragma integrity_check reports ok across tables, indexes, views and a freed b-tree", () => {
+  const steps = [
+    "create table t (id integer primary key, a text unique, b text)",
+    "create index t_b on t(b)",
+    "insert into t values (1, 'x', 'p'), (2, 'y', 'q')",
+    "create table dropped (z text)",
+    "insert into dropped values ('z')",
+    "drop table dropped",
+    "create view vv as select id, a from t",
+    "create trigger tr after insert on t begin update t set a = a where id = new.id; end",
+  ];
+  const engine = createEngine(4096);
+  for (const step of steps) engine.execute(step);
+  const own = engine.execute("pragma integrity_check");
+  assert.deepEqual(own.columns, ["integrity_check"]);
+  withOracle(steps, (db) => {
+    assert.deepEqual(own.rows, oracleRows(db, "pragma integrity_check"));
+  });
+  assert.deepEqual(own.rows, [["ok"]]);
+
+  // The freed b-tree must stay on the freelist, so the real engine has to
+  // agree that the same bytes are intact.
+  const workspaceHandle = workspace();
+  try {
+    writeFileSync(workspaceHandle.path, engine.snapshot());
+    const external = new BetterSqlite(workspaceHandle.path);
+    try {
+      assert.equal(external.prepare("pragma integrity_check").get().integrity_check, "ok");
+    } finally {
+      external.close();
+    }
+  } finally {
+    workspaceHandle.dispose();
+  }
+});
+
 test("rename column rewrites checks and index text but never string literals", () => {
   const engine = createEngine();
   engine.exec("CREATE TABLE t(t INTEGER, x TEXT DEFAULT 'a', y TEXT, CHECK (t > 0 AND x <> 't')); CREATE INDEX ix ON t(x, t)");
