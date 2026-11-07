@@ -23,7 +23,6 @@ aggregates beyond `count(*)`, subqueries) is rejected with a structured error an
 | `projects/sqlite.ts/packages/sqlite-harness/` | Self-improvement toolbox: `test`, `bench`, `conformance`, `fixtures`, `oracle` |
 | `projects/sqlite.ts/packages/sqlite-fixtures/` | Binary fixtures written by external engines |
 | `projects/sqlite.ts/platforms/` | Node platform packages plus the WebAssembly package |
-| `projects/sqlite.ts/emulators/` | Read-only `sqlite3`-style command surface over the binding |
 | `projects/sqlite.ts/homepage/` | Capability and binding documents |
 | `projects/sqlite.py/packages/sqlite/` | PyO3 packaging metadata plus the Python acceptance suite for the `sqlite-format3` wheel |
 
