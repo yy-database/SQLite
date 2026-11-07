@@ -1313,6 +1313,59 @@ test("update evaluates assignments against the pre-statement row", () => {
   assert.deepEqual(engine.execute("select a, b from t").rows, [[3, 3]]);
 });
 
+// These four DML shapes were checked against better-sqlite3 12.11.1 and
+// CPython sqlite3 before they were accepted.
+test("insert or ignore, values expressions, update from and row values match the oracles", () => {
+  const engine = createEngine(4096);
+
+  engine.execute("create table ci(a integer primary key, b text unique, c text not null)");
+  engine.execute("insert or ignore into ci values (1, 'x', 'n')");
+  engine.execute("insert or ignore into ci values (1, 'y', 'n')");
+  engine.execute("insert or ignore into ci values (2, 'x', 'n')");
+  engine.execute("insert or ignore into ci values (2, 'y', null)");
+  engine.execute("insert or ignore into ci values (3, 'z', 'n')");
+  assert.deepEqual(engine.execute("select a, b, c from ci order by a").rows, [[1, "x", "n"], [3, "z", "n"]]);
+
+  engine.execute("create table ve(a integer, b text)");
+  engine.execute("insert into ve values (1 + 1, upper('ab'))");
+  engine.execute("insert into ve values (abs(-2), 'x' || 'y')");
+  engine.execute("insert into ve values (length('abc'), cast(3.9 as integer))");
+  engine.execute("insert into ve(a, b) values (10 * 2 + 1, 'p')");
+  assert.deepEqual(engine.execute("select a, b from ve order by a").rows, [[2, "AB"], [2, "xy"], [3, "3"], [21, "p"]]);
+
+  engine.execute("create table ua(id integer primary key, v text)");
+  engine.execute("create table ub(id integer primary key, w text)");
+  engine.execute("insert into ua values (1, 'a'), (2, 'b'), (3, 'c')");
+  engine.execute("insert into ub values (1, 'W1'), (3, 'W3')");
+  const updated = engine.execute("update ua set v = ub.w from ub where ua.id = ub.id returning id, v");
+  assert.deepEqual(updated.rows, [[1, "W1"], [3, "W3"]]);
+  assert.equal(updated.affected, 2);
+  assert.deepEqual(engine.execute("select id, v from ua order by id").rows, [[1, "W1"], [2, "b"], [3, "W3"]]);
+  // An empty `FROM` source joins no target row, so nothing is rewritten.
+  engine.execute("create table ea(id integer primary key, v text)");
+  engine.execute("create table eb(id integer primary key, w text)");
+  engine.execute("insert into ea values (1, 'a')");
+  assert.equal(engine.execute("update ea set v = eb.w from eb where ea.id = eb.id").affected, 0);
+  assert.deepEqual(engine.execute("select id, v from ea").rows, [[1, "a"]]);
+  // The target alias and the source alias both resolve in the assignment.
+  engine.execute("create table ca(id integer primary key, v text)");
+  engine.execute("create table cb(id integer primary key, w text)");
+  engine.execute("insert into ca values (1, 'a'), (2, 'b')");
+  engine.execute("insert into cb values (1, 'X'), (2, 'Y')");
+  engine.execute("update ca as x set v = y.w from cb as y where x.id = y.id");
+  assert.deepEqual(engine.execute("select id, v from ca order by id").rows, [[1, "X"], [2, "Y"]]);
+
+  engine.execute("create table rv(a integer, b integer, c integer)");
+  engine.execute("insert into rv values (9, 9, 9)");
+  engine.execute("update rv set (a, b) = (1, 2)");
+  assert.deepEqual(engine.execute("select a, b, c from rv").rows, [[1, 2, 9]]);
+  engine.execute("update rv set (a, b) = (b + 1, a + 10)");
+  assert.deepEqual(engine.execute("select a, b from rv").rows, [[3, 11]]);
+  const tooFew = engine.tryExecute("update rv set (a, b) = (5)");
+  assert.equal(tooFew.error?.code, "arity-mismatch");
+  assert.equal(tooFew.error?.message, "2 columns assigned 1 values");
+});
+
 test("update and delete report the exact affected count", () => {
   const engine = createEngine(4096);
   engine.execute("create table t(a integer, b text)");
@@ -1430,7 +1483,12 @@ test("update and delete reject the shapes sqlite also rejects", () => {
   assert.equal(fallback.error?.code, "unsupported-clause");
   assert.equal(fallback.error?.clause, "DEFAULT");
   assert.equal(engine.tryExecute("update or replace t set a = 1").error?.code, "unsupported-clause");
-  assert.equal(engine.tryExecute("update t set (a, b) = (3, 4)").error?.code, "unsupported-clause");
+  // Row-value assignment is supported; only its arity and subquery forms reject.
+  const rotated = engine.execute("update t set (a, b) = (3, 4)");
+  assert.equal(rotated.affected, 1);
+  assert.deepEqual(engine.execute("select a, b from t").rows, [[3, 4]]);
+  assert.equal(engine.tryExecute("update t set (a, b) = (5)").error?.code, "arity-mismatch");
+  assert.equal(engine.tryExecute("update t set (a, b) = (select 1, 2)").error?.code, "unsupported-clause");
   assert.equal(engine.tryExecute("delete from t order by a").error?.code, "unsupported-clause");
 });
 
