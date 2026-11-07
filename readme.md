@@ -30,7 +30,7 @@ aggregates beyond `count(*)`, subqueries) is rejected with a structured error an
 cargo check --manifest-path projects/sqlite.rs/Cargo.toml --workspace
 ```
 
-Pinned toolchain: `projects/sqlite.rs/rust-toolchain.toml` (`nightly-2026-07-20`).
+Toolchain: `projects/sqlite.rs/rust-toolchain.toml` (`nightly`).
 
 Core crates come from `database.rs` via git `rev` in `Cargo.toml`. Local absolute path overrides go
 in `projects/sqlite.rs/.cargo/config.toml` (see `config.example.toml`).
