@@ -30,9 +30,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: projects/sqlite.rs
+      - id: wasm-bindgen-version
+        run: echo "version=$(node projects/sqlite.ts/packages/sqlite-wasm/build.mjs --print-wasm-bindgen-version)" >> "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@v2
         with:
-          tool: wasm-bindgen-cli@0.2.127
+          tool: wasm-bindgen-cli@${{ steps.wasm-bindgen-version.outputs.version }}
       - name: Install the wheel build tool
         run: python3 -m pip install --quiet "maturin>=1.7,<2.0"
       - name: Assert the checkout has no native artifact
