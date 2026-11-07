@@ -1,6 +1,6 @@
 # SQL capability matrix
 
-Measured against the pinned `database.rs` facade rev `3a184c7` (`3a184c775fbf6b4aab29703c316caee63ee81a45`,
+Measured against the pinned `database.rs` facade rev `643a344` (`643a344ed66aee8a57aab98ac64ec44093549ed1`,
 `projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
 through both live oracles; the oracle value, not an internal expectation, decides whether a row is correct.
 
@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (121 feature rows): **114 gated / 0 uncovered / 7 missing** at the pin.
+Cluster totals (121 feature rows): **115 gated / 0 uncovered / 6 missing** at the pin.
 
 ## DDL
 
@@ -173,7 +173,7 @@ Cluster totals (121 feature rows): **114 gated / 0 uncovered / 7 missing** at th
 | `PRAGMA index_list` / `index_info` | `pragma index_list(a)` / `pragma index_info(sqlite_autoindex_p2_1)` | gated | explicit indexes newest first then each automatic constraint index in reverse numbering order, `origin` set to `c` / `pk` / `u`, `partial` always `0`, and `index_info` reporting `seqno/cid/name` in key order; `table, index and foreign key pragmas follow better-sqlite3` |
 | `PRAGMA foreign_key_list` | `pragma foreign_key_list(fk)` | gated | `id/seq/table/from/to/on_update/on_delete/match`, newest key first (`foreign key (b, c)` before the earlier column `REFERENCES`), an implicit parent key reported as `NULL` in `to`, and actions spelled `NO ACTION` / `RESTRICT`; `table, index and foreign key pragmas follow better-sqlite3` |
 | `PRAGMA user_version` / `application_id` | `pragma user_version = 7` | gated | both read back as a single integer row defaulting to `0`, write header bytes 60 and 68, and survive a reopen of the snapshot; `user_version and application_id round-trip through the header` |
-| `PRAGMA integrity_check` | `pragma integrity_check` | missing | `unsupported-pragma` at `PRAGMA` (the gate only calls it on external files) |
+| `PRAGMA integrity_check` | `pragma integrity_check` | gated | walks the file header, the schema b-tree, every table and index b-tree and the freelist chain, returning one `ok` row for a sound image and a text row per structural problem instead of failing the statement; equal to better-sqlite3 on a table/index/view/trigger image that also freed a b-tree and to better-sqlite3 reading the same snapshot bytes; `pragma integrity_check reports ok across tables, indexes, views and a freed b-tree` |
 
 ## EXPLAIN
 
@@ -205,7 +205,7 @@ asserted by the gate.
 | 1 | `COLLATE` (column, expression, `ORDER BY`) | Case-insensitive comparisons and sorted output | `sql.rs`, no collation hook in the key comparators |
 | 2 | JSON functions and `->` / `->>` | Structured payloads stored as text | `sql.rs:333-357` (`ScalarFunction`), `BinaryOp` |
 
-Next tier, lower blast radius but still visible: `PRAGMA integrity_check`, `EXPLAIN`, `VACUUM`,
+Next tier, lower blast radius but still visible: `EXPLAIN`, `VACUUM`,
 `INSERT OR IGNORE`, `UPDATE ... FROM`, row-value assignment and expression tuples inside `VALUES`.
 
 ## Landed at this pin
