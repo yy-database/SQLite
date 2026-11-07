@@ -139,6 +139,37 @@ class SqlEngineTests(unittest.TestCase):
             [["-0000-00-01 00:00:00.000", "-0000-00-00 01:00:00.000", None, "2024-01-02", "-4713-12-06", None]],
         )
 
+    def test_json_functions_and_arrows_match_oracle(self):
+        selected = self.engine.execute(
+            "select json_extract('{\"a\":1}', '$.a'), json_array(1, 2), json_object('k', 1), "
+            "json_type('{\"a\":1}'), json_array_length('[1,2,3]')"
+        )
+        self.assertEqual(selected["rows"], [[1, "[1,2]", '{"k":1}', "object", 3]])
+
+        selected = self.engine.execute(
+            "select json_valid('{\"a\":1}'), json_valid('{a:1}'), json_valid('{a:1}', 2), "
+            "json_valid('{\"a\":1}', 4), json_valid(null, 1)"
+        )
+        self.assertEqual(selected["rows"], [[1, 0, 1, 0, None]])
+
+        selected = self.engine.execute(
+            "select json_extract('{a:1}', '$.a'), json_set('{a:1}', '$.b', 2), "
+            "json_remove('{\"a\":1e2,\"b\":2}', '$.b'), json_set('{\"a\":1.0}', '$.b', 2)"
+        )
+        self.assertEqual(selected["rows"], [[1, '{"a":1,"b":2}', '{"a":1e2}', '{"a":1.0,"b":2}']])
+
+        selected = self.engine.execute(
+            "select '{\"a\":{\"b\":2}}' -> '$.a.b', '{\"a\":2}' ->> '$.a', "
+            "'{\"a\":null}' -> '$.a', '{\"a\":1}' -> '$.b', '[10,20,30]' -> 1, '[10,20,30]' -> -1"
+        )
+        self.assertEqual(selected["rows"], [["2", 2, "null", None, "20", "30"]])
+
+        selected = self.engine.execute(
+            "select json_set('[1]', '$[#]', 2), json_extract('[10,20,30]', '$[#-1]'), "
+            "json_remove('{\"a\":1}', '$'), json_patch('{\"a\":1}', '{\"b\":2}')"
+        )
+        self.assertEqual(selected["rows"], [["[1,2]", 30, None, '{"a":1,"b":2}']])
+
     def test_rejections_carry_a_code_and_clause(self):
         right_join = self.engine.try_execute("select * from people right join people as p2 on people.id = p2.id")
         self.assertIs(right_join["ok"], True)

@@ -1,6 +1,6 @@
 # SQL capability matrix
 
-Measured against the pinned `database.rs` facade rev `3bb849f` (`3bb849f5f696e938f27aefdd67f174c91f652cd8`,
+Measured against the pinned `database.rs` facade rev `86c4fb1` (`86c4fb1f056d4c2d7d7bc70a9957337137182efd`,
 `projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
 through both live oracles; the oracle value, not an internal expectation, decides whether a row is correct.
 
@@ -9,7 +9,7 @@ through both live oracles; the oracle value, not an internal expectation, decide
 | Engine under test | `sqlite.node` built from the pin, `createEngine()` |
 | Oracle A | `better-sqlite3` 12.11.1 (SQLite 3.53.2) |
 | Oracle B | CPython `sqlite3` (SQLite 3.49.1) |
-| Probes | 182 statements/cases, one or more per cluster |
+| Probes | 212 statements/cases, one or more per cluster |
 | Local facade override | None; Cargo resolved the pin directly |
 
 Status legend:
@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (121 feature rows): **109 gated / 0 uncovered / 12 missing** at the pin.
+Cluster totals (121 feature rows): **110 gated / 0 uncovered / 11 missing** at the pin.
 
 ## DDL
 
@@ -129,7 +129,7 @@ Cluster totals (121 feature rows): **109 gated / 0 uncovered / 12 missing** at t
 | `printf` / `format` / `char` / `unicode` / `soundex` | `select printf('%d', 7)` | gated | 门禁 `printf, char, unicode and soundex follow the oracle exactly`：`%d/%i/%u/%x/%X/%o` 含 `#` 前缀与零填充，`%f/%e/%g` 按十进制四舍五入且 `%.0e` 不带小数点，`%c` 取文本首字符且精度表示重复次数，`%q/%Q/%w` 先按精度截断再转义，`%p` 是大写十六进制，`%n` 不消费参数，`%z` 把 `NULL` 变空串，未知转换终止解析且空输出返回 `NULL`；`char` 越界码点变 U+FFFD，`unicode('')` 为 `NULL`，`soundex` 按 SQLite 分组补零
 | Math functions (`sqrt`, `power`, `floor`, `ceil`, `log`, ...) | `select sqrt(9), power(2, 10), floor(2.7), ceil(2.1)` | gated | 门禁 `math scalars follow the oracle exactly`：`abs` 文本入参恒为实数、整数取整保持整数，文本套用 numeric affinity 且整段必须可解析（`'2abc'` 为 `NULL`），`NaN` 记 `NULL` 而无穷保留实数，`ln`/`log` 的非正入参与底数不大于 1 返回 `NULL`，`sign` 恒为整数 |
 | Date/time functions (`date`, `time`, `datetime`, `julianday`, `unixepoch`, `strftime`, `timediff`) | `select date('2024-01-02 03:04:05'), strftime('%Y', '2024-01-02')` | gated | 门禁 `date, time and strftime follow the oracle exactly`：日期/时间/时区解析与 `24:00:00`、非法日历日规范化，`start of`、`weekday`、月年进位与小数折算，时区修饰符按 24 小时取模，`unixepoch`/`julianday`/`auto` 入参解释，`strftime` 全部指令（含 ISO 周与星期日/星期一两种周口径），以及 `timediff` 的借位分解 |
-| JSON functions (`json_extract`, `json_array`, `json_object`, `json_valid`, ...) and `->` / `->>` | `select json_extract('{"a":1}', '$.a'), json_array(1, 2)` | missing | `unknown-function`: `json_extract` |
+| JSON functions (`json_extract`, `json_array`, `json_object`, `json_valid`, ...) and `->` / `->>` | `select json_extract('{"a":1}', '$.a'), json_array(1, 2)` | gated | 门禁 `JSON functions and arrows follow the oracle exactly`：`json_valid(x)` 只认严格 JSON，双参数形式按位选择严格 JSON / JSON5 且 `FLAGS` 越界报 `FLAGS parameter to json_valid() must be between 1 and 15`；其余函数与 `->` / `->>` 宽松接受 JSON5（裸键、单引号、注释、尾逗号、`0x`、`+`、`.5`、`1.`、`Infinity`、`NaN`），裸键归一成双引号；标准写法的数字保留原始文本（`1e2` 仍是 `1e2`），SQL 值生成的实数规范化为 `1.5` / `1.0`；`->` 返回 JSON 文本而 `->>` 按存储类返回 SQL 值，缺失路径为 SQL NULL、JSON null 为文本 `null`，路径支持 `$."label"`、`[N]`、`[#]`、`[#-N]`；`json_set`/`insert`/`replace` 区分增替语义，`json_patch` 走 RFC 7386，`json_remove` 根路径为 NULL，JSON 子类型让嵌套 JSON 函数结果按值嵌入；坏 JSON 与坏路径分别报 `malformed-json` / `bad-json-path` |
 
 ## Window functions
 
