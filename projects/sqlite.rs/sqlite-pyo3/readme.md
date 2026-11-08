@@ -29,8 +29,11 @@ writer.save("bench.sqlite3")
 
 database = SqliteDatabase.open("bench.sqlite3")
 rows = database.table("bench")
-print(len(rows), rows[0]["rowid"], rows[0]["columns"][1]["value"])
+print(len(rows), rows[0]["rowid"], rows[0]["columns"][1])
 ```
+
+Each decoded cell is a native Python value: `None`, `int`, `float`, `str`, or
+`bytes`, matching the Node-API binding's flat shape.
 
 `SqliteDatabase` replays a `-wal` sidecar or a hot `-journal` in memory, decodes
 rowid and `WITHOUT ROWID` tables with the text encoding declared in the header,

@@ -42,30 +42,17 @@ fn encode_encoding(name: Option<&str>) -> PyResult<TextEncoding> {
     }
 }
 
+// 与 Node-API 的扁平契约一致：一格直接落成原生 Python 对象，
+// `None` / `int` / `float` / `str` / `bytes`，不再包 `{kind, value}`。
 fn cell_to_py(py: Python<'_>, value: &RecordValue<'_>) -> PyResult<Py<PyAny>> {
-    let cell = PyDict::new(py);
-    match value {
-        RecordValue::Null => {
-            cell.set_item("kind", "null")?;
-        }
-        RecordValue::Integer(integer) => {
-            cell.set_item("kind", "integer")?;
-            cell.set_item("value", i64::from(*integer))?;
-        }
-        RecordValue::Real(real) => {
-            cell.set_item("kind", "real")?;
-            cell.set_item("value", *real)?;
-        }
-        RecordValue::Text(text) => {
-            cell.set_item("kind", "text")?;
-            cell.set_item("value", text.clone())?;
-        }
-        RecordValue::Blob(blob) => {
-            cell.set_item("kind", "blob")?;
-            cell.set_item("value", PyBytes::new(py, blob))?;
-        }
-    }
-    Ok(cell.into_any().unbind())
+    let object: Py<PyAny> = match value {
+        RecordValue::Null => py.None(),
+        RecordValue::Integer(integer) => (*integer).into_pyobject(py)?.into_any().unbind(),
+        RecordValue::Real(real) => (*real).into_pyobject(py)?.into_any().unbind(),
+        RecordValue::Text(text) => text.as_str().into_pyobject(py)?.into_any().unbind(),
+        RecordValue::Blob(blob) => PyBytes::new(py, blob).into_any().unbind(),
+    };
+    Ok(object)
 }
 
 fn cells_to_py<'py>(py: Python<'py>, payload: &[u8], encoding: TextEncoding) -> PyResult<Bound<'py, PyList>> {

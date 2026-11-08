@@ -79,9 +79,10 @@ def write_read_roundtrip_1000(directory):
     check(rows[0]["rowid"] == 1, "first rowid is 1")
     # `INTEGER PRIMARY KEY` is a rowid alias, so the stored payload has no
     # value for it and the rowid carries the identity.
-    check([cell["kind"] for cell in rows[0]["columns"]] == ["null", "text", "real"], "storage classes survive")
-    check(rows[0]["columns"][1]["value"] == "row-1", "first label")
-    check(abs(rows[0]["columns"][2]["value"] - 0.1) < 1e-9, "first score")
+    cells = rows[0]["columns"]
+    check(cells[0] is None and isinstance(cells[1], str) and isinstance(cells[2], float), "storage classes survive as native Python values")
+    check(cells[1] == "row-1", "first label")
+    check(abs(cells[2] - 0.1) < 1e-9, "first score")
 
     schema = database.schema()
     bench = [item for item in schema if item["name"] == "bench"]
@@ -114,7 +115,7 @@ def wal_visible(directory):
     database = SqliteDatabase.open(str(fixture))
     rows = database.table("wal_t")
     check(len(rows) == 500, "WAL rows are visible")
-    check(rows[-1]["columns"][1]["value"] == "r499", "last WAL row")
+    check(rows[-1]["columns"][1] == "r499", "last WAL row")
 
 
 def hot_journal_rollback(directory):
@@ -135,8 +136,8 @@ def hot_journal_rollback(directory):
     database = SqliteDatabase.open(str(fixture))
     rows = database.table("journal_t")
     check(len(rows) == 1000, "rollback discards the uncommitted rows")
-    check(rows[0]["columns"][1]["value"] == "keep-0", "first kept row")
-    check("rolled-0" not in [row["columns"][1]["value"] for row in rows], "rolled rows are gone")
+    check(rows[0]["columns"][1] == "keep-0", "first kept row")
+    check("rolled-0" not in [row["columns"][1] for row in rows], "rolled rows are gone")
 
 
 def without_rowid(directory):
@@ -151,7 +152,7 @@ def without_rowid(directory):
     database = SqliteDatabase.open(str(path))
     rows = database.table_without_rowid("wr")
     check(
-        [[cell["value"] for cell in row] for row in rows] == [[1, "wr-1"], [2, "wr-2"], [3, "wr-3"], [4, "wr-4"]],
+        [list(row) for row in rows] == [[1, "wr-1"], [2, "wr-2"], [3, "wr-3"], [4, "wr-4"]],
         "WITHOUT ROWID rows decode in key order",
     )
 
@@ -169,7 +170,7 @@ def utf16(directory):
     check(database.encoding() == "utf-16le", "UTF-16le encoding is detected")
     rows = database.table("u")
     check(len(rows) == 1, "one UTF-16 row")
-    check(rows[0]["columns"][1]["value"] == "中文标注", "UTF-16 text decodes")
+    check(rows[0]["columns"][1] == "中文标注", "UTF-16 text decodes")
 
 
 def sql_engine(directory):
