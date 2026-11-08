@@ -151,8 +151,15 @@ jobs:
             @yydb/sqlite-unknown-wasm32
           )
           for pkg in "${EXPECTED[@]}"; do
-            got="$(npm view "$pkg@$VERSION" version)"
-            test "$got" = "$VERSION"
+            ok=0
+            for _ in 1 2 3 4 5 6 7 8 9 10; do
+              if got="$(npm view "$pkg@$VERSION" version 2>/dev/null)" && [[ "$got" == "$VERSION" ]]; then
+                ok=1
+                break
+              fi
+              sleep 15
+            done
+            test "$ok" -eq 1
           done
           wasm_files="$(npm view "@yydb/sqlite-unknown-wasm32@$VERSION" dist.fileCount)"
           test "$wasm_files" -ge 4
