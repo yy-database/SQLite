@@ -358,7 +358,7 @@ const BUILDERS: Record<Cluster, (random: () => number) => Spec> = {
   transaction: transactionSpec,
 };
 
-function generate(seed: number, count: number): CorpusCase[] {
+export function generate(seed: number, count: number): CorpusCase[] {
   const random = makeRng(seed);
   const counts = distribute(count);
   const cases: CorpusCase[] = [];
@@ -532,7 +532,7 @@ const BASELINE_PATH = fileURLToPath(new URL("../corpus/sql-differential-baseline
 type DifferenceKind = "mismatch" | "discarded";
 type BaselineReason = "structured-rejection" | "not-implemented" | "known-drift" | "oracle-disagreement";
 
-interface BaselineEntry {
+export interface BaselineEntry {
   readonly id: number;
   readonly cluster: Cluster;
   readonly sql: string;
@@ -544,7 +544,7 @@ interface BaselineEntry {
   readonly signal: readonly string[];
 }
 
-interface BaselineFile {
+export interface BaselineFile {
   readonly version: number;
   readonly seed: number;
   readonly count: number;
@@ -568,7 +568,7 @@ interface Mismatch {
   readonly python: Side;
 }
 
-interface ObservedDifference {
+export interface ObservedDifference {
   readonly id: number;
   readonly cluster: Cluster;
   readonly sql: string;
@@ -580,7 +580,7 @@ interface ObservedDifference {
   readonly python: Side;
 }
 
-function entryKey(entry: BaselineEntry): string {
+export function entryKey(entry: BaselineEntry): string {
   return `${entry.kind}|${entry.id}|${entry.sql}`;
 }
 
@@ -694,7 +694,7 @@ function baselineFrom(
   return { version: BASELINE_VERSION, seed, count, digest, engines, entries: ordered };
 }
 
-function loadBaseline(): BaselineFile {
+export function loadBaseline(): BaselineFile {
   let parsed: BaselineFile;
   try {
     parsed = JSON.parse(readFileSync(BASELINE_PATH, "utf8")) as BaselineFile;
@@ -707,7 +707,7 @@ function loadBaseline(): BaselineFile {
   return parsed;
 }
 
-function identityProblems(baseline: BaselineFile, options: CorpusOptions, digest: string): string[] {
+export function identityProblems(baseline: BaselineFile, options: CorpusOptions, digest: string): string[] {
   const problems: string[] = [];
   if (baseline.seed !== options.seed) problems.push(`seed: baseline ${baseline.seed}, current ${options.seed}`);
   if (baseline.count !== options.count) problems.push(`count: baseline ${baseline.count}, current ${options.count}`);
@@ -724,7 +724,7 @@ function describeOutput(diff: ObservedDifference): string[] {
   return lines;
 }
 
-function checkBaseline(baseline: BaselineFile, observed: ObservedDifference[]): { problems: string[]; matched: number } {
+export function checkBaseline(baseline: BaselineFile, observed: ObservedDifference[]): { problems: string[]; matched: number } {
   const listed = new Map(baseline.entries.map((entry) => [entryKey(entry), entry]));
   const seen = new Set<string>();
   const problems: string[] = [];

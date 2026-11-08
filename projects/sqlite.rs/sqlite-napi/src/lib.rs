@@ -1,5 +1,8 @@
 #![allow(non_snake_case)]
 
+use database::harness::{
+    Baseline, BaselineIdentity, DifferenceObservation, Digest, ReportEnvelope, check_baseline, render_json,
+};
 use napi::bindgen_prelude::{BigInt, Buffer};
 use napi_derive::napi;
 use sqlite::{
@@ -813,6 +816,37 @@ impl SqliteEngine {
         validate_database(self.engine.snapshot()).map_err(|e| napi::Error::from_reason(e.to_string()))?;
         Ok(1)
     }
+}
+
+fn harness_error(error: impl std::fmt::Display) -> napi::Error {
+    napi::Error::from_reason(error.to_string())
+}
+
+/// 对给定字节取 SHA-256，返回小写十六进制。
+#[napi]
+pub fn harnessDigest(bytes: Buffer) -> String {
+    Digest::of(bytes.as_ref()).to_hex()
+}
+
+/// 按已知差异台账判定一次语料运行。
+#[napi]
+pub fn harnessCheckBaseline(
+    baseline_json: String,
+    current_json: String,
+    observed_json: String,
+) -> napi::Result<String> {
+    let baseline: Baseline = serde_json::from_str(&baseline_json).map_err(harness_error)?;
+    let current: BaselineIdentity = serde_json::from_str(&current_json).map_err(harness_error)?;
+    let observed: Vec<DifferenceObservation> = serde_json::from_str(&observed_json).map_err(harness_error)?;
+    let verdict = check_baseline(&baseline, &current, &observed);
+    serde_json::to_string(&verdict).map_err(harness_error)
+}
+
+/// 将报告信封渲染为稳定 JSON 文本。
+#[napi]
+pub fn harnessRenderReport(report_json: String) -> napi::Result<String> {
+    let report: ReportEnvelope = serde_json::from_str(&report_json).map_err(harness_error)?;
+    render_json(&report).map_err(harness_error)
 }
 
 #[cfg(test)]

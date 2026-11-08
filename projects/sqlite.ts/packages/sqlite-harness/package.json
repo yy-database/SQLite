@@ -14,7 +14,8 @@
         "conformance": "node bin/cli.mjs conformance",
         "fixtures": "node bin/cli.mjs fixtures",
         "oracle": "node bin/cli.mjs oracle",
-        "corpus": "node bin/cli.mjs corpus"
+        "corpus": "node bin/cli.mjs corpus",
+        "shadow": "node --experimental-strip-types --no-warnings src/shadow.ts"
     },
     "devDependencies": {
         "@yydb/sqlite": "workspace:*",
