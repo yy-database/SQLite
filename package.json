@@ -10,8 +10,8 @@
         "test": "node projects/sqlite.ts/packages/sqlite-harness/bin/cli.mjs test",
         "test:rust": "cargo test --manifest-path projects/sqlite.rs/Cargo.toml --workspace",
         "test:py": "python -m unittest discover -s projects/sqlite.py/packages/sqlite/tests -t projects/sqlite.py/packages/sqlite/tests",
-        "examples:ts": "node --experimental-strip-types projects/sqlite.ts/examples/roundtrip.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-better-sqlite3/interop.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-node-sqlite/interop.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-sql-js/interop.ts",
-        "examples:bench": "node --experimental-strip-types projects/sqlite.ts/examples/vs-better-sqlite3/bench.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-node-sqlite/bench.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-sql-js/bench.ts",
+        "examples:ts": "node --experimental-strip-types projects/sqlite.ts/examples/roundtrip.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/cross-read-write-better-sqlite3.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/cross-read-write-node-sqlite.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/cross-read-write-sql-js.ts",
+        "examples:benchmark": "node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/benchmark.ts",
         "examples:py": "python projects/sqlite.py/examples/roundtrip.py",
         "test:gate": "node scripts/check-test-floor.mjs",
         "corpus": "node projects/sqlite.ts/packages/sqlite-harness/bin/cli.mjs corpus"

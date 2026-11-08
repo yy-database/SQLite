@@ -2,87 +2,14 @@
 // sql.js is memory-first: the shared store is a serialized main-file image on disk
 // (`export()` / `readFileSync` + `new Database(bytes)`), closed between sides.
 //
-// Run: `pnpm --dir projects/sqlite.ts/examples/vs-sql-js test`
-//   or: `node --experimental-strip-types projects/sqlite.ts/examples/vs-sql-js/interop.ts`
+// Run: `pnpm --dir projects/sqlite.ts/examples/vs-js-libraries test:sql-js`
+//   or: `node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/cross-read-write-sql-js.ts`
 
-import { createRequire } from "node:module";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 
-import { createWriter, openDatabase, type RecordValue } from "../../packages/sqlite/src/index.ts";
-
-const PAGE_SIZE = 4096;
-const ROWS = 64;
-
-const columns = JSON.stringify([
-  { name: "id", declaredType: "INTEGER", primaryKey: true },
-  { name: "label", declaredType: "TEXT" },
-  { name: "score", declaredType: "REAL" },
-]);
-
-type SqlJsDatabase = {
-  run(sql: string, params?: unknown[]): void;
-  exec(sql: string): Array<{ columns: string[]; values: unknown[][] }>;
-  export(): Uint8Array;
-  close(): void;
-};
-
-type SqlJsStatic = {
-  Database: new (data?: ArrayLike<number> | Buffer | null) => SqlJsDatabase;
-};
-
-const requireFromHarness = createRequire(
-  join(fileURLToPath(new URL("../../packages/sqlite-harness/package.json", import.meta.url))),
-);
-
-async function loadSqlJs(): Promise<SqlJsStatic> {
-  const entry = requireFromHarness.resolve("sql.js");
-  const factory = requireFromHarness("sql.js") as (options: {
-    locateFile(file: string): string;
-  }) => Promise<SqlJsStatic>;
-  return factory({ locateFile: (file) => join(dirname(entry), file) });
-}
-
-function column(value: RecordValue): unknown {
-  switch (value.kind) {
-    case "null":
-      return null;
-    case "integer":
-      return Number(value.valueInteger);
-    case "real":
-      return value.valueReal;
-    case "text":
-      return value.valueText;
-    case "blob":
-      return Buffer.from(value.valueBlob ?? []);
-    default:
-      throw new Error(`unknown column kind ${(value as RecordValue).kind}`);
-  }
-}
-
-function expectedRows() {
-  return Array.from({ length: ROWS }, (_, index) => ({
-    id: index + 1,
-    label: `row-${index + 1}`,
-    score: (index + 1) / 4,
-  }));
-}
-
-function workspace(): { path: string; dispose: () => void } {
-  const root = mkdtempSync(join(tmpdir(), "sqlite-vs-sql-js-"));
-  return {
-    path: join(root, "main.sqlite3"),
-    dispose: () => {
-      try {
-        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-      } catch {
-        // disposable
-      }
-    },
-  };
-}
+import { createWriter, openDatabase } from "../../../packages/sqlite/src/index.ts";
+import { PAGE_SIZE, ROWS, column, columns, expectedRows, workspace } from "../src/shared.ts";
+import { loadSqlJs, type SqlJsStatic } from "../src/sql-js.ts";
 
 function oursWritePeerRead(SQL: SqlJsStatic, path: string): void {
   const rows = expectedRows();
@@ -138,13 +65,13 @@ function peerWriteOursRead(SQL: SqlJsStatic, path: string): void {
   }
 }
 
-const space = workspace();
+const space = workspace("sqlite-vs-js-libraries-sql-js");
 try {
   const SQL = await loadSqlJs();
   oursWritePeerRead(SQL, space.path);
   rmSync(space.path, { force: true });
   peerWriteOursRead(SQL, space.path);
-  console.log(`ok vs-sql-js interop: ${ROWS} rows both directions (serialized main file)`);
+  console.log(`ok cross-read-write sql-js: ${ROWS} rows both directions (serialized main file)`);
 } finally {
   space.dispose();
 }

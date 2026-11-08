@@ -1,63 +1,14 @@
 // Cross-library write/read between `@yydb/sqlite` and Node's built-in `node:sqlite`.
 // Both directions close/reopen the same on-disk file between writer and reader.
 //
-// Run: `pnpm --dir projects/sqlite.ts/examples/vs-node-sqlite test`
-//   or: `node --experimental-strip-types projects/sqlite.ts/examples/vs-node-sqlite/interop.ts`
+// Run: `pnpm --dir projects/sqlite.ts/examples/vs-js-libraries test:node-sqlite`
+//   or: `node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/cross-read-write-node-sqlite.ts`
 
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
-import { createWriter, openDatabase, type RecordValue } from "../../packages/sqlite/src/index.ts";
-
-const PAGE_SIZE = 4096;
-const ROWS = 64;
-
-const columns = JSON.stringify([
-  { name: "id", declaredType: "INTEGER", primaryKey: true },
-  { name: "label", declaredType: "TEXT" },
-  { name: "score", declaredType: "REAL" },
-]);
-
-function column(value: RecordValue): unknown {
-  switch (value.kind) {
-    case "null":
-      return null;
-    case "integer":
-      return Number(value.valueInteger);
-    case "real":
-      return value.valueReal;
-    case "text":
-      return value.valueText;
-    case "blob":
-      return Buffer.from(value.valueBlob ?? []);
-    default:
-      throw new Error(`unknown column kind ${(value as RecordValue).kind}`);
-  }
-}
-
-function expectedRows() {
-  return Array.from({ length: ROWS }, (_, index) => ({
-    id: index + 1,
-    label: `row-${index + 1}`,
-    score: (index + 1) / 4,
-  }));
-}
-
-function workspace(): { path: string; dispose: () => void } {
-  const root = mkdtempSync(join(tmpdir(), "sqlite-vs-node-sqlite-"));
-  return {
-    path: join(root, "main.sqlite3"),
-    dispose: () => {
-      try {
-        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-      } catch {
-        // Windows may keep the handle briefly.
-      }
-    },
-  };
-}
+import { createWriter, openDatabase } from "../../../packages/sqlite/src/index.ts";
+import { PAGE_SIZE, ROWS, column, columns, expectedRows, workspace } from "../src/shared.ts";
 
 function oursWritePeerRead(path: string): void {
   const rows = expectedRows();
@@ -115,12 +66,12 @@ function peerWriteOursRead(path: string): void {
   }
 }
 
-const space = workspace();
+const space = workspace("sqlite-vs-js-libraries-node-sqlite");
 try {
   oursWritePeerRead(space.path);
   rmSync(space.path, { force: true });
   peerWriteOursRead(space.path);
-  console.log(`ok vs-node-sqlite interop: ${ROWS} rows both directions`);
+  console.log(`ok cross-read-write node-sqlite: ${ROWS} rows both directions`);
 } finally {
   space.dispose();
 }

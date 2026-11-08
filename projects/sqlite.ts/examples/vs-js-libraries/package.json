@@ -1,0 +1,14 @@
+{
+  "name": "@yydb/sqlite-example-vs-js-libraries",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cross-library write/read and benchmark of @yydb/sqlite against better-sqlite3, node:sqlite, and sql.js",
+  "scripts": {
+    "test": "node --experimental-strip-types ./tests/cross-read-write-better-sqlite3.ts && node --experimental-strip-types ./tests/cross-read-write-node-sqlite.ts && node --experimental-strip-types ./tests/cross-read-write-sql-js.ts",
+    "test:better-sqlite3": "node --experimental-strip-types ./tests/cross-read-write-better-sqlite3.ts",
+    "test:node-sqlite": "node --experimental-strip-types ./tests/cross-read-write-node-sqlite.ts",
+    "test:sql-js": "node --experimental-strip-types ./tests/cross-read-write-sql-js.ts",
+    "benchmark": "node --experimental-strip-types ./tests/benchmark.ts"
+  }
+}
