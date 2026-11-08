@@ -5,14 +5,14 @@ TypeORM over `@yydb/sqlite` through the public `better-sqlite3` DataSource `driv
 ## Hook
 
 TypeORM's `BetterSqlite3Driver` loads `options.driver` when set (otherwise `require("better-sqlite3")`).
-`src/yydb-better-sqlite3.ts` is a duck-typed Database/Statement facade over `createEngine` /
+`src/sqlite-better-sqlite3.ts` is a duck-typed Database/Statement facade over `createEngine` /
 `createEngineFromSnapshot`, passed as:
 
 ```ts
 new DataSource({
   type: "better-sqlite3",
   database: path,
-  driver: YydbBetterSqlite3,
+  driver: SqliteBetterSqlite3,
   // ...
 })
 ```

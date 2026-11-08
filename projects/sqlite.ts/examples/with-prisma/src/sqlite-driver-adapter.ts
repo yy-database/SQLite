@@ -22,7 +22,7 @@ import {
 const ADAPTER_NAME = "@yydb/sqlite-prisma-driver-adapter";
 
 /** Prisma `SqlDriverAdapter` backed by `@yydb/sqlite` `createEngine`. */
-export class YydbSqliteDriverAdapter implements SqlDriverAdapter {
+export class SqliteDriverAdapter implements SqlDriverAdapter {
   readonly provider = "sqlite" as const;
   readonly adapterName = ADAPTER_NAME;
   #engine: NativeEngine;
@@ -82,7 +82,7 @@ export class YydbSqliteDriverAdapter implements SqlDriverAdapter {
       throw mapError(error);
     }
     const options: TransactionOptions = { usePhantomQuery: false };
-    return new YydbSqliteTransaction(this.#engine, options);
+    return new SqliteTransaction(this.#engine, options);
   }
 
   async dispose(): Promise<void> {
@@ -96,7 +96,7 @@ export class YydbSqliteDriverAdapter implements SqlDriverAdapter {
   }
 }
 
-class YydbSqliteTransaction implements Transaction {
+class SqliteTransaction implements Transaction {
   readonly provider = "sqlite" as const;
   readonly adapterName = ADAPTER_NAME;
   readonly options: TransactionOptions;
@@ -157,7 +157,7 @@ class YydbSqliteTransaction implements Transaction {
 }
 
 /** Factory matching Prisma's `SqlMigrationAwareDriverAdapterFactory` shape. */
-export class YydbSqliteDriverAdapterFactory implements SqlMigrationAwareDriverAdapterFactory {
+export class SqliteDriverAdapterFactory implements SqlMigrationAwareDriverAdapterFactory {
   readonly provider = "sqlite" as const;
   readonly adapterName = ADAPTER_NAME;
   #pageSize: number;
@@ -167,11 +167,11 @@ export class YydbSqliteDriverAdapterFactory implements SqlMigrationAwareDriverAd
   }
 
   async connect(): Promise<SqlDriverAdapter> {
-    return new YydbSqliteDriverAdapter(createEngine(this.#pageSize));
+    return new SqliteDriverAdapter(createEngine(this.#pageSize));
   }
 
   async connectToShadowDb(): Promise<SqlDriverAdapter> {
-    return new YydbSqliteDriverAdapter(createEngine(this.#pageSize));
+    return new SqliteDriverAdapter(createEngine(this.#pageSize));
   }
 }
 

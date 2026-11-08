@@ -7,10 +7,10 @@
 
 import { ColumnTypeEnum } from "@prisma/driver-adapter-utils";
 
-import { YydbSqliteDriverAdapterFactory } from "../src/yydb-sqlite-driver-adapter.ts";
+import { SqliteDriverAdapterFactory } from "../src/sqlite-driver-adapter.ts";
 
 async function main(): Promise<void> {
-  const factory = new YydbSqliteDriverAdapterFactory(4096);
+  const factory = new SqliteDriverAdapterFactory(4096);
   const adapter = await factory.connect();
 
   await adapter.executeScript(`

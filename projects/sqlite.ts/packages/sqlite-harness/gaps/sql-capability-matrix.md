@@ -1,7 +1,7 @@
 # SQL capability matrix
 
-Measured against the pinned `database.rs` facade rev `3d08fa5` (`3d08fa541d73f2a696b81394ee424db1008adbc7`,
-`projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
+Measured against the pinned `database.rs` facade rev on `dev` tip
+(`projects/facades/sqlite/src/sql`). Every row below was executed through this repository's own engine and
 through both live oracles; the oracle value, not an internal expectation, decides whether a row is correct.
 
 | Item | Value |

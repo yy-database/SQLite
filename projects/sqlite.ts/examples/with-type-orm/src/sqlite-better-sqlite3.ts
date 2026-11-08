@@ -8,7 +8,7 @@ import {
   type NativeEngine,
 } from "../../../packages/sqlite/src/index.ts";
 
-export type YydbBetterSqlite3Options = {
+export type SqliteBetterSqlite3Options = {
   readonly?: boolean;
   fileMustExist?: boolean;
   timeout?: number;
@@ -31,7 +31,7 @@ export class Database {
   #safeIntegers = false;
   #memory: boolean;
 
-  constructor(filename = ":memory:", _options: YydbBetterSqlite3Options = {}) {
+  constructor(filename = ":memory:", _options: SqliteBetterSqlite3Options = {}) {
     this.name = filename;
     this.#memory = filename === ":memory:" || filename === "";
     if (this.#memory) {

@@ -5,11 +5,11 @@
 
 import { eq } from "drizzle-orm";
 
-import { createYydbDrizzleDatabase } from "../src/database.ts";
+import { createSqliteDrizzleDatabase } from "../src/database.ts";
 import { users } from "../src/schema.ts";
 
 async function main(): Promise<void> {
-  const { engine, db } = createYydbDrizzleDatabase(4096);
+  const { engine, db } = createSqliteDrizzleDatabase(4096);
 
   engine.execute(
     "create table users (id integer primary key autoincrement not null, name text not null, score real)",

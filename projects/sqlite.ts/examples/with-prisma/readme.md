@@ -5,11 +5,11 @@ Prisma driver adapter over `@yydb/sqlite` through the public `@prisma/driver-ada
 
 ## Hook
 
-`src/yydb-sqlite-driver-adapter.ts` implements the same adapter surface Prisma's official
+`src/sqlite-driver-adapter.ts` implements the same adapter surface Prisma's official
 `@prisma/adapter-better-sqlite3` targets. Wire it into Prisma Client as:
 
 ```ts
-const factory = new YydbSqliteDriverAdapterFactory();
+const factory = new SqliteDriverAdapterFactory();
 const adapter = await factory.connect();
 const prisma = new PrismaClient({ adapter });
 ```

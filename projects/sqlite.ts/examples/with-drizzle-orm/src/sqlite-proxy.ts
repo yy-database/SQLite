@@ -11,7 +11,7 @@ export type SqliteProxyResult = {
 };
 
 /** Wraps `createEngine` as the callback shape `drizzle-orm/sqlite-proxy` expects. */
-export function createYydbSqliteProxyEngine(pageSize = 4096): {
+export function createSqliteProxyEngine(pageSize = 4096): {
   engine: NativeEngine;
   execute: (
     sql: string,

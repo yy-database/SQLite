@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createYydbTypeOrmDataSource } from "../src/data-source.ts";
+import { createSqliteTypeOrmDataSource } from "../src/data-source.ts";
 import { UserEntity, type UserRow } from "../src/entities.ts";
 
 async function main(): Promise<void> {
@@ -16,7 +16,7 @@ async function main(): Promise<void> {
   const database = join(root, "typeorm.sqlite3");
 
   try {
-    const dataSource = createYydbTypeOrmDataSource(database);
+    const dataSource = createSqliteTypeOrmDataSource(database);
     await dataSource.initialize();
 
     const users = dataSource.getRepository(UserEntity);
