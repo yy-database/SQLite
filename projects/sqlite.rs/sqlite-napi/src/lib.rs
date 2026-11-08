@@ -1,12 +1,17 @@
 #![allow(non_snake_case)]
 
+use std::ptr;
+
 use database::harness::chart::{BenchMetric, bench_chart_svg};
 use database::harness::{
     Baseline, BaselineIdentity, BenchRow, Comparison, CompareMode, DifferenceObservation, Digest, FuzzInput, FuzzPlan, Grammar, KnownDifference,
     Observed, ReportEnvelope, ShrinkSession, Stats, check_baseline, classify, compare, generate, per_op_ms, render, render_json, shrink_next,
     shrink_report, shrink_start, summarize,
 };
-use napi::bindgen_prelude::{BigInt, Buffer};
+use napi::{
+    bindgen_prelude::{BigInt, Buffer, ToNapiValue, TypeName, ValueType},
+    sys,
+};
 use napi_derive::napi;
 use sqlite::{
     RecordLimits, RecordValue, SchemaObjectKind, TableLimits, TextEncoding, decode_library_version, decode_record,
@@ -142,19 +147,158 @@ fn resolve_encoding_name(bytes: &[u8]) -> napi::Result<&'static str> {
     })
 }
 
-fn build_decoded_rows(bytes: &[u8], rows: Vec<sqlite::TableRow>, limits: TableLimits) -> napi::Result<Vec<SqliteDecodedRow>> {
-    let encoding = detect_encoding(bytes)?;
-    let record_limits = RecordLimits { max_columns: 1024, max_payload_bytes: limits.max_payload_bytes.max(1_048_576) };
-    rows.into_iter()
-        .map(|row| {
-            decode_record(&row.payload, encoding, record_limits).map_err(|e| napi::Error::from_reason(e.to_string())).map(
-                |columns| SqliteDecodedRow {
-                    rowid: BigInt::from(i64::from(row.rowid)),
-                    columns: columns.into_iter().map(record_value).collect(),
-                },
-            )
+/// Property keys and storage-class literals reused by every cell in one call.
+struct DecodedKeys {
+    rowid: sys::napi_value,
+    columns: sys::napi_value,
+    kind: sys::napi_value,
+    value_integer: sys::napi_value,
+    value_real: sys::napi_value,
+    value_text: sys::napi_value,
+    value_blob: sys::napi_value,
+    kind_null: sys::napi_value,
+    kind_integer: sys::napi_value,
+    kind_real: sys::napi_value,
+    kind_text: sys::napi_value,
+    kind_blob: sys::napi_value,
+}
+
+unsafe fn js_string(env: sys::napi_env, text: &[u8]) -> napi::Result<sys::napi_value> {
+    let mut value = ptr::null_mut();
+    napi::check_status!(unsafe { sys::napi_create_string_utf8(env, text.as_ptr().cast(), text.len() as isize, &mut value) })?;
+    Ok(value)
+}
+
+impl DecodedKeys {
+    unsafe fn new(env: sys::napi_env) -> napi::Result<Self> {
+        unsafe {
+            Ok(Self {
+                rowid: js_string(env, b"rowid")?,
+                columns: js_string(env, b"columns")?,
+                kind: js_string(env, b"kind")?,
+                value_integer: js_string(env, b"valueInteger")?,
+                value_real: js_string(env, b"valueReal")?,
+                value_text: js_string(env, b"valueText")?,
+                value_blob: js_string(env, b"valueBlob")?,
+                kind_null: js_string(env, b"null")?,
+                kind_integer: js_string(env, b"integer")?,
+                kind_real: js_string(env, b"real")?,
+                kind_text: js_string(env, b"text")?,
+                kind_blob: js_string(env, b"blob")?,
+            })
+        }
+    }
+}
+
+unsafe fn create_object(env: sys::napi_env) -> napi::Result<sys::napi_value> {
+    let mut value = ptr::null_mut();
+    napi::check_status!(unsafe { sys::napi_create_object(env, &mut value) })?;
+    Ok(value)
+}
+
+unsafe fn create_array(env: sys::napi_env, length: usize) -> napi::Result<sys::napi_value> {
+    let mut value = ptr::null_mut();
+    napi::check_status!(unsafe { sys::napi_create_array_with_length(env, length, &mut value) })?;
+    Ok(value)
+}
+
+unsafe fn create_integer(env: sys::napi_env, integer: i64) -> napi::Result<sys::napi_value> {
+    let mut value = ptr::null_mut();
+    napi::check_status!(unsafe { sys::napi_create_bigint_int64(env, integer, &mut value) })?;
+    Ok(value)
+}
+
+unsafe fn create_real(env: sys::napi_env, real: f64) -> napi::Result<sys::napi_value> {
+    let mut value = ptr::null_mut();
+    napi::check_status!(unsafe { sys::napi_create_double(env, real, &mut value) })?;
+    Ok(value)
+}
+
+unsafe fn set_property(
+    env: sys::napi_env,
+    object: sys::napi_value,
+    key: sys::napi_value,
+    value: sys::napi_value,
+) -> napi::Result<()> {
+    napi::check_status!(unsafe { sys::napi_set_property(env, object, key, value) })
+}
+
+unsafe fn set_element(env: sys::napi_env, array: sys::napi_value, index: usize, value: sys::napi_value) -> napi::Result<()> {
+    napi::check_status!(unsafe { sys::napi_set_element(env, array, index as u32, value) })
+}
+
+/// Decoded rows written straight into the public `DecodedRow[]` shape.
+///
+/// The `rowid`/`columns`/`kind` keys and the five storage-class literals are
+/// materialized once per call, and integers use the native `i64` bigint
+/// constructor instead of going through a temporary Rust object graph.
+pub struct DecodedRows {
+    rows: Vec<sqlite::TableRow>,
+    encoding: TextEncoding,
+    limits: RecordLimits,
+}
+
+impl DecodedRows {
+    fn new(bytes: &[u8], rows: Vec<sqlite::TableRow>, limits: TableLimits) -> napi::Result<Self> {
+        Ok(Self {
+            rows,
+            encoding: detect_encoding(bytes)?,
+            limits: RecordLimits { max_columns: 1024, max_payload_bytes: limits.max_payload_bytes.max(1_048_576) },
         })
-        .collect()
+    }
+}
+
+impl TypeName for DecodedRows {
+    fn type_name() -> &'static str {
+        "Array<DecodedRow>"
+    }
+
+    fn value_type() -> ValueType {
+        ValueType::Object
+    }
+}
+
+impl ToNapiValue for DecodedRows {
+    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
+        unsafe {
+            let keys = DecodedKeys::new(env)?;
+            let rows = create_array(env, val.rows.len())?;
+            for (row_index, row) in val.rows.iter().enumerate() {
+                let columns = decode_record(&row.payload, val.encoding, val.limits)
+                    .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+                let row_object = create_object(env)?;
+                set_property(env, row_object, keys.rowid, create_integer(env, i64::from(row.rowid))?)?;
+                let columns_array = create_array(env, columns.len())?;
+                for (slot, value) in columns.into_iter().enumerate() {
+                    let cell = create_object(env)?;
+                    match value {
+                        RecordValue::Null => set_property(env, cell, keys.kind, keys.kind_null)?,
+                        RecordValue::Integer(integer) => {
+                            set_property(env, cell, keys.kind, keys.kind_integer)?;
+                            set_property(env, cell, keys.value_integer, create_integer(env, integer)?)?;
+                        }
+                        RecordValue::Real(real) => {
+                            set_property(env, cell, keys.kind, keys.kind_real)?;
+                            set_property(env, cell, keys.value_real, create_real(env, real)?)?;
+                        }
+                        RecordValue::Text(text) => {
+                            set_property(env, cell, keys.kind, keys.kind_text)?;
+                            set_property(env, cell, keys.value_text, js_string(env, text.as_bytes())?)?;
+                        }
+                        RecordValue::Blob(blob) => {
+                            set_property(env, cell, keys.kind, keys.kind_blob)?;
+                            let buffer = <Buffer as ToNapiValue>::to_napi_value(env, Buffer::from(blob.to_vec()))?;
+                            set_property(env, cell, keys.value_blob, buffer)?;
+                        }
+                    }
+                    set_element(env, columns_array, slot, cell)?;
+                }
+                set_property(env, row_object, keys.columns, columns_array)?;
+                set_element(env, rows, row_index, row_object)?;
+            }
+            Ok(rows)
+        }
+    }
 }
 
 fn build_decoded_payloads(
@@ -253,10 +397,10 @@ impl SqliteSnapshot {
 
     /// Reads decoded typed records from an ordinary rowid table.
     #[napi]
-    pub fn tableDecoded(&self, name: String, limits: Option<SqliteReadLimits>) -> napi::Result<Vec<SqliteDecodedRow>> {
+    pub fn tableDecoded(&self, name: String, limits: Option<SqliteReadLimits>) -> napi::Result<DecodedRows> {
         let resolved = SqliteReadLimits::resolve(limits);
         let rows = read_named_table(&self.bytes, &name, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        build_decoded_rows(&self.bytes, rows, resolved)
+        DecodedRows::new(&self.bytes, rows, resolved)
     }
 
     /// SQLite library version stamped in the snapshot header.
@@ -364,10 +508,10 @@ impl SqliteDatabase {
 
     /// Reads decoded typed records from an ordinary rowid table.
     #[napi]
-    pub fn table(&self, name: String, limits: Option<SqliteReadLimits>) -> napi::Result<Vec<SqliteDecodedRow>> {
+    pub fn table(&self, name: String, limits: Option<SqliteReadLimits>) -> napi::Result<DecodedRows> {
         let resolved = SqliteReadLimits::resolve(limits);
         let rows = read_named_table(&self.bytes, &name, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        build_decoded_rows(&self.bytes, rows, resolved)
+        DecodedRows::new(&self.bytes, rows, resolved)
     }
 
     /// Reads decoded typed records from a WITHOUT ROWID table in primary-key order.
@@ -441,6 +585,103 @@ struct WriterColumnJson {
     autoincrement: Option<bool>,
 }
 
+/// One decoded `valuesJson` element: an omitted column or a bound write value.
+enum InsertSlot {
+    Omit,
+    Value(sqlite::WriteValue),
+}
+
+fn blob_from_hex(hex: &str) -> Result<sqlite::WriteValue, String> {
+    if hex.len() % 2 != 0 {
+        return Err("sqlite blob hex must have even length".to_string());
+    }
+    let mut bytes = Vec::with_capacity(hex.len() / 2);
+    for index in 0..hex.len() / 2 {
+        let byte =
+            u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).map_err(|_| "sqlite blob hex is not valid".to_string())?;
+        bytes.push(byte);
+    }
+    Ok(sqlite::WriteValue::Blob(bytes))
+}
+
+struct InsertSlotVisitor;
+
+impl<'de> serde::de::Visitor<'de> for InsertSlotVisitor {
+    type Value = InsertSlot;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a sqlite write value")
+    }
+
+    fn visit_unit<E: serde::de::Error>(self) -> Result<InsertSlot, E> {
+        Ok(InsertSlot::Value(sqlite::WriteValue::Null))
+    }
+
+    fn visit_bool<E: serde::de::Error>(self, flag: bool) -> Result<InsertSlot, E> {
+        Ok(InsertSlot::Value(sqlite::WriteValue::Integer(i64::from(flag))))
+    }
+
+    fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<InsertSlot, E> {
+        Ok(InsertSlot::Value(sqlite::WriteValue::Integer(value)))
+    }
+
+    fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<InsertSlot, E> {
+        Ok(InsertSlot::Value(match i64::try_from(value) {
+            Ok(integer) => sqlite::WriteValue::Integer(integer),
+            Err(_) => sqlite::WriteValue::Real(value as f64),
+        }))
+    }
+
+    fn visit_f64<E: serde::de::Error>(self, value: f64) -> Result<InsertSlot, E> {
+        Ok(InsertSlot::Value(sqlite::WriteValue::Real(value)))
+    }
+
+    fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<InsertSlot, E> {
+        Ok(InsertSlot::Value(sqlite::WriteValue::Text(text.to_string())))
+    }
+
+    fn visit_string<E: serde::de::Error>(self, text: String) -> Result<InsertSlot, E> {
+        Ok(InsertSlot::Value(sqlite::WriteValue::Text(text)))
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<InsertSlot, A::Error> {
+        let mut omit = false;
+        let mut blob = None;
+        let mut integer = None;
+        while let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
+                "$omit" => omit = map.next_value::<bool>()?,
+                "$blob" => blob = Some(map.next_value::<String>()?),
+                "$i64" => integer = Some(map.next_value::<String>()?),
+                _ => {
+                    map.next_value::<serde::de::IgnoredAny>()?;
+                }
+            }
+        }
+        if omit {
+            return Ok(InsertSlot::Omit);
+        }
+        if let Some(hex) = blob {
+            return blob_from_hex(&hex).map(InsertSlot::Value).map_err(serde::de::Error::custom);
+        }
+        if let Some(text) = integer {
+            return text
+                .parse::<i64>()
+                .map(|value| InsertSlot::Value(sqlite::WriteValue::Integer(value)))
+                .map_err(|_| serde::de::Error::custom("sqlite $i64 value must be a decimal string"));
+        }
+        Err(serde::de::Error::custom("sqlite write value object must carry `$blob` or `$i64`"))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for InsertSlot {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(InsertSlotVisitor)
+    }
+}
+
+/// Converts one JSON value into a write value. Kept for `update`, whose
+/// `{"set": ...}` wrapper needs the intermediate JSON node.
 fn json_to_write_value(json: &serde_json::Value) -> napi::Result<sqlite::WriteValue> {
     Ok(match json {
         serde_json::Value::Null => sqlite::WriteValue::Null,
@@ -459,16 +700,7 @@ fn json_to_write_value(json: &serde_json::Value) -> napi::Result<sqlite::WriteVa
         serde_json::Value::String(text) => sqlite::WriteValue::Text(text.clone()),
         serde_json::Value::Object(object) => {
             if let Some(hex) = object.get("$blob").and_then(serde_json::Value::as_str) {
-                if hex.len() % 2 != 0 {
-                    return Err(napi::Error::from_reason("sqlite blob hex must have even length"));
-                }
-                let mut bytes = Vec::with_capacity(hex.len() / 2);
-                for index in 0..hex.len() / 2 {
-                    let byte = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16)
-                        .map_err(|_| napi::Error::from_reason("sqlite blob hex is not valid"))?;
-                    bytes.push(byte);
-                }
-                sqlite::WriteValue::Blob(bytes)
+                blob_from_hex(hex).map_err(napi::Error::from_reason)?
             }
             else if let Some(integer) = object.get("$i64").and_then(serde_json::Value::as_str) {
                 let value = integer
@@ -593,16 +825,14 @@ impl SqliteWriter {
     /// NULL and `{"$omit":true}` applies the column default. Returns the rowid.
     #[napi]
     pub fn insert(&mut self, table: String, values_json: String) -> napi::Result<i64> {
-        let values: Vec<serde_json::Value> = serde_json::from_str(&values_json)
+        let values: Vec<InsertSlot> = serde_json::from_str(&values_json)
             .map_err(|e| napi::Error::from_reason(format!("sqlite values JSON invalid: {e}")))?;
         let mut slots = Vec::with_capacity(values.len());
         for value in values {
-            if value.as_object().is_some_and(|object| object.get("$omit").and_then(serde_json::Value::as_bool).unwrap_or(false))
-            {
-                slots.push(None);
-                continue;
+            match value {
+                InsertSlot::Omit => slots.push(None),
+                InsertSlot::Value(value) => slots.push(Some(value)),
             }
-            slots.push(Some(json_to_write_value(&value)?));
         }
         self.writer.insert(&table, &slots).map_err(|e| napi::Error::from_reason(e.to_string()))
     }
@@ -698,10 +928,10 @@ impl SqliteWriter {
 
     /// Reads one table's decoded rows back through the crate's own reader.
     #[napi]
-    pub fn tableDecoded(&self, name: String, limits: Option<SqliteReadLimits>) -> napi::Result<Vec<SqliteDecodedRow>> {
+    pub fn tableDecoded(&self, name: String, limits: Option<SqliteReadLimits>) -> napi::Result<DecodedRows> {
         let resolved = SqliteReadLimits::resolve(limits);
         let rows = self.writer.table_rows(&name, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        build_decoded_rows(self.writer.pages(), rows, resolved)
+        DecodedRows::new(self.writer.pages(), rows, resolved)
     }
 }
 
