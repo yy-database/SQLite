@@ -43,11 +43,11 @@ test("node:sqlite seeds rows that the reader and snapshot decode", () => {
     assert.equal(rows.length, 2);
     assert.equal(rows[0].rowid, 1n);
     // An INTEGER PRIMARY KEY is a rowid alias, so it has no stored column value.
-    assert.equal(rows[0].columns[0].kind, "null");
-    assert.equal(rows[0].columns[1].valueText, "one");
-    assert.equal(rows[0].columns[2].valueReal, 1.5);
-    assert.deepEqual(rows[0].columns[3].valueBlob, Buffer.from([0x01, 0x02, 0x03]));
-    assert.equal(rows[1].columns[3].kind, "null");
+    assert.equal(rows[0].columns[0], null);
+    assert.equal(rows[0].columns[1], "one");
+    assert.equal(rows[0].columns[2], 1.5);
+    assert.deepEqual(rows[0].columns[3], Buffer.from([0x01, 0x02, 0x03]));
+    assert.equal(rows[1].columns[3], null);
 
     const snapshot = openSnapshot(reader.pages());
     assert.deepEqual(snapshot.tableDecoded("n"), rows);
@@ -105,8 +105,8 @@ test("node:sqlite writes after the reader opened the same file", () => {
     const reopened = openDatabase(space.path);
     const rows = reopened.table("a");
     assert.equal(rows.length, 2);
-    assert.equal(rows[0].columns[1].valueText, "first");
-    assert.equal(rows[1].columns[1].valueText, "second");
+    assert.equal(rows[0].columns[1], "first");
+    assert.equal(rows[1].columns[1], "second");
   } finally {
     space.dispose();
   }
@@ -147,7 +147,7 @@ test("snapshot copies bytes and enforces the byte limit", () => {
     const snapshot = openSnapshot(source);
     assert.equal(snapshot.tableDecoded("c").length, 1);
     source.fill(0);
-    assert.equal(snapshot.tableDecoded("c")[0].columns[0].valueText, "copy");
+    assert.equal(snapshot.tableDecoded("c")[0].columns[0], "copy");
 
     assert.throws(() => openSnapshot(Buffer.alloc(64), 32), /byte limit exceeded/);
   } finally {

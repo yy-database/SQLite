@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { RecordValue } from "../../../packages/sqlite/src/index.ts";
+import type { DecodedValue } from "../../../packages/sqlite/src/index.ts";
 
 export const PAGE_SIZE = 4096;
 export const ROWS = 64;
@@ -19,21 +19,12 @@ export type ExpectedRow = {
   score: number;
 };
 
-export function column(value: RecordValue): unknown {
-  switch (value.kind) {
-    case "null":
-      return null;
-    case "integer":
-      return Number(value.valueInteger);
-    case "real":
-      return value.valueReal;
-    case "text":
-      return value.valueText;
-    case "blob":
-      return Buffer.from(value.valueBlob ?? []);
-    default:
-      throw new Error(`unknown column kind ${(value as RecordValue).kind}`);
-  }
+// 存储类别由 JS 类型表达：bigint 整数、number 实数、string 文本、Buffer blob、null 空值。
+export function column(value: DecodedValue): unknown {
+  if (value === null) return null;
+  if (typeof value === "bigint") return Number(value);
+  if (Buffer.isBuffer(value)) return Buffer.from(value);
+  return value;
 }
 
 export function expectedRows(): ExpectedRow[] {

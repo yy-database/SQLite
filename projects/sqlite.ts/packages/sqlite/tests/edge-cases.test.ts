@@ -99,7 +99,7 @@ test("composite PRIMARY KEY WITHOUT ROWID is read in key order", () => {
 
     const rows = openDatabase(space.path).tableWithoutRowid("pairs");
     assert.deepEqual(
-      rows.map((columns) => [columns[0].valueText, Number(columns[1].valueInteger), columns[2].valueText]),
+      rows.map((columns) => [columns[0], Number(columns[1]), columns[2]]),
       external.map((row) => [row.a, Number(row.b), row.note]),
     );
 

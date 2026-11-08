@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { bindings, createWriter, openSnapshot, writeSlots } from "../src/index.ts";
+import type { DecodedValue } from "../src/index.ts";
 
 // External truth for this file: `better-sqlite3` writes the reference files and
 // every assertion that matters is cross-checked with `PRAGMA integrity_check`.
@@ -18,6 +19,15 @@ const BetterSqlite = require("better-sqlite3") as new (path: string) => {
 };
 
 const BLANK = fileURLToPath(new URL("../../sqlite-fixtures/fixtures/blank.sqlite", import.meta.url));
+
+// 存储类别由 JS 值类型判别，只在断言里还原成 SQLite 名字。
+function storageKind(value: DecodedValue): "null" | "integer" | "real" | "text" | "blob" {
+  if (value === null) return "null";
+  if (typeof value === "bigint") return "integer";
+  if (typeof value === "number") return "real";
+  if (typeof value === "string") return "text";
+  return "blob";
+}
 
 function workspace(label: string): { path: string; dispose: () => void } {
   const root = mkdtempSync(join(tmpdir(), `sqlite-boundary-${label}-`));
@@ -142,7 +152,7 @@ test("virtual tables and deeply nested views fail closed", () => {
     assert.equal(view.length, 1);
     assert.equal(view[0].rowid, 1n);
     assert.deepEqual(
-      view[0].columns.map((column) => [column.kind, column.valueInteger ?? column.valueText]),
+      view[0].columns.map((column) => [storageKind(column), column]),
       [["integer", 1n], ["text", "one"]],
     );
     assert.throws(() => snapshot.table("v9"), /view nesting depth/);
@@ -157,7 +167,7 @@ test("decodeRecord rejects truncated and malformed payloads", () => {
   assert.throws(() => bindings.decodeRecord(Buffer.from([2, 0x01])), /record body/);
   assert.throws(() => bindings.decodeRecord(Buffer.from([0]), "utf-16"), /unsupported/);
   assert.deepEqual(
-    bindings.decodeRecord(Buffer.from([2, 0x01, 0x05]), "utf8").map((value) => [value.kind, value.valueInteger]),
+    bindings.decodeRecord(Buffer.from([2, 0x01, 0x05]), "utf8").map((value) => [storageKind(value), value]),
     [["integer", 5n]],
   );
 });

@@ -86,7 +86,7 @@ test("hot rollback journal rolls partially written pages back", () => {
     const rows = reader.table("j");
     assert.equal(rows.length, 2);
     assert.deepEqual(
-      rows.map((row) => row.columns[1].valueText),
+      rows.map((row) => row.columns[1]),
       ["committed-one", "committed-two"],
     );
 

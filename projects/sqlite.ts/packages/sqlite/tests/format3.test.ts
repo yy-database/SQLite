@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createWriter, openDatabase, openWriter, writeSlots } from "../src/index.ts";
+import type { DecodedValue } from "../src/index.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -23,6 +24,15 @@ interface ExternalDatabase {
 }
 
 const BetterSqlite = require("better-sqlite3") as new (path: string) => ExternalDatabase;
+
+// 存储类别由 JS 值类型判别，只在断言里还原成 SQLite 名字。
+function storageKind(value: DecodedValue): "null" | "integer" | "real" | "text" | "blob" {
+  if (value === null) return "null";
+  if (typeof value === "bigint") return "integer";
+  if (typeof value === "number") return "real";
+  if (typeof value === "string") return "text";
+  return "blob";
+}
 
 function workspace(label: string): { path: string; dispose: () => void } {
   const root = mkdtempSync(join(tmpdir(), `sqlite-${label}-`));
@@ -91,7 +101,7 @@ test("page header and page size survive the writer", () => {
     assert.equal(reader.pages().length % expected, 0);
     const rows = reader.table("e");
     assert.equal(rows.length, 1);
-    assert.equal(rows[0].columns[1].valueText, "external-one");
+    assert.equal(rows[0].columns[1], "external-one");
   } finally {
     space.dispose();
   }
@@ -173,8 +183,8 @@ test("overflow payloads round trip through better-sqlite3", () => {
     assert.equal(integrity.integrity_check, "ok");
 
     const decoded = openDatabase(space.path).table("o");
-    assert.equal(decoded[0].columns[3].valueBlob?.length, Number(row.n));
-    assert.equal(decoded[0].columns[3].valueBlob?.toString("hex"), row.body);
+    assert.equal((decoded[0].columns[3] as Buffer).length, Number(row.n));
+    assert.equal((decoded[0].columns[3] as Buffer).toString("hex"), row.body);
 
     const externalPath = join(space.path, "..", "external.sqlite3");
     const seed = new BetterSqlite(externalPath);
@@ -186,8 +196,8 @@ test("overflow payloads round trip through better-sqlite3", () => {
 
     const mirrored = openDatabase(externalPath).table("o");
     assert.equal(mirrored.length, 1);
-    assert.equal(mirrored[0].columns[3].kind, "blob");
-    assert.equal(mirrored[0].columns[3].valueBlob?.toString("hex"), external.toString("hex"));
+    assert.equal(storageKind(mirrored[0].columns[3]), "blob");
+    assert.equal((mirrored[0].columns[3] as Buffer).toString("hex"), external.toString("hex"));
   } finally {
     space.dispose();
   }
@@ -243,8 +253,8 @@ test("serial types preserve storage class before and after external readers", ()
     assert.equal(integrity.integrity_check, "ok");
 
     const decoded = openDatabase(space.path).table("v");
-    assert.deepEqual(decoded.map((row) => row.columns[2].kind), rows.map((row) => row.t));
-    assert.equal(decoded[5].columns[2].valueText, unicode.value);
+    assert.deepEqual(decoded.map((row) => storageKind(row.columns[2])), rows.map((row) => row.t));
+    assert.equal(decoded[5].columns[2], unicode.value);
 
     const externalPath = join(space.path, "..", "external.sqlite3");
     const seed = new BetterSqlite(externalPath);
@@ -267,8 +277,8 @@ test("serial types preserve storage class before and after external readers", ()
       return result.map((row) => row.t);
     })();
     const mirrored = openDatabase(externalPath).table("v");
-    assert.deepEqual(mirrored.map((row) => row.columns[2].kind), externalKinds);
-    assert.equal(mirrored[5].columns[2].valueText, unicode.value);
+    assert.deepEqual(mirrored.map((row) => storageKind(row.columns[2])), externalKinds);
+    assert.equal(mirrored[5].columns[2], unicode.value);
   } finally {
     space.dispose();
   }
@@ -321,13 +331,13 @@ test("declared REAL columns apply real affinity", () => {
     // reader sees `integer` where a SQL read reports `real`. Values must agree.
     assert.deepEqual(
       mirrored.map((row) => [
-        Number(row.columns[1].valueReal ?? row.columns[1].valueInteger),
-        Number(row.columns[2].valueReal ?? row.columns[2].valueInteger),
+        Number(row.columns[1]),
+        Number(row.columns[2]),
       ]),
       externalValues.map((row) => [row.score, row.maybe]),
     );
     assert.deepEqual(
-      mirrored.map((row) => row.columns[2].kind),
+      mirrored.map((row) => storageKind(row.columns[2])),
       externalKinds.map((row) => row.m),
     );
   } finally {
@@ -375,7 +385,7 @@ test("INTEGER PRIMARY KEY stays a rowid alias", () => {
       mirrored.map((row) => Number(row.rowid)),
       externalRowids.map((row) => Number(row.rid)),
     );
-    assert.equal(mirrored[1].columns[1].valueText, "explicit");
+    assert.equal(mirrored[1].columns[1], "explicit");
   } finally {
     space.dispose();
   }
@@ -545,8 +555,8 @@ test("update delete and rollback stay externally consistent", () => {
 
     const decoded = openDatabase(space.path).table("u");
     assert.equal(decoded.length, Number(count.c));
-    assert.equal(decoded[4].columns[1].valueText, updated.label);
-    assert.equal(decoded[4].columns[2].valueReal, updated.score);
+    assert.equal(decoded[4].columns[1], updated.label);
+    assert.equal(decoded[4].columns[2], updated.score);
 
     const externalPath = join(space.path, "..", "external.sqlite3");
     const seed = new BetterSqlite(externalPath);
@@ -577,7 +587,7 @@ test("update delete and rollback stay externally consistent", () => {
     external.close();
     const mirrored = openDatabase(externalPath).table("u");
     assert.deepEqual(
-      mirrored.map((row) => [Number(row.rowid), row.columns[1].valueText]),
+      mirrored.map((row) => [Number(row.rowid), row.columns[1]]),
       externalRows.map((row) => [Number(row.rid), row.label]),
     );
     assert.equal(readFileSync(externalPath).length > 0, true);
@@ -597,10 +607,10 @@ test("WITHOUT ROWID rows are read from the primary-key index b-tree", () => {
 
     const rows = openDatabase(space.path).tableWithoutRowid("wo");
     assert.deepEqual(
-      rows.map((columns) => [columns[0].valueText, Number(columns[1].valueInteger)]),
+      rows.map((columns) => [columns[0], Number(columns[1])]),
       external.map((row) => [row.k, row.v]),
     );
-    assert.deepEqual(rows[0].map((value) => value.kind), ["text", "integer"]);
+    assert.deepEqual(rows[0].map(storageKind), ["text", "integer"]);
     assert.throws(() => openDatabase(space.path).table("wo"), /index b-tree|unsupported/i);
   } finally {
     space.dispose();
@@ -641,7 +651,7 @@ test("secondary index scans match external INDEXED BY order in both directions",
     const scanned = main.index("i_label");
     assert.equal(scanned.length, externalOrder.length);
     assert.deepEqual(
-      scanned.map((row) => [Number(row.rowid), row.columns[0].valueText]),
+      scanned.map((row) => [Number(row.rowid), row.columns[0]]),
       externalOrder.map((row) => [Number(row.rid), row.label]),
     );
 
@@ -666,7 +676,7 @@ test("secondary index scans match external INDEXED BY order in both directions",
     const mirrored = openDatabase(externalPath).index("i_label");
     assert.equal(mirrored.length, expected.length);
     assert.deepEqual(
-      mirrored.map((row) => [Number(row.rowid), row.columns[0].valueText]),
+      mirrored.map((row) => [Number(row.rowid), row.columns[0]]),
       expected.map((row) => [Number(row.rid), row.label]),
     );
   } finally {
@@ -690,7 +700,7 @@ test("external UTF-16 databases decode text through the declared encoding", () =
     assert.equal(reader.encoding(), "utf16le");
     assert.equal(reader.pages().readUInt32BE(56), 2);
     assert.deepEqual(
-      reader.table("u").map((row) => row.columns[1].valueText),
+      reader.table("u").map((row) => row.columns[1]),
       ["案例-明"],
     );
   } finally {
@@ -723,11 +733,11 @@ test("external views resolve to their base table while virtual tables fail close
       external.map((row) => `${row.type}:${row.name}`).sort(),
     );
     assert.deepEqual(
-      reader.table("base").map((row) => row.columns[1].valueText),
+      reader.table("base").map((row) => row.columns[1]),
       ["strict-row"],
     );
     assert.deepEqual(
-      reader.table("v").map((row) => row.columns.map((column) => column.valueText ?? Number(column.valueInteger))),
+      reader.table("v").map((row) => row.columns.map((column) => (typeof column === "bigint" ? Number(column) : column))),
       [[1, "strict-row"]],
       "a simple projection view resolves against its base table",
     );
@@ -757,7 +767,7 @@ test("rotated WAL checkpoints keep the snapshot consistent", () => {
     const reader = openDatabase(space.path);
     assert.equal(reader.table("r").length, Number(externalCount.c));
     assert.deepEqual(
-      reader.table("r").map((row) => row.columns[1].valueText).slice(-1),
+      reader.table("r").map((row) => row.columns[1]).slice(-1),
       ["second-20"],
     );
 

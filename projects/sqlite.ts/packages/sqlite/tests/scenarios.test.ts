@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createWriter, openDatabase, writeSlots } from "../src/index.ts";
-import type { DecodedRow, RecordValue } from "../src/index.ts";
+import type { DecodedRow, DecodedValue } from "../src/index.ts";
 
 const require = createRequire(import.meta.url);
 const ROWS = 1000;
@@ -82,8 +82,8 @@ function standardColumns(): string {
   ]);
 }
 
-function numeric(value: RecordValue): string {
-  return value.kind === "null" ? "null" : String(Number(value.valueReal ?? value.valueInteger));
+function numeric(value: DecodedValue): string {
+  return value === null ? "null" : String(Number(value));
 }
 
 function standardDigests(rows: DecodedRow[]): string[] {
@@ -91,10 +91,10 @@ function standardDigests(rows: DecodedRow[]): string[] {
     const [, label, score, payload, flag] = row.columns;
     return [
       row.rowid.toString(),
-      label.kind === "null" ? "null" : (label.valueText ?? ""),
+      label === null ? "null" : String(label),
       numeric(score),
-      sha(payload.valueBlob ?? null),
-      flag.kind === "null" ? "null" : String(flag.valueInteger),
+      sha(Buffer.isBuffer(payload) ? payload : null),
+      flag === null ? "null" : String(flag),
     ].join("|");
   });
 }
@@ -144,7 +144,7 @@ test("narrow rows fill multiple leaf pages with matching dividers", () => {
 
     const mine = openDatabase(space.path)
       .table("n")
-      .map((row) => `${row.rowid.toString()}|${row.columns[1].valueText}`);
+      .map((row) => `${row.rowid.toString()}|${row.columns[1]}`);
     assert.deepEqual(mine, external.map((row) => `${row.rid.toString()}|${row.label}`), "leaf dividers must keep every row in rowid order");
   } finally {
     space.dispose();
@@ -226,7 +226,7 @@ test("WITHOUT ROWID rows stay in primary-key order", () => {
 
     const mine = openDatabase(space.path)
       .tableWithoutRowid("wr")
-      .map((columns) => `${columns[0].valueText}|${columns[1].valueText}`);
+      .map((columns) => `${columns[0]}|${columns[1]}`);
     assert.deepEqual(mine, external.map((row) => `${row.k}|${row.v}`), "the primary-key index b-tree must be walked in key order");
   } finally {
     space.dispose();
@@ -256,7 +256,7 @@ test("duplicate index keys preserve label and rowid order", () => {
     assert.equal(external.length, ROWS);
     const mine = openDatabase(space.path)
       .index("i_label")
-      .map((row) => `${row.columns[0].valueText}|${row.rowid.toString()}`);
+      .map((row) => `${row.columns[0]}|${row.rowid.toString()}`);
     assert.deepEqual(mine, external.map((row) => `${row.label}|${row.rid.toString()}`), "duplicate keys must tie break by rowid");
 
     const mirrored = workspace("autoindex");
@@ -275,7 +275,7 @@ test("duplicate index keys preserve label and rowid order", () => {
       }[];
       seed.close();
       assert.deepEqual(
-        openDatabase(mirrored.path).index(auto).map((row) => `${row.columns[0].valueText}|${row.rowid.toString()}`),
+        openDatabase(mirrored.path).index(auto).map((row) => `${row.columns[0]}|${row.rowid.toString()}`),
         autoRows.map((row) => `${row.code}|${row.rid.toString()}`),
         "the automatic index must be readable through the public index API",
       );
@@ -346,7 +346,7 @@ test("WAL replay survives 50 checkpoint rounds", () => {
 
     const mine = openDatabase(space.path)
       .table("w")
-      .map((row) => `${row.rowid.toString()}|${row.columns[1].valueText}`);
+      .map((row) => `${row.rowid.toString()}|${row.columns[1]}`);
     assert.deepEqual(mine, external.map((row) => `${row.rid.toString()}|${row.label}`), "every checkpoint round must replay");
   } finally {
     space.dispose();
@@ -383,7 +383,7 @@ test("hot journal rolls a killed 200 row transaction back", () => {
     assert.equal(external.length, ROWS);
     const mine = openDatabase(space.path)
       .table("j")
-      .map((row) => `${row.rowid.toString()}|${row.columns[1].valueText}`);
+      .map((row) => `${row.rowid.toString()}|${row.columns[1]}`);
     assert.deepEqual(mine, external.map((row) => `${row.rid.toString()}|${row.label}`), "the 200 uncommitted rows must be rolled back");
   } finally {
     space.dispose();
@@ -404,7 +404,7 @@ test("thousand same-key updates settle on one value", () => {
     assert.equal(integrity(oracle), "ok");
     oracle.close();
     assert.equal(written.label, `v-${ROWS}`);
-    assert.equal(openDatabase(space.path).table("u")[0].columns[1].valueText, `v-${ROWS}`);
+    assert.equal(openDatabase(space.path).table("u")[0].columns[1], `v-${ROWS}`);
 
     const mirrored = workspace("update-external");
     try {
@@ -417,7 +417,7 @@ test("thousand same-key updates settle on one value", () => {
       const external = seed.prepare("select label from u where rowid = 1").get() as { label: string };
       assert.equal(integrity(seed), "ok");
       seed.close();
-      assert.equal(openDatabase(mirrored.path).table("u")[0].columns[1].valueText, external.label);
+      assert.equal(openDatabase(mirrored.path).table("u")[0].columns[1], external.label);
     } finally {
       mirrored.dispose();
     }
@@ -444,7 +444,7 @@ test("page sizes 512 1024 and 4096 agree with external pragma", () => {
       oracle.close();
       const mine = openDatabase(space.path)
         .table("p")
-        .map((row) => `${row.rowid.toString()}|${row.columns[1].valueText}`);
+        .map((row) => `${row.rowid.toString()}|${row.columns[1]}`);
       assert.deepEqual(mine, external.map((row) => `${row.rid.toString()}|${row.label}`), `rows at page size ${size}`);
     } finally {
       space.dispose();
@@ -474,7 +474,7 @@ test("1000 UTF-16 rows decode through the declared encoding", () => {
       const reader = openDatabase(space.path);
       assert.equal(reader.encoding(), expectedEncoding);
       assert.equal(reader.pages().readUInt32BE(56), marker);
-      const mine = reader.table("u").map((row) => `${row.rowid.toString()}|${row.columns[1].valueText}`);
+      const mine = reader.table("u").map((row) => `${row.rowid.toString()}|${row.columns[1]}`);
       const oracle = new BetterSqlite(space.path);
       const external = oracle.prepare("select rowid as rid, label from u order by rowid").safeIntegers(true).all() as { rid: bigint; label: string }[];
       oracle.close();
@@ -525,7 +525,7 @@ test("REAL affinity keeps numeric values at 1000 rows", () => {
     const external = oracle.prepare("select rowid as rid, score from r order by rowid").safeIntegers(true).all() as { rid: bigint; score: number }[];
     assert.equal(integrity(oracle), "ok");
     oracle.close();
-    const mine = openDatabase(space.path).table("r").map((row) => `${row.rowid.toString()}|${Number(row.columns[1].valueReal ?? row.columns[1].valueInteger)}`);
+    const mine = openDatabase(space.path).table("r").map((row) => `${row.rowid.toString()}|${Number(row.columns[1])}`);
     assert.deepEqual(mine, external.map((row) => `${row.rid.toString()}|${Number(row.score)}`), "numeric values must match despite integer storage");
   } finally {
     space.dispose();
@@ -546,12 +546,12 @@ test("INTEGER PRIMARY KEY stays a rowid alias at 1000 rows", () => {
     const drifted = external.filter((row) => row.rid.toString() !== row.id.toString());
     oracle.close();
     assert.deepEqual(drifted, [], "the external engine must also see rowid == id");
-    const mine = openDatabase(space.path).table("a").map((row) => `${row.rowid.toString()}|${row.columns[1].valueText}`);
+    const mine = openDatabase(space.path).table("a").map((row) => `${row.rowid.toString()}|${row.columns[1]}`);
     assert.deepEqual(mine, external.map((row) => `${row.rid.toString()}|${row.label}`), "our rowid must match the external id alias");
     assert.ok(
       openDatabase(space.path)
         .table("a")
-        .every((row) => row.columns[0].kind === "null"),
+        .every((row) => row.columns[0] === null),
       "the rowid alias column is stored as NULL in the record, which external SQL resolves through rowid",
     );
   } finally {

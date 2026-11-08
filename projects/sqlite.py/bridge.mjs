@@ -44,21 +44,14 @@ function nativePath() {
 
 const native = require(nativePath());
 
+// Python 侧仍按 `{ kind, value }` 标注存储类别，这里由 JS 值类型判别后转写。
 function decodeValue(value) {
-  switch (value.kind) {
-    case "null":
-      return { kind: "null", value: null };
-    case "integer":
-      return { kind: "integer", value: String(value.valueInteger) };
-    case "real":
-      return { kind: "real", value: value.valueReal };
-    case "text":
-      return { kind: "text", value: value.valueText };
-    case "blob":
-      return { kind: "blob", value: Buffer.from(value.valueBlob).toString("hex") };
-    default:
-      throw new Error(`unknown sqlite value kind ${value.kind}`);
-  }
+  if (value === null) return { kind: "null", value: null };
+  if (typeof value === "bigint") return { kind: "integer", value: String(value) };
+  if (typeof value === "number") return { kind: "real", value };
+  if (typeof value === "string") return { kind: "text", value };
+  if (Buffer.isBuffer(value)) return { kind: "blob", value: Buffer.from(value).toString("hex") };
+  throw new Error(`unknown sqlite value type ${typeof value}`);
 }
 
 function build({ path, pageSize, steps }) {

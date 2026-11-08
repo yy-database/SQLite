@@ -59,23 +59,6 @@ pub struct SqliteTableRow {
     pub payload: Buffer,
 }
 
-/// One typed, decoded SQLite record field.
-#[napi(object)]
-pub struct SqliteRecordValue {
-    pub kind: String,
-    pub value_integer: Option<BigInt>,
-    pub value_real: Option<f64>,
-    pub value_text: Option<String>,
-    pub value_blob: Option<Buffer>,
-}
-
-/// A decoded SQLite row: rowid plus typed column values.
-#[napi(object)]
-pub struct SqliteDecodedRow {
-    pub rowid: BigInt,
-    pub columns: Vec<SqliteRecordValue>,
-}
-
 fn encode_encoding(name: Option<&str>) -> napi::Result<TextEncoding> {
     match name {
         None | Some("utf8") | Some("utf-8") | Some("UTF-8") => Ok(TextEncoding::Utf8),
@@ -99,42 +82,6 @@ fn detect_encoding(bytes: &[u8]) -> napi::Result<TextEncoding> {
     }
 }
 
-fn record_value(value: RecordValue<'_>) -> SqliteRecordValue {
-    match value {
-        RecordValue::Null => {
-            SqliteRecordValue { kind: "null".into(), value_integer: None, value_real: None, value_text: None, value_blob: None }
-        }
-        RecordValue::Integer(int) => SqliteRecordValue {
-            kind: "integer".into(),
-            value_integer: Some(BigInt::from(i64::from(int))),
-            value_real: None,
-            value_text: None,
-            value_blob: None,
-        },
-        RecordValue::Real(real) => SqliteRecordValue {
-            kind: "real".into(),
-            value_integer: None,
-            value_real: Some(real),
-            value_text: None,
-            value_blob: None,
-        },
-        RecordValue::Text(text) => SqliteRecordValue {
-            kind: "text".into(),
-            value_integer: None,
-            value_real: None,
-            value_text: Some(text),
-            value_blob: None,
-        },
-        RecordValue::Blob(blob) => SqliteRecordValue {
-            kind: "blob".into(),
-            value_integer: None,
-            value_real: None,
-            value_text: None,
-            value_blob: Some(blob.to_vec().into()),
-        },
-    }
-}
-
 fn resolve_encoding_name(bytes: &[u8]) -> napi::Result<&'static str> {
     if bytes.len() < 64 {
         return Ok("utf8");
@@ -147,20 +94,10 @@ fn resolve_encoding_name(bytes: &[u8]) -> napi::Result<&'static str> {
     })
 }
 
-/// Property keys and storage-class literals reused by every cell in one call.
-struct DecodedKeys {
+/// 行对象上的两个属性键，每次调用只创建一次。
+struct RowKeys {
     rowid: sys::napi_value,
     columns: sys::napi_value,
-    kind: sys::napi_value,
-    value_integer: sys::napi_value,
-    value_real: sys::napi_value,
-    value_text: sys::napi_value,
-    value_blob: sys::napi_value,
-    kind_null: sys::napi_value,
-    kind_integer: sys::napi_value,
-    kind_real: sys::napi_value,
-    kind_text: sys::napi_value,
-    kind_blob: sys::napi_value,
 }
 
 unsafe fn js_string(env: sys::napi_env, text: &[u8]) -> napi::Result<sys::napi_value> {
@@ -169,24 +106,9 @@ unsafe fn js_string(env: sys::napi_env, text: &[u8]) -> napi::Result<sys::napi_v
     Ok(value)
 }
 
-impl DecodedKeys {
+impl RowKeys {
     unsafe fn new(env: sys::napi_env) -> napi::Result<Self> {
-        unsafe {
-            Ok(Self {
-                rowid: js_string(env, b"rowid")?,
-                columns: js_string(env, b"columns")?,
-                kind: js_string(env, b"kind")?,
-                value_integer: js_string(env, b"valueInteger")?,
-                value_real: js_string(env, b"valueReal")?,
-                value_text: js_string(env, b"valueText")?,
-                value_blob: js_string(env, b"valueBlob")?,
-                kind_null: js_string(env, b"null")?,
-                kind_integer: js_string(env, b"integer")?,
-                kind_real: js_string(env, b"real")?,
-                kind_text: js_string(env, b"text")?,
-                kind_blob: js_string(env, b"blob")?,
-            })
-        }
+        unsafe { Ok(Self { rowid: js_string(env, b"rowid")?, columns: js_string(env, b"columns")? }) }
     }
 }
 
@@ -227,11 +149,36 @@ unsafe fn set_element(env: sys::napi_env, array: sys::napi_value, index: usize, 
     napi::check_status!(unsafe { sys::napi_set_element(env, array, index as u32, value) })
 }
 
-/// Decoded rows written straight into the public `DecodedRow[]` shape.
+unsafe fn create_null(env: sys::napi_env) -> napi::Result<sys::napi_value> {
+    let mut value = ptr::null_mut();
+    napi::check_status!(unsafe { sys::napi_get_null(env, &mut value) })?;
+    Ok(value)
+}
+
+/// 把一个解码值写进数组：整数用 bigint、实数用 number、文本用 string、blob 用 Buffer、NULL 用 null。
 ///
-/// The `rowid`/`columns`/`kind` keys and the five storage-class literals are
-/// materialized once per call, and integers use the native `i64` bigint
-/// constructor instead of going through a temporary Rust object graph.
+/// 存储类别由 JS 类型本身表达，不再为每个单元格创建带 `kind` 的对象。
+unsafe fn set_value(env: sys::napi_env, array: sys::napi_value, index: usize, value: RecordValue<'_>) -> napi::Result<()> {
+    unsafe {
+        let js = match value {
+            RecordValue::Null => create_null(env)?,
+            RecordValue::Integer(integer) => create_integer(env, integer)?,
+            RecordValue::Real(real) => create_real(env, real)?,
+            RecordValue::Text(text) => js_string(env, text.as_bytes())?,
+            RecordValue::Blob(blob) => <Buffer as ToNapiValue>::to_napi_value(env, Buffer::from(blob.to_vec()))?,
+        };
+        set_element(env, array, index, js)
+    }
+}
+
+/// 绑定层统一的记录解码上限：列数固定 1024，载荷上限至少 1 MiB。
+fn record_limits(limits: TableLimits) -> RecordLimits {
+    RecordLimits { max_columns: 1024, max_payload_bytes: limits.max_payload_bytes.max(1_048_576) }
+}
+
+/// 一次普通表扫描的结果，直接写入公开的 `DecodedRow[]` 形状。
+///
+/// `rowid`/`columns` 两个键每次调用只创建一次，整数用原生 `i64` bigint 构造。
 pub struct DecodedRows {
     rows: Vec<sqlite::TableRow>,
     encoding: TextEncoding,
@@ -240,11 +187,7 @@ pub struct DecodedRows {
 
 impl DecodedRows {
     fn new(bytes: &[u8], rows: Vec<sqlite::TableRow>, limits: TableLimits) -> napi::Result<Self> {
-        Ok(Self {
-            rows,
-            encoding: detect_encoding(bytes)?,
-            limits: RecordLimits { max_columns: 1024, max_payload_bytes: limits.max_payload_bytes.max(1_048_576) },
-        })
+        Ok(Self { rows, encoding: detect_encoding(bytes)?, limits: record_limits(limits) })
     }
 }
 
@@ -261,39 +204,18 @@ impl TypeName for DecodedRows {
 impl ToNapiValue for DecodedRows {
     unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
         unsafe {
-            let keys = DecodedKeys::new(env)?;
+            let keys = RowKeys::new(env)?;
             let rows = create_array(env, val.rows.len())?;
             for (row_index, row) in val.rows.iter().enumerate() {
-                let columns = decode_record(&row.payload, val.encoding, val.limits)
+                let values = decode_record(&row.payload, val.encoding, val.limits)
                     .map_err(|error| napi::Error::from_reason(error.to_string()))?;
                 let row_object = create_object(env)?;
                 set_property(env, row_object, keys.rowid, create_integer(env, i64::from(row.rowid))?)?;
-                let columns_array = create_array(env, columns.len())?;
-                for (slot, value) in columns.into_iter().enumerate() {
-                    let cell = create_object(env)?;
-                    match value {
-                        RecordValue::Null => set_property(env, cell, keys.kind, keys.kind_null)?,
-                        RecordValue::Integer(integer) => {
-                            set_property(env, cell, keys.kind, keys.kind_integer)?;
-                            set_property(env, cell, keys.value_integer, create_integer(env, integer)?)?;
-                        }
-                        RecordValue::Real(real) => {
-                            set_property(env, cell, keys.kind, keys.kind_real)?;
-                            set_property(env, cell, keys.value_real, create_real(env, real)?)?;
-                        }
-                        RecordValue::Text(text) => {
-                            set_property(env, cell, keys.kind, keys.kind_text)?;
-                            set_property(env, cell, keys.value_text, js_string(env, text.as_bytes())?)?;
-                        }
-                        RecordValue::Blob(blob) => {
-                            set_property(env, cell, keys.kind, keys.kind_blob)?;
-                            let buffer = <Buffer as ToNapiValue>::to_napi_value(env, Buffer::from(blob.to_vec()))?;
-                            set_property(env, cell, keys.value_blob, buffer)?;
-                        }
-                    }
-                    set_element(env, columns_array, slot, cell)?;
+                let columns = create_array(env, values.len())?;
+                for (slot, value) in values.into_iter().enumerate() {
+                    set_value(env, columns, slot, value)?;
                 }
-                set_property(env, row_object, keys.columns, columns_array)?;
+                set_property(env, row_object, keys.columns, columns)?;
                 set_element(env, rows, row_index, row_object)?;
             }
             Ok(rows)
@@ -301,39 +223,133 @@ impl ToNapiValue for DecodedRows {
     }
 }
 
-fn build_decoded_payloads(
-    bytes: &[u8],
+/// WITHOUT ROWID 表的一次扫描结果，直接写入 `DecodedValue[][]`。
+pub struct DecodedValueRows {
     payloads: Vec<Vec<u8>>,
-    limits: TableLimits,
-) -> napi::Result<Vec<Vec<SqliteRecordValue>>> {
-    let encoding = detect_encoding(bytes)?;
-    let record_limits = RecordLimits { max_columns: 1024, max_payload_bytes: limits.max_payload_bytes.max(1_048_576) };
-    payloads
-        .into_iter()
-        .map(|payload| {
-            decode_record(&payload, encoding, record_limits)
-                .map(|columns| columns.into_iter().map(record_value).collect())
-                .map_err(|e| napi::Error::from_reason(e.to_string()))
-        })
-        .collect()
+    encoding: TextEncoding,
+    limits: RecordLimits,
 }
 
-fn build_index_rows(bytes: &[u8], payloads: Vec<Vec<u8>>, limits: TableLimits) -> napi::Result<Vec<SqliteDecodedRow>> {
-    let encoding = detect_encoding(bytes)?;
-    let record_limits = RecordLimits { max_columns: 1024, max_payload_bytes: limits.max_payload_bytes.max(1_048_576) };
-    payloads
-        .into_iter()
-        .map(|payload| {
-            let mut columns =
-                decode_record(&payload, encoding, record_limits).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-            let trailing = columns.pop().ok_or_else(|| napi::Error::from_reason("sqlite index record has no rowid column"))?;
-            let rowid = match trailing {
-                RecordValue::Integer(rowid) => rowid,
-                _ => return Err(napi::Error::from_reason("sqlite index record rowid is not an integer")),
-            };
-            Ok(SqliteDecodedRow { rowid: BigInt::from(rowid), columns: columns.into_iter().map(record_value).collect() })
-        })
-        .collect()
+impl DecodedValueRows {
+    fn new(bytes: &[u8], payloads: Vec<Vec<u8>>, limits: TableLimits) -> napi::Result<Self> {
+        Ok(Self { payloads, encoding: detect_encoding(bytes)?, limits: record_limits(limits) })
+    }
+}
+
+impl TypeName for DecodedValueRows {
+    fn type_name() -> &'static str {
+        "Array<Array<DecodedValue>>"
+    }
+
+    fn value_type() -> ValueType {
+        ValueType::Object
+    }
+}
+
+impl ToNapiValue for DecodedValueRows {
+    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
+        unsafe {
+            let rows = create_array(env, val.payloads.len())?;
+            for (row_index, payload) in val.payloads.iter().enumerate() {
+                let values = decode_record(payload, val.encoding, val.limits)
+                    .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+                let columns = create_array(env, values.len())?;
+                for (slot, value) in values.into_iter().enumerate() {
+                    set_value(env, columns, slot, value)?;
+                }
+                set_element(env, rows, row_index, columns)?;
+            }
+            Ok(rows)
+        }
+    }
+}
+
+/// 索引项扫描结果，直接写入 `DecodedRow[]`，rowid 取记录的最后一段。
+pub struct DecodedIndexRows {
+    payloads: Vec<Vec<u8>>,
+    encoding: TextEncoding,
+    limits: RecordLimits,
+}
+
+impl DecodedIndexRows {
+    fn new(bytes: &[u8], payloads: Vec<Vec<u8>>, limits: TableLimits) -> napi::Result<Self> {
+        Ok(Self { payloads, encoding: detect_encoding(bytes)?, limits: record_limits(limits) })
+    }
+}
+
+impl TypeName for DecodedIndexRows {
+    fn type_name() -> &'static str {
+        "Array<DecodedRow>"
+    }
+
+    fn value_type() -> ValueType {
+        ValueType::Object
+    }
+}
+
+impl ToNapiValue for DecodedIndexRows {
+    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
+        unsafe {
+            let keys = RowKeys::new(env)?;
+            let rows = create_array(env, val.payloads.len())?;
+            for (row_index, payload) in val.payloads.iter().enumerate() {
+                let mut values = decode_record(payload, val.encoding, val.limits)
+                    .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+                let trailing =
+                    values.pop().ok_or_else(|| napi::Error::from_reason("sqlite index record has no rowid column"))?;
+                let rowid = match trailing {
+                    RecordValue::Integer(rowid) => rowid,
+                    _ => return Err(napi::Error::from_reason("sqlite index record rowid is not an integer")),
+                };
+                let row_object = create_object(env)?;
+                set_property(env, row_object, keys.rowid, create_integer(env, rowid)?)?;
+                let columns = create_array(env, values.len())?;
+                for (slot, value) in values.into_iter().enumerate() {
+                    set_value(env, columns, slot, value)?;
+                }
+                set_property(env, row_object, keys.columns, columns)?;
+                set_element(env, rows, row_index, row_object)?;
+            }
+            Ok(rows)
+        }
+    }
+}
+
+/// 单条记录的解码结果，直接写入 `DecodedValue[]`。
+pub struct DecodedValues {
+    payload: Vec<u8>,
+    encoding: TextEncoding,
+    limits: RecordLimits,
+}
+
+impl DecodedValues {
+    fn new(payload: Vec<u8>, encoding: TextEncoding, limits: RecordLimits) -> Self {
+        Self { payload, encoding, limits }
+    }
+}
+
+impl TypeName for DecodedValues {
+    fn type_name() -> &'static str {
+        "Array<DecodedValue>"
+    }
+
+    fn value_type() -> ValueType {
+        ValueType::Object
+    }
+}
+
+impl ToNapiValue for DecodedValues {
+    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
+        unsafe {
+            let values = decode_record(&val.payload, val.encoding, val.limits)
+                .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+            let array = create_array(env, values.len())?;
+            for (slot, value) in values.into_iter().enumerate() {
+                set_value(env, array, slot, value)?;
+            }
+            Ok(array)
+        }
+    }
 }
 
 /// Owned, read-only main-file bytes, independent of the YYDB engine runtime.
@@ -516,23 +532,19 @@ impl SqliteDatabase {
 
     /// Reads decoded typed records from a WITHOUT ROWID table in primary-key order.
     #[napi]
-    pub fn tableWithoutRowid(
-        &self,
-        name: String,
-        limits: Option<SqliteReadLimits>,
-    ) -> napi::Result<Vec<Vec<SqliteRecordValue>>> {
+    pub fn tableWithoutRowid(&self, name: String, limits: Option<SqliteReadLimits>) -> napi::Result<DecodedValueRows> {
         let resolved = SqliteReadLimits::resolve(limits);
         let payloads =
             read_named_without_rowid(&self.bytes, &name, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        build_decoded_payloads(&self.bytes, payloads, resolved)
+        DecodedValueRows::new(&self.bytes, payloads, resolved)
     }
 
     /// Reads decoded typed entries from a secondary index in key order.
     #[napi]
-    pub fn index(&self, name: String, limits: Option<SqliteReadLimits>) -> napi::Result<Vec<SqliteDecodedRow>> {
+    pub fn index(&self, name: String, limits: Option<SqliteReadLimits>) -> napi::Result<DecodedIndexRows> {
         let resolved = SqliteReadLimits::resolve(limits);
         let payloads = read_named_index(&self.bytes, &name, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        build_index_rows(&self.bytes, payloads, resolved)
+        DecodedIndexRows::new(&self.bytes, payloads, resolved)
     }
 
     /// Reads raw records (undecoded payload) from an ordinary rowid table.
@@ -556,12 +568,10 @@ impl SqliteDatabase {
 
 /// Decodes one SQLite record payload into typed storage-class values.
 #[napi]
-pub fn decodeRecord(payload: Buffer, encoding: Option<String>) -> napi::Result<Vec<SqliteRecordValue>> {
+pub fn decodeRecord(payload: Buffer, encoding: Option<String>) -> napi::Result<DecodedValues> {
     let encoding = encode_encoding(encoding.as_deref())?;
-    let values =
-        decode_record(&payload, encoding, RecordLimits { max_columns: 1024, max_payload_bytes: payload.len().max(1_048_576) })
-            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    Ok(values.into_iter().map(record_value).collect())
+    let limits = RecordLimits { max_columns: 1024, max_payload_bytes: payload.len().max(1_048_576) };
+    Ok(DecodedValues::new(payload.to_vec(), encoding, limits))
 }
 
 /// One column definition for [`SqliteWriter::createTable`] (JSON form).

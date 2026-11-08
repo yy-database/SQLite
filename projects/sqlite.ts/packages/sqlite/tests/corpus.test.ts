@@ -98,11 +98,11 @@ test("external corpus reads with matching schema rows and exact page count", () 
         const columns = row.columns;
         return [
           Number(row.rowid),
-          columns[1].kind === "null" ? null : Number(columns[1].valueInteger),
-          columns[2].kind === "null" ? null : columns[2].kind === "integer" ? Number(columns[2].valueInteger) : columns[2].valueReal,
-          columns[3].valueText,
-          columns[4].kind === "null" ? null : (columns[4].valueBlob ?? Buffer.alloc(0)).length,
-          columns[5].kind === "null" ? null : columns[5].valueText,
+          columns[1] === null ? null : Number(columns[1]),
+          columns[2] === null ? null : Number(columns[2]),
+          columns[3],
+          columns[4] === null ? null : (columns[4] as Buffer).length,
+          columns[5],
         ];
       }),
       every.map((row) => [
@@ -137,7 +137,7 @@ connection.close()
       const database = openDatabase(space.path);
       assert.equal(database.encoding(), encoding === "UTF-16le" ? "utf16le" : "utf16be");
       assert.deepEqual(
-        database.table("words").map((row) => row.columns[1].valueText),
+        database.table("words").map((row) => row.columns[1]),
         ["純粋", "😀", "日本語テキスト"],
       );
     } finally {

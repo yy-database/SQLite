@@ -19,17 +19,15 @@ export interface SchemaObject {
   sql?: string;
 }
 
-export interface RecordValue {
-  kind: "null" | "integer" | "real" | "text" | "blob";
-  valueInteger?: bigint;
-  valueReal?: number;
-  valueText?: string;
-  valueBlob?: Buffer;
-}
+/**
+ * 一个解码后的 SQLite 值，存储类别由 JS 类型本身表达：
+ * 整数为 `bigint`、实数为 `number`、文本为 `string`、blob 为 `Buffer`、NULL 为 `null`。
+ */
+export type DecodedValue = null | bigint | number | string | Buffer;
 
 export interface DecodedRow {
   rowid: bigint;
-  columns: RecordValue[];
+  columns: DecodedValue[];
 }
 
 export interface RawRow {
@@ -136,7 +134,7 @@ export interface NativeDatabase {
   schema(limits?: ReadLimits): SchemaObject[];
   table(name: string, limits?: ReadLimits): DecodedRow[];
   tableRaw(name: string, limits?: ReadLimits): RawRow[];
-  tableWithoutRowid(name: string, limits?: ReadLimits): RecordValue[][];
+  tableWithoutRowid(name: string, limits?: ReadLimits): DecodedValue[][];
   index(name: string, limits?: ReadLimits): DecodedRow[];
   pages(): Buffer;
 }
@@ -170,7 +168,7 @@ export interface NativeBindings {
   SqliteDatabase: NativeDatabaseConstructor;
   SqliteSnapshot: NativeSnapshotConstructor;
   SqliteEngine: NativeEngineConstructor;
-  decodeRecord(payload: Buffer, encoding?: string): RecordValue[];
+  decodeRecord(payload: Buffer, encoding?: string): DecodedValue[];
 }
 
 export type PlatformKey = "win32-x64" | "linux-x64" | "darwin-x64" | "darwin-arm64";

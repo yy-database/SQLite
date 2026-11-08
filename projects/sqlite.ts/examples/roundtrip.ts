@@ -8,26 +8,17 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createWriter, openDatabase, type RecordValue } from "../packages/sqlite/src/index.ts";
+import { createWriter, openDatabase, type DecodedValue } from "../packages/sqlite/src/index.ts";
 
 const PAGE_SIZE = 4096;
 const ROWS = 1000;
 
-function column(value: RecordValue): unknown {
-  switch (value.kind) {
-    case "null":
-      return null;
-    case "integer":
-      return Number(value.valueInteger);
-    case "real":
-      return value.valueReal;
-    case "text":
-      return value.valueText;
-    case "blob":
-      return Buffer.from(value.valueBlob ?? []).toString("hex");
-    default:
-      throw new Error(`unknown column kind ${value.kind}`);
-  }
+// 存储类别由 JS 类型表达：bigint 整数、number 实数、string 文本、Buffer blob、null 空值。
+function column(value: DecodedValue): unknown {
+  if (value === null) return null;
+  if (typeof value === "bigint") return Number(value);
+  if (Buffer.isBuffer(value)) return Buffer.from(value).toString("hex");
+  return value;
 }
 
 const columns = [

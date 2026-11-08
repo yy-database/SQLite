@@ -152,7 +152,7 @@ test("seeded insert update delete stream matches better-sqlite3 exactly", () => 
     assert.deepEqual(
       rows.map((row) => {
         const columns = row.columns;
-        return [Number(row.rowid), columns[1].valueText, Number(columns[2].valueInteger)];
+        return [Number(row.rowid), columns[1], Number(columns[2])];
       }),
       expected.map((row) => row.slice(0, 3)),
     );
@@ -211,7 +211,7 @@ test("index streams keep duplicate labels reachable through the external scan", 
 
     const index = openDatabase(path).index("items_label");
     assert.deepEqual(
-      index.map((row) => [Number(row.rowid), row.columns[0].valueText]),
+      index.map((row) => [Number(row.rowid), row.columns[0]]),
       external.map((row) => [Number(row.id), row.label]),
     );
   } finally {
