@@ -1,6 +1,6 @@
 {
     "name": "@yydb/sqlite-unknown-wasm32",
-    "version": "0.0.0",
+    "version": "0.1.0",
     "license": "MPL-2.0",
     "description": "WASM binding for @yydb/sqlite",
     "main": "lib/sqlite_wasm.js",
