@@ -1,0 +1,11 @@
+{
+  "name": "@yydb/sqlite-example-vs-better-sqlite3",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cross-library write/read and bench of @yydb/sqlite against better-sqlite3",
+  "scripts": {
+    "test": "node --experimental-strip-types ./interop.ts",
+    "bench": "node --experimental-strip-types ./bench.ts"
+  }
+}
