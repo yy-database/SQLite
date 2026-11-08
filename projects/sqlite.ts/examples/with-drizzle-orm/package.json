@@ -1,0 +1,10 @@
+{
+  "name": "@yydb/sqlite-example-with-drizzle-orm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Drizzle ORM over @yydb/sqlite via the public sqlite-proxy hook",
+  "scripts": {
+    "test": "node --experimental-strip-types ./tests/roundtrip.ts"
+  }
+}

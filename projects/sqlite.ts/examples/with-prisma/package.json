@@ -1,0 +1,10 @@
+{
+  "name": "@yydb/sqlite-example-with-prisma",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Prisma driver adapter over @yydb/sqlite via SqlDriverAdapter",
+  "scripts": {
+    "test": "node --experimental-strip-types ./tests/adapter-roundtrip.ts"
+  }
+}

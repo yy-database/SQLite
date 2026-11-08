@@ -1,14 +1,26 @@
 # with-drizzle-orm
 
-**Skipped — out of scope for this repository's public surface.**
+Drizzle ORM over `@yydb/sqlite` through the public [`drizzle-orm/sqlite-proxy`](https://orm.drizzle.team/docs/connect-drizzle-proxy) hook.
 
-`@yydb/sqlite` exposes a format-3 writer / reader plus a fail-closed SQL engine. It is
-not a drop-in `better-sqlite3` / `libsql` / `bun:sqlite` connection.
+## Hook
 
-Drizzle's SQLite packages (`drizzle-orm/better-sqlite3`, `drizzle-orm/libsql`, …) are
-hard-wired to those drivers. Shipping a working example would require either forking a
-Drizzle driver package or inventing a full custom session that still cannot cover the
-SQL Drizzle emits against this engine's subset.
+`src/yydb-sqlite-proxy.ts` adapts `createEngine` / `executeWithParameters` to the async
+`(sql, params, method) => { rows }` callback that `drizzle()` from `drizzle-orm/sqlite-proxy`
+accepts. No Drizzle package patches.
 
-No stub integration is kept here on purpose. Prefer the `vs-*` examples for on-disk
-interop and throughput against real SQLite libraries.
+## Layout
+
+- `src/` — proxy adapter, Drizzle schema, database factory
+- `tests/roundtrip.ts` — insert / select / update / delete via Drizzle query builder
+
+## Run
+
+```shell
+pnpm --dir projects/sqlite.ts/examples/with-drizzle-orm test
+```
+
+## Limits
+
+The underlying engine is fail-closed: only SQL it already gates will succeed. This example
+sticks to that subset (`CREATE TABLE`, `INSERT`, `SELECT`, `UPDATE`, `DELETE`). Drizzle
+features that emit unsupported SQL will reject at the engine, not at the proxy boundary.

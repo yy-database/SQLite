@@ -1,11 +1,37 @@
 # with-type-orm
 
-**Skipped — out of scope for this repository's public surface.**
+TypeORM over `@yydb/sqlite` through the public `better-sqlite3` DataSource `driver` option.
 
-TypeORM's SQLite drivers (`sqlite` / `better-sqlite3` / `sqljs`) are concrete Driver
-implementations inside the ORM bundle. `@yydb/sqlite` is not API-compatible with those
-drivers, and teaching TypeORM to use it would mean shipping a forked or full custom
-Driver — not a normal public adapter wiring.
+## Hook
 
-No stub integration is kept here on purpose. Prefer the `vs-*` examples for on-disk
-interop and throughput against real SQLite libraries.
+TypeORM's `BetterSqlite3Driver` loads `options.driver` when set (otherwise `require("better-sqlite3")`).
+`src/yydb-better-sqlite3.ts` is a duck-typed Database/Statement facade over `createEngine` /
+`createEngineFromSnapshot`, passed as:
+
+```ts
+new DataSource({
+  type: "better-sqlite3",
+  database: path,
+  driver: YydbBetterSqlite3,
+  // ...
+})
+```
+
+No TypeORM package patches.
+
+## Layout
+
+- `src/` — better-sqlite3 facade, entity schema, DataSource factory
+- `tests/roundtrip.ts` — synchronize + repository save / find / update / delete
+
+## Run
+
+```shell
+pnpm --dir projects/sqlite.ts/examples/with-type-orm test
+```
+
+## Limits
+
+`synchronize: true` must emit SQL the engine accepts. Unsupported pragmas TypeORM may request
+in optional modes (for example `journal_mode=WAL` via `enableWAL`) are left off. Stick to the
+gated SQL subset.

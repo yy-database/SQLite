@@ -11,6 +11,12 @@ against three JavaScript SQLite peers:
 
 - `src/` — shared helpers, timing utilities, and `sql.js` loading
 - `tests/` — per-peer cross-read-write checks and the single multi-peer `benchmark.ts`
+- `reports/` — captured cross-read-write and benchmark results linked below
+
+## Reports
+
+- [Cross-read-write report](./reports/cross-read-write.md) — last capture: **PASS** on all three peers at tip `f972a0a`
+- [Benchmark report](./reports/benchmark.md) — last capture: median / p95 / throughput vs each peer at tip `f972a0a`
 
 ## Correctness (`test`)
 

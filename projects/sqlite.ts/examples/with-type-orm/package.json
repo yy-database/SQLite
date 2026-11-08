@@ -1,0 +1,10 @@
+{
+  "name": "@yydb/sqlite-example-with-type-orm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "TypeORM over @yydb/sqlite via the public better-sqlite3 driver hook",
+  "scripts": {
+    "test": "node --experimental-strip-types ./tests/roundtrip.ts"
+  }
+}

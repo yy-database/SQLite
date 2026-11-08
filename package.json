@@ -10,7 +10,7 @@
         "test": "node projects/sqlite.ts/packages/sqlite-harness/bin/cli.mjs test",
         "test:rust": "cargo test --manifest-path projects/sqlite.rs/Cargo.toml --workspace",
         "test:py": "python -m unittest discover -s projects/sqlite.py/packages/sqlite/tests -t projects/sqlite.py/packages/sqlite/tests",
-        "examples:ts": "node --experimental-strip-types projects/sqlite.ts/examples/roundtrip.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/cross-read-write-better-sqlite3.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/cross-read-write-node-sqlite.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/cross-read-write-sql-js.ts",
+        "examples:ts": "node --experimental-strip-types projects/sqlite.ts/examples/roundtrip.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/cross-read-write-better-sqlite3.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/cross-read-write-node-sqlite.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/cross-read-write-sql-js.ts && node --experimental-strip-types projects/sqlite.ts/examples/with-drizzle-orm/tests/roundtrip.ts && node --experimental-strip-types projects/sqlite.ts/examples/with-type-orm/tests/roundtrip.ts && node --experimental-strip-types projects/sqlite.ts/examples/with-prisma/tests/adapter-roundtrip.ts",
         "examples:benchmark": "node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/benchmark.ts",
         "examples:py": "python projects/sqlite.py/examples/roundtrip.py",
         "test:gate": "node scripts/check-test-floor.mjs",
@@ -22,8 +22,12 @@
     },
     "devDependencies": {
         "@doki-land/nifty": "^0.1.10",
+        "@prisma/driver-adapter-utils": "^6.19.0",
         "@types/node": "^24.19.2",
         "better-sqlite3": "^12.2.0",
+        "drizzle-orm": "^0.44.5",
+        "reflect-metadata": "^0.2.2",
+        "typeorm": "^0.3.27",
         "typescript": "5.9.3"
     },
     "pnpm": {
