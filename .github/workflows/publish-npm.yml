@@ -57,6 +57,8 @@ jobs:
     steps:
       - run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.sha }}
       - uses: dtolnay/rust-toolchain@nightly
       - run: rustc --version && cargo --version
       - uses: pnpm/action-setup@v4
@@ -85,6 +87,8 @@ jobs:
     steps:
       - run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.sha }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10.18.3
@@ -93,10 +97,17 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-unknown-unknown
       - run: rustc --version && cargo --version
       - name: Upgrade npm for Trusted Publisher support
         run: npm install --global npm@11
       - run: pnpm install --no-frozen-lockfile
+      - id: wasm-bindgen-version
+        run: echo "version=$(node projects/sqlite.ts/packages/sqlite-wasm/build.mjs --print-wasm-bindgen-version)" >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@${{ steps.wasm-bindgen-version.outputs.version }}
       - name: Download native artifacts
         uses: actions/download-artifact@v4
         with:
@@ -119,5 +130,29 @@ jobs:
             cp "$src" "$dest"
             ls -la "$dest"
           done
+      - name: Build TypeScript package
+        run: pnpm --filter @yydb/sqlite build
+      - name: Build WebAssembly platform package
+        run: node scripts/build-wasm.mjs
       - name: Publish packages to npm
-        run: pnpm exec nifty publish --access public --version="${RELEASE_TAG#v}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          pnpm exec nifty publish --access public --version="$VERSION" | tee "$RUNNER_TEMP/nifty-publish.log"
+          # nifty exits 0 when it skips packages that are "already live"; refuse a green
+          # job unless every intended public package actually lands on the registry.
+          EXPECTED=(
+            @yydb/sqlite
+            @yydb/sqlite-darwin-arm64
+            @yydb/sqlite-darwin-x64
+            @yydb/sqlite-linux-x64
+            @yydb/sqlite-win32-x64
+            @yydb/sqlite-unknown-wasm32
+          )
+          for pkg in "${EXPECTED[@]}"; do
+            got="$(npm view "$pkg@$VERSION" version)"
+            test "$got" = "$VERSION"
+          done
+          wasm_files="$(npm view "@yydb/sqlite-unknown-wasm32@$VERSION" dist.fileCount)"
+          test "$wasm_files" -ge 4
