@@ -1,17 +1,22 @@
-// Side-by-side throughput of `@yydb/sqlite` vs better-sqlite3, node:sqlite, and sql.js.
-// Style matches `packages/sqlite-harness/src/bench.ts` (hrtime, median / p95).
+// Side-by-side throughput with `node:sqlite` (`DatabaseSync`) as baseline.
+// Console + report show relative uplift/gap vs baseline only (same measurements underneath).
+// Timing style matches `packages/sqlite-harness/src/bench.ts` (hrtime, median).
 //
 // Run: `pnpm --dir projects/sqlite.ts/examples/vs-js-libraries benchmark`
 // Env: BENCH_ROWS (default 5000), BENCH_TXN (1000), BENCH_PAGE (4096), BENCH_ROUNDS (3), BENCH_POINT (1000)
 
 import Database from "better-sqlite3";
-import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 
 import { createEngine, createWriter, openDatabase } from "../../../packages/sqlite/src/index.ts";
 import { workspace } from "../src/shared.ts";
 import { loadSqlJs, type SqlJsStatic } from "../src/sql-js.ts";
-import { elapsedMs, median, p95, throughput } from "../src/timing.ts";
+import { elapsedMs, median } from "../src/timing.ts";
+
+const exampleRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const ROWS = Number(process.env.BENCH_ROWS ?? 5_000);
 const ROWS_PER_TXN = Number(process.env.BENCH_TXN ?? 1_000);
@@ -24,6 +29,28 @@ const columns = JSON.stringify([
   { name: "label", declaredType: "TEXT" },
   { name: "score", declaredType: "REAL" },
 ]);
+
+function thrptPerSec(ops: number, ms: number): number {
+  if (ms <= 0) return 0;
+  return (ops / ms) * 1_000;
+}
+
+function formatThrpt(perSec: number): string {
+  if (perSec <= 0) return "n/a";
+  return `${Math.round(perSec).toLocaleString("en-US")}/s`;
+}
+
+/** Time ratio vs baseline (`candidate_time / baseline_time`). Faster => `<1`, slower => `>1`. */
+function timeRatioVsBaseline(candidatePerSec: number, baselinePerSec: number): number {
+  if (baselinePerSec <= 0 || candidatePerSec <= 0) return Number.NaN;
+  return baselinePerSec / candidatePerSec;
+}
+
+function formatRatio(timeRatio: number): string {
+  if (!Number.isFinite(timeRatio)) return "n/a";
+  if (Math.abs(timeRatio - 1) < 0.005) return "1.00x";
+  return `${timeRatio.toFixed(2)}x`;
+}
 
 function ourBatchLoad(path: string): number {
   rmSync(path, { force: true });
@@ -221,50 +248,76 @@ function sqlJsPoint(SQL: SqlJsStatic, path: string): number[] {
   return samples;
 }
 
-type PeerResult = {
-  name: string;
-  batch: number[];
-  scan: number[];
-  point: number[];
-  bytes: number;
+type WorkloadRates = {
+  batch: number;
+  scan: number;
+  point: number;
 };
 
-function printPeer(
-  peer: PeerResult,
-  ours: { batch: number[]; scan: number[]; point: number[]; bytes: number },
-): void {
-  const width = Math.max(18, peer.name.length + 4);
-  const line = (workload: string, unit: string, ourSamples: number[], peerSamples: number[], ops: number): string => {
-    const oursMed = median(ourSamples);
-    const peerMed = median(peerSamples);
-    return [
-      workload.padEnd(48),
-      `${oursMed.toFixed(3)} ${unit}`.padStart(14),
-      `${p95(ourSamples).toFixed(3)} ${unit}`.padStart(14),
-      throughput(ops, oursMed).padStart(12),
-      `${peerMed.toFixed(3)} ${unit}`.padStart(width),
-      `${p95(peerSamples).toFixed(3)} ${unit}`.padStart(width),
-      throughput(ops, peerMed).padStart(12),
-    ].join("  ");
-  };
+type LibraryRates = {
+  name: string;
+  rates: WorkloadRates;
+};
 
-  console.log(`vs-js-libraries benchmark — ${peer.name}`);
-  console.log(
-    [
-      "workload".padEnd(48),
-      "ours median".padStart(14),
-      "ours p95".padStart(14),
-      "ours thrpt".padStart(12),
-      `${peer.name} med`.padStart(width),
-      `${peer.name} p95`.padStart(width),
-      "peer thrpt".padStart(12),
-    ].join("  "),
+function ratesFromSamples(batch: number[], scan: number[], point: number[]): WorkloadRates {
+  return {
+    batch: thrptPerSec(ROWS, median(batch)),
+    scan: thrptPerSec(ROWS, median(scan)),
+    point: thrptPerSec(POINT_OPS, median(point)),
+  };
+}
+
+function rowRatios(libraries: LibraryRates[], baseline: WorkloadRates, workload: keyof WorkloadRates): number[] {
+  return libraries.map((library) => timeRatioVsBaseline(library.rates[workload], baseline[workload]));
+}
+
+function printRelativeTable(libraries: LibraryRates[], baseline: WorkloadRates): void {
+  const names = libraries.map((library) => library.name);
+  const plainCells = (["batch", "scan", "point"] as const).flatMap((workload) =>
+    rowRatios(libraries, baseline, workload).map((ratio) => formatRatio(ratio)),
   );
-  console.log(line(`batch load ${ROWS} (${PAGE_SIZE} page, ${ROWS_PER_TXN}/txn)`, "ms", ours.batch, peer.batch, ROWS));
-  console.log(line(`full scan ${ROWS} (open+decode / select *)`, "ms", ours.scan, peer.scan, ROWS));
-  console.log(line(`point select ${POINT_OPS} (engine WHERE / prepared get)`, "ms", ours.point, peer.point, POINT_OPS));
-  console.log(`files: ours ${ours.bytes} bytes, ${peer.name} ${peer.bytes} bytes`);
+  const colWidth = Math.max(12, ...names.map((name) => name.length), ...plainCells.map((cell) => cell.length + 2));
+  const workloadWidth = 8;
+
+  const header = ["Workload".padEnd(workloadWidth), ...names.map((name) => name.padStart(colWidth))].join("  ");
+  console.log("vs-js-libraries — relative to `node:sqlite` baseline (time ratio; * = fastest)");
+  console.log(
+    `Defaults: BENCH_ROWS=${ROWS}, BENCH_TXN=${ROWS_PER_TXN}, BENCH_PAGE=${PAGE_SIZE}, BENCH_ROUNDS=${ROUNDS}, BENCH_POINT=${POINT_OPS}`,
+  );
+  console.log(header);
+  for (const workload of ["batch", "scan", "point"] as const) {
+    const ratios = rowRatios(libraries, baseline, workload);
+    const best = Math.min(...ratios.filter((ratio) => Number.isFinite(ratio)));
+    console.log(
+      [
+        workload.padEnd(workloadWidth),
+        ...ratios.map((ratio) => {
+          const text = formatRatio(ratio);
+          const marked = Math.abs(ratio - best) < 1e-9 ? `*${text}*` : text;
+          return marked.padStart(colWidth);
+        }),
+      ].join("  "),
+    );
+  }
   console.log("");
+}
+
+function markdownRelativeTable(libraries: LibraryRates[], baseline: WorkloadRates): string {
+  const names = libraries.map((library) => library.name);
+  const lines = [
+    `| Workload | ${names.join(" | ")} |`,
+    `|---------:|${names.map(() => "-------:").join("|")}|`,
+  ];
+  for (const workload of ["batch", "scan", "point"] as const) {
+    const ratios = rowRatios(libraries, baseline, workload);
+    const best = Math.min(...ratios.filter((ratio) => Number.isFinite(ratio)));
+    const cells = ratios.map((ratio) => {
+      const text = formatRatio(ratio);
+      return Math.abs(ratio - best) < 1e-9 ? `**${text}**` : text;
+    });
+    lines.push(`| ${workload} | ${cells.join(" | ")} |`);
+  }
+  return lines.join("\n");
 }
 
 const oursSpace = workspace("sqlite-vs-js-libraries-ours");
@@ -275,15 +328,18 @@ const sqlJsSpace = workspace("sqlite-vs-js-libraries-sql-js");
 try {
   const SQL = await loadSqlJs();
 
+  const nodeBatch = [
+    nodeSqliteBatchLoad(nodeSpace.path),
+    nodeSqliteBatchLoad(nodeSpace.path),
+    nodeSqliteBatchLoad(nodeSpace.path),
+  ];
+  const nodeScan = nodeSqliteScan(nodeSpace.path);
+  const nodePoint = nodeSqlitePoint(nodeSpace.path);
+  const baselineRates = ratesFromSamples(nodeBatch, nodeScan, nodePoint);
+
   const oursBatch = [ourBatchLoad(oursSpace.path), ourBatchLoad(oursSpace.path), ourBatchLoad(oursSpace.path)];
   const oursScan = ourScan(oursSpace.path);
   const oursPoint = ourPoint();
-  const ours = {
-    batch: oursBatch,
-    scan: oursScan,
-    point: oursPoint,
-    bytes: statSync(oursSpace.path).size,
-  };
 
   const betterBatch = [
     betterSqlite3BatchLoad(betterSpace.path),
@@ -293,14 +349,6 @@ try {
   const betterScan = betterSqlite3Scan(betterSpace.path);
   const betterPoint = betterSqlite3Point(betterSpace.path);
 
-  const nodeBatch = [
-    nodeSqliteBatchLoad(nodeSpace.path),
-    nodeSqliteBatchLoad(nodeSpace.path),
-    nodeSqliteBatchLoad(nodeSpace.path),
-  ];
-  const nodeScan = nodeSqliteScan(nodeSpace.path);
-  const nodePoint = nodeSqlitePoint(nodeSpace.path);
-
   const sqlJsBatch = [
     sqlJsBatchLoad(SQL, sqlJsSpace.path),
     sqlJsBatchLoad(SQL, sqlJsSpace.path),
@@ -309,39 +357,37 @@ try {
   const sqlJsScanSamples = sqlJsScan(SQL, sqlJsSpace.path);
   const sqlJsPointSamples = sqlJsPoint(SQL, sqlJsSpace.path);
 
-  printPeer(
-    {
-      name: "better-sqlite3",
-      batch: betterBatch,
-      scan: betterScan,
-      point: betterPoint,
-      bytes: statSync(betterSpace.path).size,
-    },
-    ours,
-  );
-  printPeer(
-    {
-      name: "node:sqlite",
-      batch: nodeBatch,
-      scan: nodeScan,
-      point: nodePoint,
-      bytes: statSync(nodeSpace.path).size,
-    },
-    ours,
-  );
-  printPeer(
-    {
-      name: "sql.js",
-      batch: sqlJsBatch,
-      scan: sqlJsScanSamples,
-      point: sqlJsPointSamples,
-      bytes: statSync(sqlJsSpace.path).size,
-    },
-    ours,
-  );
+  const libraries: LibraryRates[] = [
+    { name: "node:sqlite", rates: baselineRates },
+    { name: "@yydb/sqlite", rates: ratesFromSamples(oursBatch, oursScan, oursPoint) },
+    { name: "better-sqlite3", rates: ratesFromSamples(betterBatch, betterScan, betterPoint) },
+    { name: "sql.js", rates: ratesFromSamples(sqlJsBatch, sqlJsScanSamples, sqlJsPointSamples) },
+  ];
+  printRelativeTable(libraries, baselineRates);
+
+  const report = `# Benchmark report
+
+Command: \`pnpm --dir projects/sqlite.ts/examples/vs-js-libraries benchmark\`
+Defaults: \`BENCH_ROWS=${ROWS}\`, \`BENCH_TXN=${ROWS_PER_TXN}\`, \`BENCH_PAGE=${PAGE_SIZE}\`, \`BENCH_ROUNDS=${ROUNDS}\`, \`BENCH_POINT=${POINT_OPS}\`
+Baseline: \`node:sqlite\` (\`DatabaseSync\`) = \`1.00x\`
+Ratio: subject_time / baseline_time (smaller is faster). Fastest cell in each row is bold.
+
+## Relative to \`node:sqlite\`
+
+${markdownRelativeTable(libraries, baselineRates)}
+
+## Intentional deltas
+
+- Format-3 reader has no point API; point select benches \`createEngine\` SQL against each peer's prepared get / step.
+- Our writer has no \`synchronous\` switch; better-sqlite3 / node:sqlite batch load use \`synchronous=off\` and \`journal_mode=memory\`.
+- sql.js peer scan rebuilds the WASM DB from the serialized image each round; peer batch timing includes \`export()\`.
+
+Regenerate: \`pnpm --dir projects/sqlite.ts/examples/vs-js-libraries benchmark\`
+`;
+  writeFileSync(join(exampleRoot, "reports", "benchmark.md"), report, "utf8");
 
   console.log(
-    "Notes: batch/scan use the format-3 writer/reader vs peer file I/O. Point select uses createEngine SQL on our side (reader has no point API). better-sqlite3 / node:sqlite batch use synchronous=off journal_mode=memory. sql.js peer batch includes export(); peer scan reloads bytes each round.",
+    "Notes: baseline is node:sqlite (DatabaseSync). Batch/scan use format-3 writer/reader for @yydb/sqlite vs peer file I/O. Point select uses createEngine SQL on our side (reader has no point API). better-sqlite3 / node:sqlite batch use synchronous=off journal_mode=memory. sql.js peer batch includes export(); peer scan reloads bytes each round.",
   );
 } finally {
   oursSpace.dispose();
