@@ -12,19 +12,17 @@
 //! | `values` | SQL value ↔ JS value conversion, both directions |
 //! | `error` | `SqlError` → structured N-API error |
 //! | `inspect` | read-only inspection and format-3 writer tooling |
-//! | `dev_tools` | harness verdicts, bench stats, charts, fuzz (feature-gated) |
+//! | `dev_tools` | harness verdicts, bench stats, charts, fuzz (first-class harness surface) |
 
 #![allow(non_snake_case)]
 
 mod connection;
+mod dev_tools;
 mod engine;
 mod error;
 mod inspect;
 mod statement;
 mod values;
-
-#[cfg(feature = "dev-tools")]
-mod dev_tools;
 
 #[cfg(test)]
 mod tests {

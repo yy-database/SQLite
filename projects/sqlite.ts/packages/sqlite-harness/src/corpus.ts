@@ -31,11 +31,11 @@ import { fileURLToPath } from "node:url";
 
 import { createEngine, type ExecValue } from "../../sqlite/src/index.ts";
 import { openEngine, type Cell, type Engine, type StepOutcome } from "./oracle.ts";
-import { devHarnessAddon, emit, renderTable, type CliOptions } from "./util.ts";
+import { emit, harnessAddon as loadHarnessAddon, renderTable, type CliOptions } from "./util.ts";
 
-// digest 与 baseline 判定走上游 `database.harness` 标准面（身份可校验的 dev-tools 产物），
+// digest 与 baseline 判定走上游 `database.harness` 标准面（与产品共用 `.node`），
 // 不在本地重写摘要或台账判定。
-const harnessAddon = devHarnessAddon();
+const harnessAddon = loadHarnessAddon();
 
 interface HarnessProblem {
   readonly kind: string;

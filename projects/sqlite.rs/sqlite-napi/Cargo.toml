@@ -14,17 +14,13 @@ name = "sqlite_napi"
 crate-type = ["cdylib"]
 path = "src/lib.rs"
 
-# 生产 `.node` 默认不导出 harness/图表/fuzz 符号；开发工具构建显式开启。
-[features]
-dev-tools = ["dep:database"]
-
 [dependencies]
 napi = { workspace = true }
 napi-derive = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlite = { workspace = true }
-database = { workspace = true, optional = true }
+database = { workspace = true }
 
 [build-dependencies]
 napi-build = { workspace = true }

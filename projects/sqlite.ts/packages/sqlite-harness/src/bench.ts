@@ -10,12 +10,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createWriter, openDatabase } from "../../sqlite/src/index.ts";
-import { devHarnessAddon, emit, envInt, repoPath, renderTable, type BenchStats, type CliOptions } from "./util.ts";
+import { emit, envInt, harnessAddon, repoPath, renderTable, type BenchStats, type CliOptions } from "./util.ts";
 
-// median/p95 与分组柱图走上游 `database.harness` 的标准判定面（经身份可校验的
-// dev-tools 产物加载，nearest-rank 公式已在 Rust 侧 golden vector 钉死），
-// 写到本包的 `reports/`（git 忽略）。
-const benchAddon = devHarnessAddon();
+// median/p95 与分组柱图走上游 `database.harness` 的标准判定面（与产品共用 `.node`，
+// nearest-rank 公式已在 Rust 侧 golden vector 钉死），写到本包的 `reports/`（git 忽略）。
+const benchAddon = harnessAddon();
 
 const require = createRequire(repoPath("projects", "sqlite.ts", "packages", "sqlite", "package.json"));
 const BetterSqlite = require("better-sqlite3") as new (

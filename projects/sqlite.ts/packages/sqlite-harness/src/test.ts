@@ -19,7 +19,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import { devHarnessAddon, emit, execFile, nativeModulePath, platformKey, repoPath, type CliOptions, type CommandResult } from "./util.ts";
+import { emit, execFile, harnessAddon, nativeModulePath, platformKey, repoPath, type CliOptions, type CommandResult } from "./util.ts";
 import { platformStages } from "../stages/stages.mjs";
 import { stagesDir } from "../stages/paths.mjs";
 
@@ -234,8 +234,6 @@ function installState(target: PackTarget): PackProbe {
 // it before any suite runs instead of trusting a stale checkout.
 function build(): { ok: boolean; output: string } {
   const native = execFile(process.execPath, [repoPath("scripts", "build-napi.mjs")], repoPath());
-  // 标准 harness 判定（floor/gate）走身份可校验的 dev-tools 产物，gate 前先构建它。
-  const nativeDev = execFile(process.execPath, [repoPath("scripts", "build-napi.mjs"), "--dev"], repoPath());
   const packageDirectory = repoPath("projects", "sqlite.ts", "packages", "sqlite");
   const typescript = execFile(
     process.execPath,
@@ -243,8 +241,8 @@ function build(): { ok: boolean; output: string } {
     packageDirectory,
   );
   return {
-    ok: native.status === 0 && nativeDev.status === 0 && typescript.status === 0,
-    output: `${native.stdout}${native.stderr}${nativeDev.stdout}${nativeDev.stderr}${typescript.stdout}${typescript.stderr}`.trim(),
+    ok: native.status === 0 && typescript.status === 0,
+    output: `${native.stdout}${native.stderr}${typescript.stdout}${typescript.stderr}`.trim(),
   };
 }
 
@@ -281,7 +279,7 @@ function gateOk(name: string, cases: number, passed: number, failed: number, ski
     ],
     policy: { allow_partial: false, allow_skipped: false, required_suites: [] },
   });
-  const verdict = JSON.parse(devHarnessAddon().harnessEvaluateGate(input)) as { ok: boolean };
+  const verdict = JSON.parse(harnessAddon().harnessEvaluateGate(input)) as { ok: boolean };
   return verdict.ok;
 }
 

@@ -20,11 +20,11 @@ import { fileURLToPath } from "node:url";
 
 import { createEngine, type ExecValue } from "../../sqlite/src/index.ts";
 import { openEngine, type Cell, type Engine, type StepOutcome } from "./oracle.ts";
-import { devHarnessAddon, renderTable } from "./util.ts";
+import { harnessAddon as loadHarnessAddon, renderTable } from "./util.ts";
 
-// fuzz 生成/重放/收缩与 baseline 判定走上游 `database.harness` 标准面（身份可校验的
-// dev-tools 产物），不在本地重写随机、收缩或台账判定。
-const harnessAddon = devHarnessAddon();
+// fuzz 生成/重放/收缩与 baseline 判定走上游 `database.harness` 标准面（与产品共用
+// `.node`），不在本地重写随机、收缩或台账判定。
+const harnessAddon = loadHarnessAddon();
 
 // Product-side grammar data. Rule alternatives follow the harness convention
 // "simplest first": the shrink state machine prefers lower indices.

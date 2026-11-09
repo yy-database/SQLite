@@ -1,7 +1,7 @@
-//! 开发工具绑定：harness 判定、基准统计、图表与 fuzz 状态机。
+//! 标准 harness 能力绑定：harness 判定、基准统计、图表与 fuzz 状态机。
 //!
-//! 整个模块由 `dev-tools` feature 门控，生产 `.node` 不导出这些符号。
-//! TS 侧经 `sqlite-harness` 的 `rust-driver` 加载带 feature 的开发构建。
+//! 这些是与产品 SQL 入口并列的正式能力，编译进同一个 `.node`，由 `sqlite-harness`
+//! 包按模块导出取用；不为这个边界另造 addon，也不降为 dev-dependency。
 
 use database::harness::chart::{BenchMetric, bench_chart_svg};
 use database::harness::{
@@ -14,15 +14,6 @@ use napi_derive::napi;
 
 fn harness_error(error: impl std::fmt::Display) -> napi::Error {
     napi::Error::from_reason(error.to_string())
-}
-
-/// 开发构建身份：`dev-tools@<database.rs rev>`。rev 由 `build-napi --dev` 在编译期
-/// 经 `SQLITE_HARNESS_DATABASE_REV` 注入。TS 侧 `devHarnessAddon()` 把它与 `Cargo.toml`
-/// 钉住的 rev 比对，不一致或为 `unknown` 即拒绝加载，避免拿另一个 revision 的 `.node`
-/// 冒充已安装产品的判定结果。
-#[napi]
-pub fn harnessBuildIdentity() -> String {
-    format!("dev-tools@{}", option_env!("SQLITE_HARNESS_DATABASE_REV").unwrap_or("unknown"))
 }
 
 /// 对给定字节取 SHA-256，返回小写十六进制。
