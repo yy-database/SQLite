@@ -12,6 +12,11 @@
             "types": "./dist/index.d.ts",
             "import": "./dist/index.js",
             "default": "./dist/index.js"
+        },
+        "./inspect": {
+            "types": "./dist/inspect/index.d.ts",
+            "import": "./dist/inspect/index.js",
+            "default": "./dist/inspect/index.js"
         }
     },
     "files": [

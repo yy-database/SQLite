@@ -62,7 +62,7 @@ test("faithful type mapping: INTEGER bigint, REAL number, TEXT string, BLOB Uint
   const inserted = db.run("insert into m (id, value) values (?, ?)", [6n, "six"]);
   assert.equal(typeof inserted.lastInsertRowid, "bigint");
   assert.equal(inserted.lastInsertRowid, 6n);
-  assert.equal(typeof inserted.changes, "number");
+  assert.equal(typeof inserted.changes, "bigint");
 
   // REAL 即使数值是整数也返回 number。
   db.run("insert into m (id, value) values (?, ?)", [7n, 3.0]);
@@ -70,7 +70,7 @@ test("faithful type mapping: INTEGER bigint, REAL number, TEXT string, BLOB Uint
   assert.equal(typeof real, "number");
 });
 
-test("binding contract: undefined/Date/extra/missing rejected, boolean maps to 0/1", () => {
+test("binding contract: undefined/Date/boolean/extra/missing rejected", () => {
   const db = new SQLite();
   db.exec("create table b (id integer primary key, flag integer)");
   expectCode("param-undefined", () => db.run("insert into b (id, flag) values (?, ?)", [1n, undefined]));
@@ -79,8 +79,11 @@ test("binding contract: undefined/Date/extra/missing rejected, boolean maps to 0
   expectCode("param-missing", () => db.run("insert into b (id, flag) values (?, ?)", [1n]));
   expectCode("param-range", () => db.run("insert into b (id) values (?)", [9223372036854775808n]));
 
-  db.run("insert into b (id, flag) values (?, ?)", [1n, true]);
-  db.run("insert into b (id, flag) values (?, ?)", [2n, false]);
+  // boolean 不是可绑定值：SQL 没有布尔类型，0/1 转换归使用者显式决定。
+  expectCode("param-type", () => db.run("insert into b (id, flag) values (?, ?)", [1n, true]));
+  expectCode("param-type", () => db.run("insert into b (id, flag) values (?, ?)", [2n, false]));
+  db.run("insert into b (id, flag) values (?, ?)", [1n, 1n]);
+  db.run("insert into b (id, flag) values (?, ?)", [2n, 0n]);
   assert.equal(db.prepare("select flag from b where id = 1").pluck<bigint>().get(), 1n);
   assert.equal(db.prepare("select flag from b where id = 2").pluck<bigint>().get(), 0n);
 });
@@ -101,7 +104,7 @@ test("named parameters: prefix elision, missing and unused keys", () => {
 
 test("single statement enforcement and trailing semicolon", () => {
   const db = new SQLite();
-  expectCode("multi-statement", () => db.prepare("select 1; select 2"));
+  expectCode("multiple-statements", () => db.prepare("select 1; select 2"));
   db.prepare("select 1;").get();
   db.exec("create table s (id integer primary key); insert into s (id) values (1);");
   assert.equal(db.prepare("select count(*) from s").pluck<bigint>().get(), 1n);
@@ -304,7 +307,7 @@ test("options honesty: unsupported knobs throw, foreignKeys is real", () => {
   const db = new SQLite();
   db.exec("create table parent (id integer primary key)");
   db.exec("create table child (id integer primary key, parent_id integer references parent)");
-  expectCode("engine", () => db.run("insert into child (id, parent_id) values (1, 99)"));
+  expectCode("SQLITE_CONSTRAINT_FOREIGNKEY", () => db.run("insert into child (id, parent_id) values (1, 99)"));
   assert.equal(db.pragma("foreign_keys", { scalar: true }), 1n);
 
   const relaxed = new SQLite({ foreignKeys: false });
