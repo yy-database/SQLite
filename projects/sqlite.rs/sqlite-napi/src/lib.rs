@@ -1,8 +1,9 @@
 #![allow(non_snake_case)]
 
+use database::harness::chart::{BenchMetric, bench_chart_svg};
 use database::harness::{
-    Baseline, BaselineIdentity, Comparison, CompareMode, DifferenceObservation, Digest, KnownDifference, Observed, ReportEnvelope, check_baseline,
-    classify, compare, render_json,
+    Baseline, BaselineIdentity, BenchRow, Comparison, CompareMode, DifferenceObservation, Digest, KnownDifference, Observed, ReportEnvelope,
+    Stats, check_baseline, classify, compare, per_op_ms, render_json, summarize,
 };
 use napi::bindgen_prelude::{BigInt, Buffer};
 use napi_derive::napi;
@@ -871,6 +872,51 @@ pub fn harnessClassify(comparison_json: String, known_json: String) -> napi::Res
     let known: Vec<KnownDifference> = serde_json::from_str(&known_json).map_err(harness_error)?;
     let class = classify(&comparison, &known);
     serde_json::to_string(&class).map_err(harness_error)
+}
+
+/// 基准统计的 JS 形态。字段名由本 DTO 负责 camelCase，核心 `Stats` 说 Rust。
+#[napi(object)]
+pub struct BenchStatsJson {
+    pub median_ms: f64,
+    pub p95_ms: f64,
+    pub min_ms: f64,
+    pub max_ms: f64,
+    pub rounds: u32,
+}
+
+impl From<Stats> for BenchStatsJson {
+    fn from(stats: Stats) -> Self {
+        Self { median_ms: stats.median_ms, p95_ms: stats.p95_ms, min_ms: stats.min_ms, max_ms: stats.max_ms, rounds: stats.rounds }
+    }
+}
+
+/// 对一组毫秒样本求 median/p95/极值（nearest-rank，与 TS 既有实现逐字节一致）。
+#[napi]
+pub fn harnessBenchSummary(samples_ms: Vec<f64>) -> BenchStatsJson {
+    summarize(&samples_ms).into()
+}
+
+/// 单次操作的归一毫秒（median / ops）。`ops` 为 0 时返回 NaN。
+#[napi]
+pub fn harnessBenchPerOp(stats: BenchStatsJson, ops: u32) -> f64 {
+    per_op_ms(&Stats { median_ms: stats.median_ms, p95_ms: stats.p95_ms, min_ms: stats.min_ms, max_ms: stats.max_ms, rounds: stats.rounds }, u64::from(ops))
+}
+
+/// 把基准报告行渲染为分组柱图 SVG。
+///
+/// `rows_json` 是 `Vec<BenchRow>` 的 serde 形态（`workload` / `unit` /
+/// `ours` / `reference` / `reference_engine`，`Stats` 用 `median_ms` 等
+/// snake_case 键）；`metric` 取 `"median"` 或 `"p95"`。写文件的时机与路径
+/// 由调用方决定，本函数只返回文本。
+#[napi]
+pub fn harnessRenderBenchChart(rows_json: String, metric: String, title: String) -> napi::Result<String> {
+    let rows: Vec<BenchRow> = serde_json::from_str(&rows_json).map_err(harness_error)?;
+    let metric = match metric.as_str() {
+        "median" => BenchMetric::Median,
+        "p95" => BenchMetric::P95,
+        other => return Err(harness_error(format!("unknown bench chart metric `{other}`, expected `median` or `p95`"))),
+    };
+    bench_chart_svg(&rows, metric, &title).map_err(harness_error)
 }
 
 #[cfg(test)]

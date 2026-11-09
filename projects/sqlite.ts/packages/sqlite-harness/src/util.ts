@@ -71,19 +71,6 @@ export function execFile(
   };
 }
 
-export function median(values: number[]): number {
-  if (values.length === 0) return Number.NaN;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
-}
-
-export function p95(values: number[]): number {
-  if (values.length === 0) return Number.NaN;
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)];
-}
-
 export function renderTable(columns: string[], rows: Array<Array<string | number>>): string {
   const widths = columns.map((column, index) =>
     Math.max(column.length, ...rows.map((row) => String(row[index] ?? "").length)),

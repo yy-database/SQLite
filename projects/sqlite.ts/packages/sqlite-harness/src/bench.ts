@@ -5,12 +5,37 @@
 // comparison row instead of a misleading side-by-side.
 
 import { createRequire } from "node:module";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { NATIVE_ARTIFACTS } from "../../../../../scripts/native-artifacts.mjs";
 import { createWriter, openDatabase } from "../../sqlite/src/index.ts";
-import { emit, envInt, median, p95, repoPath, renderTable, type CliOptions } from "./util.ts";
+import { emit, envInt, repoPath, renderTable, type CliOptions } from "./util.ts";
+
+interface BenchStats {
+  medianMs: number;
+  p95Ms: number;
+  minMs: number;
+  maxMs: number;
+  rounds: number;
+}
+
+// median/p95 走 `database.harness` 的 napi 原语（nearest-rank 公式已在 Rust
+// 侧 golden vector 钉死）；分组柱图经 `plotter-chart` 出 SVG，写到本包的
+// `reports/`（git 忽略）。
+const benchArtifact = NATIVE_ARTIFACTS.find(
+  (entry) => entry.hostPlatform === process.platform && entry.hostArch === process.arch,
+);
+if (!benchArtifact) throw new Error(`没有 ${process.platform}-${process.arch} 的 SQLite 原生包映射`);
+
+const benchRequire = createRequire(import.meta.url);
+const benchAddon = benchRequire(
+  repoPath("projects", "sqlite.ts", "platforms", benchArtifact.pkg, benchArtifact.fileName),
+) as {
+  harnessBenchSummary: (samplesMs: number[]) => BenchStats;
+  harnessRenderBenchChart: (rowsJson: string, metric: string, title: string) => string;
+};
 
 const require = createRequire(repoPath("projects", "sqlite.ts", "packages", "sqlite", "package.json"));
 const BetterSqlite = require("better-sqlite3") as new (
@@ -195,6 +220,13 @@ export function commandBench(options: CliOptions): number {
   }
 
   const ok = pairs.every((pair) => pair.ours.length > 0 && pair.oracle.length > 0);
+  const summaryOf = (samples: number[]): BenchStats => benchAddon.harnessBenchSummary(samples);
+  const workloads = pairs.map((pair) => ({
+    workload: pair.workload,
+    unit: pair.unit,
+    ours: summaryOf(pair.ours),
+    oracle: summaryOf(pair.oracle),
+  }));
   const payload = {
     command: "bench",
     ok,
@@ -207,13 +239,35 @@ export function commandBench(options: CliOptions): number {
       range: RANGE_OPS,
     },
     files,
-    workloads: pairs.map((pair) => ({
-      workload: pair.workload,
-      unit: pair.unit,
-      ours: { median: median(pair.ours), p95: p95(pair.ours), samples: pair.ours.length },
-      betterSqlite3: { median: median(pair.oracle), p95: p95(pair.oracle), samples: pair.oracle.length },
+    workloads: workloads.map((entry) => ({
+      workload: entry.workload,
+      unit: entry.unit,
+      ours: { median: entry.ours.medianMs, p95: entry.ours.p95Ms, samples: entry.ours.rounds },
+      betterSqlite3: { median: entry.oracle.medianMs, p95: entry.oracle.p95Ms, samples: entry.oracle.rounds },
     })),
   };
+
+  // 分组柱图：x=workload，颜色=引擎，median 与 p95 各一张，写进本包
+  // `reports/`。`rows_json` 用核心 `BenchRow` 的 serde 形态（snake_case 键）。
+  const benchRows = workloads.map((entry) => ({
+    workload: entry.workload,
+    unit: entry.unit,
+    ours: { median_ms: entry.ours.medianMs, p95_ms: entry.ours.p95Ms, min_ms: entry.ours.minMs, max_ms: entry.ours.maxMs, rounds: entry.ours.rounds },
+    reference: { median_ms: entry.oracle.medianMs, p95_ms: entry.oracle.p95Ms, min_ms: entry.oracle.minMs, max_ms: entry.oracle.maxMs, rounds: entry.oracle.rounds },
+    reference_engine: "better-sqlite3",
+  }));
+  const reportsDir = repoPath("projects", "sqlite.ts", "packages", "sqlite-harness", "reports");
+  mkdirSync(reportsDir, { recursive: true });
+  writeFileSync(
+    join(reportsDir, "bench-median.svg"),
+    benchAddon.harnessRenderBenchChart(JSON.stringify(benchRows), "median", `SQLite bench median (${ROWS} rows, ${ROUNDS} rounds)`),
+    "utf8",
+  );
+  writeFileSync(
+    join(reportsDir, "bench-p95.svg"),
+    benchAddon.harnessRenderBenchChart(JSON.stringify(benchRows), "p95", `SQLite bench p95 (${ROWS} rows, ${ROUNDS} rounds)`),
+    "utf8",
+  );
   const text = () => {
     const rows = payload.workloads.map((entry) => [
       entry.workload,
