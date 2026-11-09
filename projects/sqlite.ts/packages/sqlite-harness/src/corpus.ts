@@ -26,27 +26,16 @@
 // proved both paths byte-identical lived in `src/shadow.ts` and was removed
 // after three consecutive green runs.
 
-import { createRequire } from "node:module";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { NATIVE_ARTIFACTS } from "../../../../../scripts/native-artifacts.mjs";
 import { createEngine, type ExecValue } from "../../sqlite/src/index.ts";
 import { openEngine, type Cell, type Engine, type StepOutcome } from "./oracle.ts";
-import { emit, renderTable, type CliOptions } from "./util.ts";
+import { devHarnessAddon, emit, renderTable, type CliOptions } from "./util.ts";
 
-const harnessArtifact = NATIVE_ARTIFACTS.find(
-  (entry) => entry.hostPlatform === process.platform && entry.hostArch === process.arch,
-);
-if (!harnessArtifact) throw new Error(`没有 ${process.platform}-${process.arch} 的 SQLite 原生包映射`);
-
-const harnessRequire = createRequire(import.meta.url);
-const harnessAddon = harnessRequire(
-  fileURLToPath(new URL(`../../../platforms/${harnessArtifact.pkg}/${harnessArtifact.fileName}`, import.meta.url)),
-) as {
-  harnessDigest: (bytes: Buffer) => string;
-  harnessCheckBaseline: (baseline: string, current: string, observed: string) => string;
-};
+// digest 与 baseline 判定走上游 `database.harness` 标准面（身份可校验的 dev-tools 产物），
+// 不在本地重写摘要或台账判定。
+const harnessAddon = devHarnessAddon();
 
 interface HarnessProblem {
   readonly kind: string;

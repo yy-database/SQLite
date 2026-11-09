@@ -9,33 +9,13 @@ import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { NATIVE_ARTIFACTS } from "../../../../../scripts/native-artifacts.mjs";
 import { createWriter, openDatabase } from "../../sqlite/src/index.ts";
-import { emit, envInt, repoPath, renderTable, type CliOptions } from "./util.ts";
+import { devHarnessAddon, emit, envInt, repoPath, renderTable, type BenchStats, type CliOptions } from "./util.ts";
 
-interface BenchStats {
-  medianMs: number;
-  p95Ms: number;
-  minMs: number;
-  maxMs: number;
-  rounds: number;
-}
-
-// median/p95 走 `database.harness` 的 napi 原语（nearest-rank 公式已在 Rust
-// 侧 golden vector 钉死）；分组柱图经 `plotter-chart` 出 SVG，写到本包的
-// `reports/`（git 忽略）。
-const benchArtifact = NATIVE_ARTIFACTS.find(
-  (entry) => entry.hostPlatform === process.platform && entry.hostArch === process.arch,
-);
-if (!benchArtifact) throw new Error(`没有 ${process.platform}-${process.arch} 的 SQLite 原生包映射`);
-
-const benchRequire = createRequire(import.meta.url);
-const benchAddon = benchRequire(
-  repoPath("projects", "sqlite.ts", "platforms", benchArtifact.pkg, benchArtifact.fileName),
-) as {
-  harnessBenchSummary: (samplesMs: number[]) => BenchStats;
-  harnessRenderBenchChart: (rowsJson: string, metric: string, title: string) => string;
-};
+// median/p95 与分组柱图走上游 `database.harness` 的标准判定面（经身份可校验的
+// dev-tools 产物加载，nearest-rank 公式已在 Rust 侧 golden vector 钉死），
+// 写到本包的 `reports/`（git 忽略）。
+const benchAddon = devHarnessAddon();
 
 const require = createRequire(repoPath("projects", "sqlite.ts", "packages", "sqlite", "package.json"));
 const BetterSqlite = require("better-sqlite3") as new (

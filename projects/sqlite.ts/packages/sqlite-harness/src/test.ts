@@ -19,7 +19,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import { emit, execFile, nativeModulePath, platformKey, repoPath, type CliOptions, type CommandResult } from "./util.ts";
+import { devHarnessAddon, emit, execFile, nativeModulePath, platformKey, repoPath, type CliOptions, type CommandResult } from "./util.ts";
 import { platformStages } from "../stages/stages.mjs";
 import { stagesDir } from "../stages/paths.mjs";
 
@@ -234,6 +234,8 @@ function installState(target: PackTarget): PackProbe {
 // it before any suite runs instead of trusting a stale checkout.
 function build(): { ok: boolean; output: string } {
   const native = execFile(process.execPath, [repoPath("scripts", "build-napi.mjs")], repoPath());
+  // 标准 harness 判定（floor/gate）走身份可校验的 dev-tools 产物，gate 前先构建它。
+  const nativeDev = execFile(process.execPath, [repoPath("scripts", "build-napi.mjs"), "--dev"], repoPath());
   const packageDirectory = repoPath("projects", "sqlite.ts", "packages", "sqlite");
   const typescript = execFile(
     process.execPath,
@@ -241,8 +243,8 @@ function build(): { ok: boolean; output: string } {
     packageDirectory,
   );
   return {
-    ok: native.status === 0 && typescript.status === 0,
-    output: `${native.stdout}${native.stderr}${typescript.stdout}${typescript.stderr}`.trim(),
+    ok: native.status === 0 && nativeDev.status === 0 && typescript.status === 0,
+    output: `${native.stdout}${native.stderr}${nativeDev.stdout}${nativeDev.stderr}${typescript.stdout}${typescript.stderr}`.trim(),
   };
 }
 
@@ -263,11 +265,31 @@ function tsFiles(): { external: string[]; storage: string[]; sql: string[] } {
   };
 }
 
+// floor 判定走上游 `database.harness` 门禁：把解析出的计数交给 `harnessEvaluateGate`，
+// `ok` 由上游失败关闭规则给出（failed/skipped/floor-unmet 各记问题，任一即红），
+// 不在本地重写判定算法。空文件层 cases=0 时，`ok` 等价于 `floor === 0`。
+function gateOk(name: string, cases: number, passed: number, failed: number, skipped: number, floor: number): boolean {
+  const input = JSON.stringify({
+    suites: [
+      {
+        name,
+        tally: { cases, assertions: 0, attempts: cases, passed, failed, skipped, unverified: 0, unavailable: 0, timed_out: 0, cancelled: 0, crashed: 0, not_run: 0 },
+        floors: [{ metric: "cases", min: floor }],
+        oracle: { required: false, available: false, provenance: null },
+        baseline: "none",
+      },
+    ],
+    policy: { allow_partial: false, allow_skipped: false, required_suites: [] },
+  });
+  const verdict = JSON.parse(devHarnessAddon().harnessEvaluateGate(input)) as { ok: boolean };
+  return verdict.ok;
+}
+
 function runTsLayer(layer: LayerName, files: string[]): Suite {
   const name = `sqlite.ts/${layer}`;
   const floor = FLOORS[layer].ts;
   if (files.length === 0) {
-    return { name, layer, cases: 0, passed: 0, failed: 0, skipped: 0, floor, elapsedMs: 0, ok: floor === 0, detail: "" };
+    return { name, layer, cases: 0, passed: 0, failed: 0, skipped: 0, floor, elapsedMs: 0, ok: gateOk(name, 0, 0, 0, 0, floor), detail: "" };
   }
   const result = execFile(
     process.execPath,
@@ -289,7 +311,7 @@ function runTsLayer(layer: LayerName, files: string[]): Suite {
     skipped: skip,
     floor,
     elapsedMs: Math.round(result.elapsedMs),
-    ok: fail === 0 && skip === 0 && cases >= floor,
+    ok: gateOk(name, cases, pass, fail, skip, floor),
     detail: tail(output),
   };
 }
@@ -367,7 +389,7 @@ function runPyLayer(layer: LayerName, modules: string[]): Suite {
     skipped,
     floor,
     elapsedMs: Math.round(elapsed),
-    ok: failed === 0 && skipped === 0 && cases >= floor,
+    ok: gateOk(name, cases, cases - skipped - failures - errors, failed, skipped, floor),
     detail: tail(details.join("\n")),
   };
 }

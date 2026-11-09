@@ -3,6 +3,7 @@
 // default and the same data as JSON when `--json` is passed.
 
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,6 +42,78 @@ export function nativeModulePath(): string {
     throw new Error(`SQLite native binding not available for ${process.platform}-${process.arch}`);
   }
   return require.resolve(`@yydb/sqlite-${key}`);
+}
+
+// ---- 标准 harness 能力：身份可校验的 dev-tools 产物 ----
+//
+// harness 判定（digest、compare/classify、baseline、bench、gate、fuzz、report）
+// 全部由上游 `database.harness` 经 dev-tools 构建的 `.node` 提供。生产主入口不含
+// 这些符号；这里只加载带 `dev-tools` feature 的开发产物，并校验其身份等于
+// `Cargo.toml` 钉住的 database.rs rev，避免拿另一个 revision 的 `.node` 冒充已安装
+// 产品的判定结果。能力缺失即抛错，不回退 JS 实现。
+
+export interface BenchStats {
+  readonly medianMs: number;
+  readonly p95Ms: number;
+  readonly minMs: number;
+  readonly maxMs: number;
+  readonly rounds: number;
+}
+
+/** `database.harness` 经 SQLite dev-tools napi 暴露的标准判定面。 */
+export interface HarnessAddon {
+  harnessBuildIdentity(): string;
+  harnessDigest(bytes: Uint8Array): string;
+  harnessCheckBaseline(baselineJson: string, currentJson: string, observedJson: string): string;
+  harnessRenderReport(reportJson: string): string;
+  harnessCompare(expectedJson: string, actualJson: string, modeJson: string): string;
+  harnessClassify(comparisonJson: string, knownJson: string): string;
+  harnessEvaluateGate(inputJson: string): string;
+  harnessBenchSummary(samplesMs: number[]): BenchStats;
+  harnessBenchPerOp(stats: BenchStats, ops: number): number;
+  harnessRenderBenchChart(rowsJson: string, metric: string, title: string): string;
+  harnessFuzzGenerate(grammarJson: string, planJson: string): string;
+  harnessFuzzRender(grammarJson: string, inputJson: string): string;
+  harnessFuzzShrinkStart(grammarJson: string, inputJson: string): string;
+  harnessFuzzShrinkNext(grammarJson: string, sessionJson: string): string;
+  harnessFuzzShrinkReport(sessionJson: string, failing: boolean): string;
+}
+
+/** 从 `Cargo.toml` 读取钉住的 database.rs rev，作为 dev 产物身份基准。 */
+export function pinnedDatabaseRev(): string {
+  const text = readFileSync(repoPath("projects", "sqlite.rs", "Cargo.toml"), "utf8");
+  const match = text.match(/^database\s*=\s*\{[^}]*rev\s*=\s*"([0-9a-f]{40})"/m);
+  if (!match) {
+    throw new Error("cannot read the pinned database.rs rev from projects/sqlite.rs/Cargo.toml");
+  }
+  return match[1];
+}
+
+let cachedDevHarness: HarnessAddon | null = null;
+
+/** 加载并校验身份后的标准 harness 判定面。进程内复用同一加载结果。 */
+export function devHarnessAddon(): HarnessAddon {
+  if (cachedDevHarness) return cachedDevHarness;
+  const key = platformKey();
+  if (!key) {
+    throw new Error(`SQLite dev-tools addon not available for ${process.platform}-${process.arch}`);
+  }
+  const devPath = repoPath("projects", "sqlite.ts", "platforms", `sqlite-${key}`, `sqlite.${key}.dev.node`);
+  let loaded: HarnessAddon & { default?: HarnessAddon };
+  try {
+    loaded = require(devPath) as HarnessAddon & { default?: HarnessAddon };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`SQLite dev-tools addon not built for ${key}; run \`node scripts/build-napi.mjs --dev\`. ${message}`);
+  }
+  const addon = (loaded.default ?? loaded) as HarnessAddon;
+  const identity = typeof addon.harnessBuildIdentity === "function" ? addon.harnessBuildIdentity() : "missing";
+  const expected = `dev-tools@${pinnedDatabaseRev()}`;
+  if (identity !== expected) {
+    throw new Error(`SQLite dev-tools addon identity mismatch: got ${JSON.stringify(identity)}, expected ${JSON.stringify(expected)}; rebuild with \`node scripts/build-napi.mjs --dev\``);
+  }
+  cachedDevHarness = addon;
+  return addon;
 }
 
 export interface CommandResult {
