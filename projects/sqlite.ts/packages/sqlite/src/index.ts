@@ -44,6 +44,8 @@ export interface ColumnSpec {
   unique?: boolean;
   /** `PRIMARY KEY AUTOINCREMENT` on an INTEGER rowid alias. */
   autoincrement?: boolean;
+  /** 列级排序规则，缺省为 `BINARY`。 */
+  collate?: "BINARY" | "NOCASE" | "RTRIM";
 }
 
 /** One executed cell: native JSON scalars, with blobs tagged as `{ $blob }`. */
@@ -121,6 +123,8 @@ export interface NativeWriter {
   commit(): void;
   rollback(): void;
   save(path: string): void;
+  /** When `on`, `save` syncs the file to disk (upstream `synchronous=FULL`); default `off`. */
+  setSynchronous(on: boolean): void;
   pages(): Buffer;
   pageSize(): number;
   tableDecoded(name: string, limits?: ReadLimits): DecodedRow[];
@@ -133,6 +137,10 @@ export interface NativeDatabase {
   encoding(): string;
   schema(limits?: ReadLimits): SchemaObject[];
   table(name: string, limits?: ReadLimits): DecodedRow[];
+  /** Reads one decoded row by rowid; `null` when the rowid is absent. The array holds at most one row. */
+  rowByRowid(name: string, rowid: number, limits?: ReadLimits): DecodedRow[] | null;
+  /** Reads decoded rows whose rowid lies in the inclusive range `[lower, upper]`, in rowid order. */
+  range(name: string, lower: number, upper: number, limits?: ReadLimits): DecodedRow[];
   tableRaw(name: string, limits?: ReadLimits): RawRow[];
   tableWithoutRowid(name: string, limits?: ReadLimits): DecodedValue[][];
   index(name: string, limits?: ReadLimits): DecodedRow[];
@@ -278,3 +286,17 @@ export function createEngineFromSnapshot(bytes: Buffer): NativeEngine {
 export function executeSql(engine: NativeEngine, statement: string): ExecResult {
   return engine.execute(statement);
 }
+
+// 正式产品入口：`new SQLite(options?)` 是完整闭合的连接对象（查询、预编译
+// 语句、事务），类型映射忠实（INTEGER→bigint、BLOB→Uint8Array）。
+// 上方的 `bindings`/`Native*` 原语面是内部实现细节，仅为既有消费者暂留，
+// 待 TypeORM/Drizzle 迁移到新入口后移除。
+export { SQLite, Statement, TransactionScope, SQLiteError } from "./sqlite.ts";
+export type {
+  SQLiteOptions,
+  SQLiteRow,
+  SQLiteParams,
+  SQLiteBindValue,
+  SQLiteValue,
+  SQLiteRunResult,
+} from "./sqlite.ts";
