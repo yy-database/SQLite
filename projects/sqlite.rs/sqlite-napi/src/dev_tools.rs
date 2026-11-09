@@ -5,15 +5,24 @@
 
 use database::harness::chart::{BenchMetric, bench_chart_svg};
 use database::harness::{
-    Baseline, BaselineIdentity, BenchRow, Comparison, CompareMode, DifferenceObservation, Digest, FuzzInput, FuzzPlan, Grammar, KnownDifference,
-    Observed, ReportEnvelope, ShrinkSession, Stats, check_baseline, classify, compare, generate, per_op_ms, render, render_json, shrink_next,
-    shrink_report, shrink_start, summarize,
+    Baseline, BaselineIdentity, BenchRow, Comparison, CompareMode, DifferenceObservation, Digest, FuzzInput, FuzzPlan, GatePolicy, Grammar,
+    KnownDifference, Observed, ReportEnvelope, ShrinkSession, Stats, SuiteReport, check_baseline, classify, compare, evaluate, generate, per_op_ms,
+    render, render_json, shrink_next, shrink_report, shrink_start, summarize,
 };
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 
 fn harness_error(error: impl std::fmt::Display) -> napi::Error {
     napi::Error::from_reason(error.to_string())
+}
+
+/// 开发构建身份：`dev-tools@<database.rs rev>`。rev 由 `build-napi --dev` 在编译期
+/// 经 `SQLITE_HARNESS_DATABASE_REV` 注入。TS 侧 `devHarnessAddon()` 把它与 `Cargo.toml`
+/// 钉住的 rev 比对，不一致或为 `unknown` 即拒绝加载，避免拿另一个 revision 的 `.node`
+/// 冒充已安装产品的判定结果。
+#[napi]
+pub fn harnessBuildIdentity() -> String {
+    format!("dev-tools@{}", option_env!("SQLITE_HARNESS_DATABASE_REV").unwrap_or("unknown"))
 }
 
 /// 对给定字节取 SHA-256，返回小写十六进制。
@@ -60,6 +69,23 @@ pub fn harnessClassify(comparison_json: String, known_json: String) -> napi::Res
     let known: Vec<KnownDifference> = serde_json::from_str(&known_json).map_err(harness_error)?;
     let class = classify(&comparison, &known);
     serde_json::to_string(&class).map_err(harness_error)
+}
+
+/// 门禁判定：消费执行状态、oracle 资格、证据与 floors，失败关闭，不用单个
+/// `ok` 掩盖未验证项。`input_json` 是 `{ "suites": [SuiteReport..], "policy": GatePolicy }`
+/// 的 serde 形态（核心类型 snake_case 字段），返回 `GateVerdict` 的 JSON。
+/// 测试输出解析与 floor 数值由调用方提供，判定算法在此上游统一维护。
+#[napi]
+pub fn harnessEvaluateGate(input_json: String) -> napi::Result<String> {
+    #[derive(serde::Deserialize)]
+    struct GateInput {
+        suites: Vec<SuiteReport>,
+        #[serde(default)]
+        policy: GatePolicy,
+    }
+    let input: GateInput = serde_json::from_str(&input_json).map_err(harness_error)?;
+    let verdict = evaluate(&input.suites, &input.policy);
+    serde_json::to_string(&verdict).map_err(harness_error)
 }
 
 /// 基准统计的 JS 形态。字段名由本 DTO 负责 camelCase，核心 `Stats` 说 Rust。
