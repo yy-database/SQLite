@@ -58,9 +58,9 @@ def write_read_roundtrip_1000(directory):
     writer.create_table(
         "bench",
         [
-            {"name": "id", "declaredType": "INTEGER", "primaryKey": True},
-            {"name": "label", "declaredType": "TEXT", "notNull": True},
-            {"name": "score", "declaredType": "REAL"},
+            {"name": "id", "declared_type": "INTEGER", "primary_key": True},
+            {"name": "label", "declared_type": "TEXT", "not_null": True},
+            {"name": "score", "declared_type": "REAL"},
         ],
     )
     for index in range(1, 1001):
@@ -82,6 +82,19 @@ def write_read_roundtrip_1000(directory):
     check([cell["kind"] for cell in rows[0]["columns"]] == ["null", "text", "real"], "storage classes survive")
     check(rows[0]["columns"][1]["value"] == "row-1", "first label")
     check(abs(rows[0]["columns"][2]["value"] - 0.1) < 1e-9, "first score")
+
+    schema = database.schema()
+    bench = [item for item in schema if item["name"] == "bench"]
+    check(len(bench) == 1, "schema lists the bench table")
+    check(set(bench[0]) == {"kind", "name", "table_name", "root_page", "sql"}, "schema keys are snake_case")
+    connection = sqlite3.connect(path)
+    try:
+        external = connection.execute("SELECT type, tbl_name, rootpage FROM sqlite_master WHERE name='bench'").fetchone()
+    finally:
+        connection.close()
+    check(bench[0]["kind"] == external[0], "schema kind matches external sqlite3")
+    check(bench[0]["table_name"] == external[1], "schema table_name matches external tbl_name")
+    check(bench[0]["root_page"] == external[2], "schema root_page matches external rootpage")
 
 
 def wal_visible(directory):

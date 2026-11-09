@@ -19,9 +19,9 @@ from sqlite_format3 import SqliteDatabase, SqliteWriter
 
 writer = SqliteWriter.create(4096)
 writer.create_table("bench", [
-    {"name": "id", "declaredType": "INTEGER", "primaryKey": True},
-    {"name": "label", "declaredType": "TEXT", "notNull": True},
-    {"name": "score", "declaredType": "REAL"},
+    {"name": "id", "declared_type": "INTEGER", "primary_key": True},
+    {"name": "label", "declared_type": "TEXT", "not_null": True},
+    {"name": "score", "declared_type": "REAL"},
 ])
 for index in range(1, 1001):
     writer.insert("bench", [index, f"row-{index}", index / 10])

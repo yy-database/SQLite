@@ -14,7 +14,7 @@ python -m pip install --force-reinstall target/wheels/sqlite_format3-*.whl
 import sqlite_format3
 
 writer = sqlite_format3.SqliteWriter.create(4096)
-writer.create_table("t", [{"name": "id", "declaredType": "INTEGER", "primaryKey": True}])
+writer.create_table("t", [{"name": "id", "declared_type": "INTEGER", "primary_key": True}])
 writer.insert("t", [1])
 writer.save("t.sqlite3")
 

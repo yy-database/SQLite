@@ -112,8 +112,8 @@ fn schema_to_py<'py>(py: Python<'py>, objects: Vec<sqlite::SchemaObject>) -> PyR
         let item = PyDict::new(py);
         item.set_item("kind", schema_kind(object.kind))?;
         item.set_item("name", object.name)?;
-        item.set_item("tableName", object.table_name)?;
-        item.set_item("rootPage", object.root_page)?;
+        item.set_item("table_name", object.table_name)?;
+        item.set_item("root_page", object.root_page)?;
         item.set_item("sql", object.sql)?;
         list.append(item)?;
     }
@@ -149,15 +149,15 @@ fn column_specs(columns: &Bound<'_, PyAny>) -> PyResult<Vec<ColumnSpec>> {
         let column = item.cast::<PyDict>().map_err(|_| PyRuntimeError::new_err("each column must be a dict"))?;
         let name: String =
             column.get_item("name")?.ok_or_else(|| PyRuntimeError::new_err("column is missing `name`"))?.extract()?;
-        let declared_type: String = match column.get_item("declaredType")? {
+        let declared_type: String = match column.get_item("declared_type")? {
             Some(value) if !value.is_none() => value.extract()?,
             _ => "BLOB".to_string(),
         };
-        let not_null = match column.get_item("notNull")? {
+        let not_null = match column.get_item("not_null")? {
             Some(value) if !value.is_none() => value.extract()?,
             _ => false,
         };
-        let primary_key = match column.get_item("primaryKey")? {
+        let primary_key = match column.get_item("primary_key")? {
             Some(value) if !value.is_none() => value.extract()?,
             _ => false,
         };
@@ -169,11 +169,11 @@ fn column_specs(columns: &Bound<'_, PyAny>) -> PyResult<Vec<ColumnSpec>> {
             Some(value) if !value.is_none() => value.extract()?,
             _ => false,
         };
-        let default_value = match column.get_item("defaultValue")? {
+        let default_value = match column.get_item("default_value")? {
             Some(value) if !value.is_none() => Some(write_value(&value)?),
             _ => None,
         };
-        let default_text = match column.get_item("defaultText")? {
+        let default_text = match column.get_item("default_text")? {
             Some(value) if !value.is_none() => Some(value.extract()?),
             _ => None,
         };
@@ -250,7 +250,7 @@ impl SqliteDatabase {
         encoding_name(self.inner.pages()).map(|name| name.to_string())
     }
 
-    /// Schema objects (`kind`, `name`, `tableName`, `rootPage`, `sql`).
+    /// Schema objects (`kind`, `name`, `table_name`, `root_page`, `sql`).
     #[pyo3(signature = (max_rows=None))]
     fn schema<'py>(&self, py: Python<'py>, max_rows: Option<usize>) -> PyResult<Bound<'py, PyList>> {
         let objects = self.inner.schema(limit_from(max_rows)).map_err(runtime_error)?;
@@ -340,7 +340,7 @@ impl SqliteWriter {
         self.inner.save(path).map_err(runtime_error)
     }
 
-    /// Creates a table from `[{"name", "declaredType", "notNull", "defaultValue", "primaryKey", "unique"}]`.
+    /// Creates a table from `[{"name", "declared_type", "not_null", "default_value", "primary_key", "unique"}]`.
     fn create_table(&mut self, name: &str, columns: &Bound<'_, PyAny>) -> PyResult<()> {
         let specs = column_specs(columns)?;
         self.inner.create_table(name, &specs).map_err(runtime_error)
