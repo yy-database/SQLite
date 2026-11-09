@@ -8,7 +8,7 @@
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 
 import { createWriter, openDatabase } from "../../../packages/sqlite/src/index.ts";
-import { PAGE_SIZE, ROWS, column, columns, expectedRows, workspace } from "../src/shared.ts";
+import { PAGE_SIZE, ROWS, column, columns, expectedRows, verifyPointAndRange, workspace } from "../src/shared.ts";
 import { loadSqlJs, type SqlJsStatic } from "../src/sql-js.ts";
 
 function oursWritePeerRead(SQL: SqlJsStatic, path: string): void {
@@ -63,6 +63,7 @@ function peerWriteOursRead(SQL: SqlJsStatic, path: string): void {
       throw new Error(`peer→ours mismatch at id=${row.id}: rowid=${hit.rowid} cells=${JSON.stringify(cells)}`);
     }
   }
+  verifyPointAndRange(reader, rows);
 }
 
 const space = workspace("sqlite-vs-js-libraries-sql-js");
