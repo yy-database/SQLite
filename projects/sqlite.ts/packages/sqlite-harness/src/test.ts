@@ -18,6 +18,7 @@ import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { createRequire } from "node:module";
 
 import { emit, execFile, nativeModulePath, platformKey, repoPath, type CliOptions, type CommandResult } from "./util.ts";
 import { platformStages } from "../stages/stages.mjs";
@@ -49,6 +50,30 @@ const FLOORS: Record<LayerName, { ts: number; py: number }> = {
 };
 
 const EXTERNAL_CALLS = ["better-sqlite3", "integrity_check", "sqlite3.connect"];
+
+// Floor verdicts run in `database.harness` through the napi primitive
+// `harnessSuiteVerdict`; TAP and unittest parsing stays here. The addon is
+// loaded lazily because the `test` command builds it on fresh checkouts.
+interface HarnessAddon {
+  harnessSuiteVerdict: (summary: string, floors: string) => string;
+}
+let harnessAddon: HarnessAddon | null = null;
+function loadHarnessAddon(): HarnessAddon {
+  if (!harnessAddon) {
+    harnessAddon = createRequire(import.meta.url)(nativeModulePath()) as HarnessAddon;
+  }
+  return harnessAddon;
+}
+
+function floorVerdict(cases: number, passed: number, failed: number, skipped: number, floor: number): boolean {
+  const gate = JSON.parse(
+    loadHarnessAddon().harnessSuiteVerdict(
+      JSON.stringify({ cases, assertions: 0, passed, failed, skipped }),
+      JSON.stringify([{ metric: "cases", min: floor }]),
+    ),
+  ) as { ok: boolean };
+  return gate.ok;
+}
 
 interface Suite {
   readonly name: string;
@@ -267,7 +292,7 @@ function runTsLayer(layer: LayerName, files: string[]): Suite {
   const name = `sqlite.ts/${layer}`;
   const floor = FLOORS[layer].ts;
   if (files.length === 0) {
-    return { name, layer, cases: 0, passed: 0, failed: 0, skipped: 0, floor, elapsedMs: 0, ok: floor === 0, detail: "" };
+    return { name, layer, cases: 0, passed: 0, failed: 0, skipped: 0, floor, elapsedMs: 0, ok: floorVerdict(0, 0, 0, 0, floor), detail: "" };
   }
   const result = execFile(
     process.execPath,
@@ -289,7 +314,7 @@ function runTsLayer(layer: LayerName, files: string[]): Suite {
     skipped: skip,
     floor,
     elapsedMs: Math.round(result.elapsedMs),
-    ok: fail === 0 && skip === 0 && cases >= floor,
+    ok: floorVerdict(cases, pass, fail, skip, floor),
     detail: tail(output),
   };
 }
@@ -367,7 +392,7 @@ function runPyLayer(layer: LayerName, modules: string[]): Suite {
     skipped,
     floor,
     elapsedMs: Math.round(elapsed),
-    ok: failed === 0 && skipped === 0 && cases >= floor,
+    ok: floorVerdict(cases, cases - skipped - failures - errors, failed, skipped, floor),
     detail: tail(details.join("\n")),
   };
 }

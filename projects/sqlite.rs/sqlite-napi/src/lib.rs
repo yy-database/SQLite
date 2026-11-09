@@ -4,9 +4,9 @@ use std::ptr;
 
 use database::harness::chart::{BenchMetric, bench_chart_svg};
 use database::harness::{
-    Baseline, BaselineIdentity, BenchRow, Comparison, CompareMode, DifferenceObservation, Digest, FuzzInput, FuzzPlan, Grammar, KnownDifference,
-    Observed, ReportEnvelope, ShrinkSession, Stats, check_baseline, classify, compare, generate, per_op_ms, render, render_json, shrink_next,
-    shrink_report, shrink_start, summarize,
+    Baseline, BaselineIdentity, BenchRow, Comparison, CompareMode, DifferenceObservation, Digest, Floor, FuzzInput, FuzzPlan, Grammar,
+    KnownDifference, Observed, ReportEnvelope, ShrinkSession, Stats, SuiteSummary, check_baseline, classify, compare, generate, per_op_ms, render,
+    render_json, shrink_next, shrink_report, shrink_start, summarize, verdict,
 };
 use napi::{
     bindgen_prelude::{BigInt, Buffer, FromNapiValue, ToNapiValue, TypeName, Unknown, ValueType},
@@ -1364,6 +1364,20 @@ pub fn harnessFuzzShrinkReport(session_json: String, failing: bool) -> napi::Res
     let mut session: ShrinkSession = serde_json::from_str(&session_json).map_err(harness_error)?;
     shrink_report(&mut session, failing);
     serde_json::to_string(&session).map_err(harness_error)
+}
+
+/// 按 floor 门禁判定套件计数。
+///
+/// `summary_json` 是 `SuiteSummary` 的 serde 形态（`cases` / `assertions` /
+/// `passed` / `failed` / `skipped`）；`floors_json` 是 `Vec<Floor>` 形态
+/// （如 `[{"metric":"cases","min":120}]`）。测试输出解析与 floor 数值由调用方
+/// 持有，本函数只做判定：skipped 即红、failed 记问题、逐条 floor 比较。
+#[napi]
+pub fn harnessSuiteVerdict(summary_json: String, floors_json: String) -> napi::Result<String> {
+    let summary: SuiteSummary = serde_json::from_str(&summary_json).map_err(harness_error)?;
+    let floors: Vec<Floor> = serde_json::from_str(&floors_json).map_err(harness_error)?;
+    let gate = verdict(&summary, &floors);
+    serde_json::to_string(&gate).map_err(harness_error)
 }
 
 #[cfg(test)]
