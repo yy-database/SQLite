@@ -9,13 +9,13 @@ use database::harness::{
     shrink_report, shrink_start, summarize,
 };
 use napi::{
-    bindgen_prelude::{BigInt, Buffer, ToNapiValue, TypeName, ValueType},
+    bindgen_prelude::{BigInt, Buffer, FromNapiValue, ToNapiValue, TypeName, Unknown, ValueType},
     sys,
 };
 use napi_derive::napi;
 use sqlite::{
     RecordLimits, RecordValue, SchemaObjectKind, TableLimits, TextEncoding, decode_library_version, decode_record,
-    read_named_index, read_named_table, read_named_without_rowid, read_schema, validate_database,
+    read_named_table, read_schema, validate_database,
 };
 
 /// Optional resource bounds for each schema or table scan.
@@ -449,9 +449,11 @@ impl SqliteSnapshot {
 ///
 /// Read-only inspection surface. SQL execution is intentionally absent —
 /// host applications that need SELECT/INSERT use the YYDB engine instead.
+/// The binding owns the facade handle so the reader's schema cache survives
+/// across calls; it only maps types and errors.
 #[napi]
 pub struct SqliteDatabase {
-    bytes: Vec<u8>,
+    inner: sqlite::SqliteDatabase,
     path: Option<std::path::PathBuf>,
 }
 
@@ -460,16 +462,16 @@ impl SqliteDatabase {
     /// Opens a blank in-memory SQLite format-3 snapshot.
     #[napi(factory)]
     pub fn openInMemory() -> napi::Result<Self> {
-        let database = sqlite::SqliteDatabase::open_in_memory().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        Ok(Self { bytes: database.pages().to_vec(), path: None })
+        let inner = sqlite::SqliteDatabase::open_in_memory().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        Ok(Self { inner, path: None })
     }
 
     /// Opens or creates a file-backed SQLite snapshot, replaying `-wal` or a hot `-journal` in memory.
     #[napi(factory)]
     pub fn open(path: String) -> napi::Result<Self> {
         let path_buf = std::path::PathBuf::from(&path);
-        let database = sqlite::SqliteDatabase::open(&path_buf).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        Ok(Self { bytes: database.pages().to_vec(), path: Some(path_buf) })
+        let inner = sqlite::SqliteDatabase::open(&path_buf).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        Ok(Self { inner, path: Some(path_buf) })
     }
 
     /// File path when file-backed, otherwise `null`.
@@ -481,26 +483,26 @@ impl SqliteDatabase {
     /// Health probe that re-validates the main-file format.
     #[napi]
     pub fn ping(&self) -> napi::Result<i32> {
-        validate_database(&self.bytes).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        Ok(1)
+        self.inner.ping().map_err(|e| napi::Error::from_reason(e.to_string()))
     }
 
     /// SQLite library version stamped in the snapshot header.
     #[napi]
     pub fn sqliteVersion(&self) -> napi::Result<String> {
-        decode_library_version(&self.bytes).map_err(|e| napi::Error::from_reason(e.to_string()))
+        self.inner.sqlite_version().map_err(|e| napi::Error::from_reason(e.to_string()))
     }
 
     /// Returns the decoded text encoding label.
     #[napi]
     pub fn encoding(&self) -> napi::Result<String> {
-        resolve_encoding_name(&self.bytes).map(|s| s.to_owned())
+        resolve_encoding_name(self.inner.pages()).map(|s| s.to_owned())
     }
 
     /// Returns typed schema objects.
     #[napi]
     pub fn schema(&self, limits: Option<SqliteReadLimits>) -> napi::Result<Vec<SqliteSchemaObject>> {
-        read_schema(&self.bytes, SqliteReadLimits::resolve(limits))
+        self.inner
+            .schema(SqliteReadLimits::resolve(limits))
             .map(|objects| {
                 objects
                     .into_iter()
@@ -526,31 +528,52 @@ impl SqliteDatabase {
     #[napi]
     pub fn table(&self, name: String, limits: Option<SqliteReadLimits>) -> napi::Result<DecodedRows> {
         let resolved = SqliteReadLimits::resolve(limits);
-        let rows = read_named_table(&self.bytes, &name, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        DecodedRows::new(&self.bytes, rows, resolved)
+        let rows = self.inner.table(&name, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        DecodedRows::new(self.inner.pages(), rows, resolved)
+    }
+
+    /// Reads one decoded row by its rowid; `null` when the rowid is absent.
+    #[napi]
+    pub fn rowByRowid(&self, name: String, rowid: i64, limits: Option<SqliteReadLimits>) -> napi::Result<Option<DecodedRows>> {
+        let resolved = SqliteReadLimits::resolve(limits);
+        let row = self.inner.row_by_rowid(&name, rowid).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        match row {
+            Some(row) => DecodedRows::new(self.inner.pages(), vec![row], resolved).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Reads decoded typed records whose rowid lies in the inclusive range
+    /// `[lower, upper]`, in rowid order.
+    #[napi]
+    pub fn range(&self, name: String, lower: i64, upper: i64, limits: Option<SqliteReadLimits>) -> napi::Result<DecodedRows> {
+        let resolved = SqliteReadLimits::resolve(limits);
+        let rows =
+            self.inner.table_range(&name, lower, upper, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        DecodedRows::new(self.inner.pages(), rows, resolved)
     }
 
     /// Reads decoded typed records from a WITHOUT ROWID table in primary-key order.
     #[napi]
     pub fn tableWithoutRowid(&self, name: String, limits: Option<SqliteReadLimits>) -> napi::Result<DecodedValueRows> {
         let resolved = SqliteReadLimits::resolve(limits);
-        let payloads =
-            read_named_without_rowid(&self.bytes, &name, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        DecodedValueRows::new(&self.bytes, payloads, resolved)
+        let payloads = self.inner.table_without_rowid(&name, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        DecodedValueRows::new(self.inner.pages(), payloads, resolved)
     }
 
     /// Reads decoded typed entries from a secondary index in key order.
     #[napi]
     pub fn index(&self, name: String, limits: Option<SqliteReadLimits>) -> napi::Result<DecodedIndexRows> {
         let resolved = SqliteReadLimits::resolve(limits);
-        let payloads = read_named_index(&self.bytes, &name, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        DecodedIndexRows::new(&self.bytes, payloads, resolved)
+        let payloads = self.inner.index(&name, resolved).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        DecodedIndexRows::new(self.inner.pages(), payloads, resolved)
     }
 
     /// Reads raw records (undecoded payload) from an ordinary rowid table.
     #[napi]
     pub fn tableRaw(&self, name: String, limits: Option<SqliteReadLimits>) -> napi::Result<Vec<SqliteTableRow>> {
-        read_named_table(&self.bytes, &name, SqliteReadLimits::resolve(limits))
+        self.inner
+            .table(&name, SqliteReadLimits::resolve(limits))
             .map(|rows| {
                 rows.into_iter()
                     .map(|row| SqliteTableRow { rowid: BigInt::from(i64::from(row.rowid)), payload: row.payload.into() })
@@ -562,7 +585,7 @@ impl SqliteDatabase {
     /// Returns a view over the raw main-file bytes.
     #[napi]
     pub fn pages(&self) -> napi::Result<Buffer> {
-        Ok(self.bytes.clone().into())
+        Ok(self.inner.pages().to_vec().into())
     }
 }
 
@@ -593,6 +616,9 @@ struct WriterColumnJson {
     unique: Option<bool>,
     #[serde(default)]
     autoincrement: Option<bool>,
+    /// 列级 `COLLATE`，取值为 `BINARY` / `NOCASE` / `RTRIM`。
+    #[serde(default)]
+    collate: Option<String>,
 }
 
 /// One decoded `valuesJson` element: an omitted column or a bound write value.
@@ -818,6 +844,13 @@ impl SqliteWriter {
                 primary_key: column.primary_key.unwrap_or(false),
                 unique: column.unique.unwrap_or(false),
                 autoincrement: column.autoincrement.unwrap_or(false),
+                collate: match column.collate {
+                    Some(name) => Some(
+                        sqlite::Collation::parse(&name)
+                            .ok_or_else(|| napi::Error::from_reason(format!("no such collation sequence: {name}")))?,
+                    ),
+                    None => None,
+                },
             });
         }
         self.writer.create_table(&name, &specs).map_err(|e| napi::Error::from_reason(e.to_string()))
@@ -898,6 +931,14 @@ impl SqliteWriter {
         self.writer.save(&path).map_err(|e| napi::Error::from_reason(e.to_string()))
     }
 
+    /// When `on`, `save` syncs the file to disk after writing (upstream
+    /// `PRAGMA synchronous=FULL`); the default `off` leaves durability to the
+    /// operating system cache (`synchronous=OFF`).
+    #[napi]
+    pub fn setSynchronous(&mut self, on: bool) {
+        self.writer.set_synchronous(on);
+    }
+
     /// Returns the raw file image.
     #[napi]
     pub fn pages(&self) -> Buffer {
@@ -951,6 +992,98 @@ fn engine_error(error: sqlite::SqlError) -> napi::Error {
 
 fn engine_json(text: String) -> napi::Result<serde_json::Value> {
     serde_json::from_str(&text).map_err(|e| napi::Error::from_reason(format!("sqlite result JSON invalid: {e}")))
+}
+
+/// 忠实类型化的绑定参数：TS 层已完成形状校验（`undefined`、Date、嵌套对象
+/// 都在进入这里之前被拒绝），本层只做无损映射：`bigint`→INTEGER、
+/// `number`→REAL、`string`→TEXT、`Buffer`/`Uint8Array`→BLOB、`null`→NULL、
+/// `boolean`→INTEGER 0/1。不做任何按大小或按精度的自动改判。
+pub struct SqlParam(sqlite::Cell);
+
+impl SqlParam {
+    fn into_cell(self) -> sqlite::Cell {
+        self.0
+    }
+}
+
+impl FromNapiValue for SqlParam {
+    unsafe fn from_napi_value(env: sys::napi_env, value: sys::napi_value) -> napi::Result<Self> {
+        let unknown = Unknown::from_napi_value(env, value)?;
+        let cell = match unknown.get_type()? {
+            ValueType::Null => sqlite::Cell::Null,
+            ValueType::Undefined => {
+                return Err(napi::Error::from_reason("sqlite parameter must not be undefined; SQL NULL is explicit"));
+            }
+            ValueType::Boolean => sqlite::Cell::Integer(i64::from(bool::from_napi_value(env, value)?)),
+            ValueType::Number => sqlite::Cell::Real(f64::from_napi_value(env, value)?),
+            ValueType::String => sqlite::Cell::Text(String::from_napi_value(env, value)?),
+            ValueType::BigInt => {
+                // `get_i64` 返回 (value, lossless)，第二项为真才表示无损。
+                let (integer, lossless) = BigInt::from_napi_value(env, value)?.get_i64();
+                if !lossless {
+                    return Err(napi::Error::from_reason("sqlite INTEGER parameter exceeds signed 64-bit range"));
+                }
+                sqlite::Cell::Integer(integer)
+            }
+            ValueType::Object => sqlite::Cell::Blob(Buffer::from_napi_value(env, value)?.to_vec()),
+            kind => return Err(napi::Error::from_reason(format!("sqlite parameter has unsupported JS type {kind:?}"))),
+        };
+        Ok(Self(cell))
+    }
+}
+
+/// 单语句执行的原生结果：`{statement, affected, lastInsertRowid, columns, rows}`，
+/// 其中 INTEGER 以 `bigint` 呈现、BLOB 以 `Buffer` 呈现，不经过 JSON 信封。
+pub struct TypedRunResult {
+    result: sqlite::ExecResult,
+    last_insert_rowid: i64,
+}
+
+impl ToNapiValue for TypedRunResult {
+    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
+        let object = create_object(env)?;
+
+        let key_statement = js_string(env, b"statement")?;
+        let statement = js_string(env, val.result.statement.as_bytes())?;
+        set_property(env, object, key_statement, statement)?;
+
+        let key_affected = js_string(env, b"affected")?;
+        let mut affected = ptr::null_mut();
+        napi::check_status!(unsafe {
+            sys::napi_create_uint32(env, val.result.affected.min(u32::MAX as usize) as u32, &mut affected)
+        })?;
+        set_property(env, object, key_affected, affected)?;
+
+        let key_rowid = js_string(env, b"lastInsertRowid")?;
+        let rowid = create_integer(env, val.last_insert_rowid)?;
+        set_property(env, object, key_rowid, rowid)?;
+
+        let key_columns = js_string(env, b"columns")?;
+        let columns = create_array(env, val.result.columns.len())?;
+        for (index, name) in val.result.columns.iter().enumerate() {
+            set_element(env, columns, index, js_string(env, name.as_bytes())?)?;
+        }
+        set_property(env, object, key_columns, columns)?;
+
+        let key_rows = js_string(env, b"rows")?;
+        let rows = create_array(env, val.result.rows.len())?;
+        for (row_index, row) in val.result.rows.iter().enumerate() {
+            let array = create_array(env, row.len())?;
+            for (column_index, cell) in row.iter().enumerate() {
+                let js = match cell {
+                    sqlite::Cell::Null => create_null(env)?,
+                    sqlite::Cell::Integer(value) => create_integer(env, *value)?,
+                    sqlite::Cell::Real(value) => create_real(env, *value)?,
+                    sqlite::Cell::Text(text) => js_string(env, text.as_bytes())?,
+                    sqlite::Cell::Blob(bytes) => <Buffer as ToNapiValue>::to_napi_value(env, Buffer::from(bytes.as_slice()))?,
+                };
+                set_element(env, array, column_index, js)?;
+            }
+            set_element(env, rows, row_index, array)?;
+        }
+        set_property(env, object, key_rows, rows)?;
+        Ok(object)
+    }
 }
 
 /// In-memory SQLite format-3 database with a fail-closed SQL subset.
@@ -1014,6 +1147,29 @@ impl SqliteEngine {
         engine_json(sqlite::results_json(&results))
     }
 
+    /// Executes exactly one statement with faithfully typed parameters and
+    /// returns the result with native JS values: INTEGER stays `bigint`,
+    /// REAL is `number`, TEXT is `string`, BLOB is a `Buffer`, NULL is `null`.
+    /// No JSON envelope, no size-based coercion — the TS layer owns validation
+    /// (single statement, arity, `undefined`).
+    #[napi]
+    pub fn runTyped(&mut self, statement: String, parameters: Option<Vec<SqlParam>>) -> napi::Result<TypedRunResult> {
+        let cells = parameters.unwrap_or_default().into_iter().map(SqlParam::into_cell).collect::<Vec<_>>();
+        let results = self.engine.execute_with_parameters(&statement, &cells).map_err(engine_error)?;
+        let result = match results.as_slice() {
+            [one] => one.clone(),
+            [] => return Err(napi::Error::from_reason("sqlite engine returned no result")),
+            _ => return Err(napi::Error::from_reason("sqlite prepared statement must contain exactly one statement")),
+        };
+        Ok(TypedRunResult { result, last_insert_rowid: self.engine.last_insert_rowid() })
+    }
+
+    /// Live transaction state read from the engine, not mirrored in JS.
+    #[napi]
+    pub fn inTransaction(&self) -> bool {
+        self.engine.in_transaction()
+    }
+
     /// `sqlite3_last_insert_rowid()` for this connection.
     #[napi]
     pub fn lastInsertRowid(&self) -> i64 {
@@ -1073,11 +1229,7 @@ pub fn harnessDigest(bytes: Buffer) -> String {
 
 /// 按已知差异台账判定一次语料运行。
 #[napi]
-pub fn harnessCheckBaseline(
-    baseline_json: String,
-    current_json: String,
-    observed_json: String,
-) -> napi::Result<String> {
+pub fn harnessCheckBaseline(baseline_json: String, current_json: String, observed_json: String) -> napi::Result<String> {
     let baseline: Baseline = serde_json::from_str(&baseline_json).map_err(harness_error)?;
     let current: BaselineIdentity = serde_json::from_str(&current_json).map_err(harness_error)?;
     let observed: Vec<DifferenceObservation> = serde_json::from_str(&observed_json).map_err(harness_error)?;
