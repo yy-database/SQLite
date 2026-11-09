@@ -1,7 +1,8 @@
 #![allow(non_snake_case)]
 
 use database::harness::{
-    Baseline, BaselineIdentity, DifferenceObservation, Digest, ReportEnvelope, check_baseline, render_json,
+    Baseline, BaselineIdentity, Comparison, CompareMode, DifferenceObservation, Digest, KnownDifference, Observed, ReportEnvelope, check_baseline,
+    classify, compare, render_json,
 };
 use napi::bindgen_prelude::{BigInt, Buffer};
 use napi_derive::napi;
@@ -847,6 +848,29 @@ pub fn harnessCheckBaseline(
 pub fn harnessRenderReport(report_json: String) -> napi::Result<String> {
     let report: ReportEnvelope = serde_json::from_str(&report_json).map_err(harness_error)?;
     render_json(&report).map_err(harness_error)
+}
+
+/// 按指定模式比对两侧观测值，返回 `Comparison` 的 JSON。
+///
+/// `mode_json` 是 `CompareMode` 的 serde 形态：`{"kind":"exact"}`、
+/// `{"kind":"structured_fields","fields":["code"]}` 或 `{"kind":"wire_hex"}`。
+/// 期望侧缺少 `provenance` 时结果带 `unverified`，调用方不得计为通过。
+#[napi]
+pub fn harnessCompare(expected_json: String, actual_json: String, mode_json: String) -> napi::Result<String> {
+    let expected: Observed = serde_json::from_str(&expected_json).map_err(harness_error)?;
+    let actual: Observed = serde_json::from_str(&actual_json).map_err(harness_error)?;
+    let mode: CompareMode = serde_json::from_str(&mode_json).map_err(harness_error)?;
+    let comparison = compare(&expected, &actual, &mode);
+    serde_json::to_string(&comparison).map_err(harness_error)
+}
+
+/// 把一次比对结果对照已知差异台账归类，返回 `DifferenceClass` 的 JSON。
+#[napi]
+pub fn harnessClassify(comparison_json: String, known_json: String) -> napi::Result<String> {
+    let comparison: Comparison = serde_json::from_str(&comparison_json).map_err(harness_error)?;
+    let known: Vec<KnownDifference> = serde_json::from_str(&known_json).map_err(harness_error)?;
+    let class = classify(&comparison, &known);
+    serde_json::to_string(&class).map_err(harness_error)
 }
 
 #[cfg(test)]
