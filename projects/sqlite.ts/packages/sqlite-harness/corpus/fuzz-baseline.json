@@ -1,0 +1,360 @@
+{
+  "version": 1,
+  "seed": 20261109,
+  "count": 30,
+  "depth": 3,
+  "digest": "5ee2e5feb53087ca5b99f750d8973b8b003eeb5151ad1ce171bb2c4f977c9760",
+  "entries": [
+    {
+      "key": "9bc55104080c621812428d3efb0adb26c555289d4eceafad2472d153f29062d6",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "insert into t1 values ( 9 , 'nine' )",
+        "select a , b from t2 order by x"
+      ]
+    },
+    {
+      "key": "3d7137343bbb6c67b629fbda5bd6a72d61cb79d51a5711581101e19f8f56ac07",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "delete from t2",
+        "insert into t2 values ( 9 , 'nine' )"
+      ]
+    },
+    {
+      "key": "0fe93ddfa24eabdf25aed787d30b4e540f0b2ccc74e4e373d208aae053feeefe",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "delete from t2",
+        "select b from t2 where b != 1"
+      ]
+    },
+    {
+      "key": "8ddcd8a74adbad48b7b58c5d8a99e3c526a2907493604f39dc03979862a9e15a",
+      "signal": [
+        "step-0",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "select a from t2"
+      ]
+    },
+    {
+      "key": "ada4268bdbdfea29b37ce6c5c660c9b026e323e4e33da29fe58838dcb33955e7",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "delete from t1",
+        "select * from t2 where x is not null"
+      ]
+    },
+    {
+      "key": "17be86d3151a8b7ad115268f79e1af6a9e54b3705a0cd03121ba59505ab14f72",
+      "signal": [
+        "step-0",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "select a from t2 where x > 1"
+      ]
+    },
+    {
+      "key": "31a502f9aaaad412c2212319c13a103ce65605c76859c2084fc9acd98bdc4e8b",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "delete from t2",
+        "select x from t2 where a != 'one'"
+      ]
+    },
+    {
+      "key": "2c5360662f6d45c553f138fdb9030fb66851f42d02d3bf1507f1a960bee30f84",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "delete from t2",
+        "select a , b from t1"
+      ]
+    },
+    {
+      "key": "94953a35299c4621adc8a8cd3d0d5ba16e81259c7b401b2c3a18575a6e98a06b",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "insert into t2 values ( 9 , 'nine' )",
+        "select a from t2 where x is not null"
+      ]
+    },
+    {
+      "key": "f717f8c863d46cd3c196645c361d7cfce45fbc25e15ffcd219659dc70a0dca23",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "delete from t2",
+        "select * from t2"
+      ]
+    },
+    {
+      "key": "f3d1d703a3ba428aec884cea3faeec825f7851745f1fd5bad517309b4e0e0fa1",
+      "signal": [
+        "step-0",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "select b from t2 where x is not null"
+      ]
+    },
+    {
+      "key": "c232ba8392139da8bb83fe2e818cf2b880a6458fdd2d552ce0cbe971b6742f3c",
+      "signal": [
+        "step-0",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "select a from t2 where x is not null"
+      ]
+    },
+    {
+      "key": "2f75d95353ae714af9bc0d1bf71723370de41084ff932bad241348a1da256692",
+      "signal": [
+        "step-0",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "select x from t2"
+      ]
+    },
+    {
+      "key": "5b82de3ebee1ff70580af5f507ecc08119ff7f85cfd33c3a17e0dfa79c7fdcd5",
+      "signal": [
+        "step-0",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "select y from t1"
+      ]
+    },
+    {
+      "key": "d11cbe6add16bef58c5ab8b5720889a694246114416b6ac1ed2e385820c18cfc",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "insert into t1 values ( 9 , 'nine' )",
+        "insert into t2 values ( 9 , 'nine' )"
+      ]
+    },
+    {
+      "key": "c798c5032e24ab56c298766f3bbc26bac2d560d9ea3d2f0482c84c3bdba8e292",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "insert into t2 values ( 9 , 'nine' )",
+        "insert into t2 values ( 9 , 'nine' )"
+      ]
+    },
+    {
+      "key": "a6c5f0a29d83b0619a5bbbf39d975a725b0d6816fdad75e56ea5a5c03f633df8",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "insert into t1 values ( 9 , 'nine' )",
+        "delete from t1"
+      ]
+    },
+    {
+      "key": "5e880b6469c313d11cdc1e93352c09a12119eef50758c51067a802ff7e0d38a2",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "delete from t1",
+        "select b from t1 where x = 1"
+      ]
+    },
+    {
+      "key": "c8e287472fc68ba5b036ce4d3b01fda201f3d8da1989d3b8e3ad9f963510051c",
+      "signal": [
+        "step-0",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "select * from t1 where y in ( 1 , 2 )"
+      ]
+    },
+    {
+      "key": "82770b0d1c62ddc90f4847276a34bdb4ca1f7062500b83363804cc23294a9623",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "insert into t2 values ( 9 , 'nine' )",
+        "insert into t2 values ( 9 , 'nine' )"
+      ]
+    },
+    {
+      "key": "944f51c3e43b4d766e1588d9a4cf103af49577df02a5a1e0ed41995778dfe7dc",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "insert into t2 values ( 9 , 'nine' )",
+        "select x from t2"
+      ]
+    },
+    {
+      "key": "09bf9fde96ee92b2d0999e6a8669fccb5531fe19d654c2144956d0f002521242",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "delete from t1",
+        "insert into t2 values ( 9 , 'nine' )"
+      ]
+    },
+    {
+      "key": "9924a7a13c9fe273fd00e1ee8370edc20f13a944b32461222685ede94aa4abe2",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "insert into t1 values ( 9 , 'nine' )",
+        "select a from t2"
+      ]
+    },
+    {
+      "key": "74b5e8e307fa72d3f5be16f33e43ad6e9aa65521286f36fa52b1133853c6245e",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "insert into t2 values ( 9 , 'nine' )",
+        "select count ( * ) from t1"
+      ]
+    },
+    {
+      "key": "27a0c5ce4271bf88accadbb8289411f52791163cfb87088a6b6e1018d0565516",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "insert into t1 values ( 9 , 'nine' )",
+        "delete from t1"
+      ]
+    },
+    {
+      "key": "b9c91f7e751c1567e11a7ee89d0a86003c0ba0f3ac14483e8832f1bac7e8a350",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "insert into t1 values ( 9 , 'nine' )",
+        "select count ( * ) from t1"
+      ]
+    },
+    {
+      "key": "d8b21f26f3d404eb9ddae4f3ba80f6dfbf774638b368525d5ac308c19c261314",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "insert into t2 values ( 9 , 'nine' )",
+        "select y from t1 order by b"
+      ]
+    },
+    {
+      "key": "626160652c651d2d5fa66479e4e1226aba9aff7ef637d92f55487d0dad4a493c",
+      "signal": [
+        "step-0",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "select b from t1 where x is not null"
+      ]
+    },
+    {
+      "key": "906449025f67d627a4b07f222e65d0e48c0122bc6cf3b6416d7b08afd19c1c97",
+      "signal": [
+        "step-1",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "insert into t1 values ( 9 , 'nine' )",
+        "select a from t2"
+      ]
+    },
+    {
+      "key": "8d3beeaa24b74ea225953ab68d0a3ea7976914736ade8596084d331bd194f884",
+      "signal": [
+        "step-0",
+        "oracle-vs-ours"
+      ],
+      "reason": "fuzz-mismatch",
+      "repro": [
+        "select * from t2"
+      ]
+    }
+  ]
+}

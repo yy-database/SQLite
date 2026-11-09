@@ -14,11 +14,16 @@ Commands
   fixtures     regenerate the fixture assets from external engines and print sha256
   oracle       report external engines and verify two of them agree on the probes
   corpus       run a seeded differential corpus against both external oracles
+  fuzz         grammar-driven fuzz inputs through the harness fuzz engine, shrinked findings against both external oracles
 
 Corpus parameters are explicit:
   --seed <n>   --count <n>   --json
   --check             require every difference to match the baseline and fail otherwise
   --update-baseline   rewrite the baseline from the current run and drop fixed entries
+
+Fuzz parameters are explicit:
+  --seed <n>   --count <n>   --depth <n>   --stmts <n>   --max-shrink <n>   --json
+  same --check / --update-baseline semantics against "corpus/fuzz-baseline.json"
 
 Bench parameters are environment variables, not config files:
   BENCH_ROWS  BENCH_TXN  BENCH_POINT  BENCH_RANGE  BENCH_PAGE  BENCH_ROUNDS
@@ -31,11 +36,15 @@ export async function main(argv: string[]): Promise<number> {
     return command === undefined ? 1 : 0;
   }
 
-  if (command === "corpus") {
+  if (command === "corpus" || command === "fuzz") {
     process.env.SQLITE_NATIVE = nativeModulePath();
     try {
-      const { commandCorpus, parseCorpusOptions } = await import("./corpus.ts");
-      return commandCorpus(parseCorpusOptions(rest));
+      if (command === "corpus") {
+        const { commandCorpus, parseCorpusOptions } = await import("./corpus.ts");
+        return commandCorpus(parseCorpusOptions(rest));
+      }
+      const { commandFuzz, parseFuzzOptions } = await import("./fuzz.ts");
+      return commandFuzz(parseFuzzOptions(rest));
     } catch (error) {
       process.stderr.write(`${(error as Error).message}\n`);
       return 1;

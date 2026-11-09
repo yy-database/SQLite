@@ -14,7 +14,8 @@
         "conformance": "node bin/cli.mjs conformance",
         "fixtures": "node bin/cli.mjs fixtures",
         "oracle": "node bin/cli.mjs oracle",
-        "corpus": "node bin/cli.mjs corpus"
+        "corpus": "node bin/cli.mjs corpus",
+        "fuzz": "node bin/cli.mjs fuzz"
     },
     "devDependencies": {
         "@yydb/sqlite": "workspace:*",

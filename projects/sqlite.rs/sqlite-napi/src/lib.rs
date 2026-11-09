@@ -2,8 +2,9 @@
 
 use database::harness::chart::{BenchMetric, bench_chart_svg};
 use database::harness::{
-    Baseline, BaselineIdentity, BenchRow, Comparison, CompareMode, DifferenceObservation, Digest, KnownDifference, Observed, ReportEnvelope,
-    Stats, check_baseline, classify, compare, per_op_ms, render_json, summarize,
+    Baseline, BaselineIdentity, BenchRow, Comparison, CompareMode, DifferenceObservation, Digest, FuzzInput, FuzzPlan, Grammar, KnownDifference,
+    Observed, ReportEnvelope, ShrinkSession, Stats, check_baseline, classify, compare, generate, per_op_ms, render, render_json, shrink_next,
+    shrink_report, shrink_start, summarize,
 };
 use napi::bindgen_prelude::{BigInt, Buffer};
 use napi_derive::napi;
@@ -917,6 +918,60 @@ pub fn harnessRenderBenchChart(rows_json: String, metric: String, title: String)
         other => return Err(harness_error(format!("unknown bench chart metric `{other}`, expected `median` or `p95`"))),
     };
     bench_chart_svg(&rows, metric, &title).map_err(harness_error)
+}
+
+/// 用调用方声明的语法生成一条复现信封。
+///
+/// `grammar_json` 是 `Grammar` 的 serde 形态（`version` / `start` / `rules` /
+/// `pools`，`Symbol` 用 `{"literal":..}`、`{"slot":{"pool":..}}`、`{"rule":..}`、
+/// `{"typed":..}`）；`plan_json` 是 `FuzzPlan`（`seed` / `depth` / `count`）。
+/// 返回 `FuzzInput` 的 JSON，不含任何期望值。
+#[napi]
+pub fn harnessFuzzGenerate(grammar_json: String, plan_json: String) -> napi::Result<String> {
+    let grammar: Grammar = serde_json::from_str(&grammar_json).map_err(harness_error)?;
+    let plan: FuzzPlan = serde_json::from_str(&plan_json).map_err(harness_error)?;
+    let input = generate(&grammar, &plan).map_err(harness_error)?;
+    serde_json::to_string(&input).map_err(harness_error)
+}
+
+/// 按复现信封重放语句序列，返回 `Vec<String>` 的 JSON。
+#[napi]
+pub fn harnessFuzzRender(grammar_json: String, input_json: String) -> napi::Result<String> {
+    let grammar: Grammar = serde_json::from_str(&grammar_json).map_err(harness_error)?;
+    let input: FuzzInput = serde_json::from_str(&input_json).map_err(harness_error)?;
+    let statements = render(&grammar, &input).map_err(harness_error)?;
+    serde_json::to_string(&statements).map_err(harness_error)
+}
+
+/// 以失败输入初始化收缩状态机，返回 `ShrinkSession` 的 JSON。
+#[napi]
+pub fn harnessFuzzShrinkStart(grammar_json: String, input_json: String) -> napi::Result<String> {
+    let grammar: Grammar = serde_json::from_str(&grammar_json).map_err(harness_error)?;
+    let input: FuzzInput = serde_json::from_str(&input_json).map_err(harness_error)?;
+    let session = shrink_start(&grammar, &input).map_err(harness_error)?;
+    serde_json::to_string(&session).map_err(harness_error)
+}
+
+/// 产出下一个收缩候选。
+///
+/// 返回 `{"session": <更新后的 ShrinkSession>, "candidate": [<FuzzInput>, [语句文本]] | null}`；
+/// `candidate` 为 `null` 表示队列耗尽。调用方对候选文本执行失败谓词后，
+/// 用 `harnessFuzzShrinkReport` 回报结果；谓词本身永远在调用方。
+#[napi]
+pub fn harnessFuzzShrinkNext(grammar_json: String, session_json: String) -> napi::Result<String> {
+    let grammar: Grammar = serde_json::from_str(&grammar_json).map_err(harness_error)?;
+    let mut session: ShrinkSession = serde_json::from_str(&session_json).map_err(harness_error)?;
+    let candidate = shrink_next(&grammar, &mut session).map_err(harness_error)?;
+    let envelope = serde_json::json!({ "session": session, "candidate": candidate });
+    serde_json::to_string(&envelope).map_err(harness_error)
+}
+
+/// 回报当前候选是否仍失败（`true` 接受为新的最小 base），返回更新后的 `ShrinkSession` JSON。
+#[napi]
+pub fn harnessFuzzShrinkReport(session_json: String, failing: bool) -> napi::Result<String> {
+    let mut session: ShrinkSession = serde_json::from_str(&session_json).map_err(harness_error)?;
+    shrink_report(&mut session, failing);
+    serde_json::to_string(&session).map_err(harness_error)
 }
 
 #[cfg(test)]
