@@ -19,14 +19,77 @@
 // corpus still matches the baseline digest, then requires every observed
 // difference to match one baseline entry exactly. `--update-baseline` rewrites
 // the baseline from the current run and drops entries that no longer differ.
+//
+// Digest and ledger decisions run in `database.harness` through the napi
+// primitives (`harnessDigest` / `harnessCheckBaseline`); this file only maps
+// verdicts onto the human-readable CLI wording. The shadow comparison that
+// proved both paths byte-identical lived in `src/shadow.ts` and was removed
+// after three consecutive green runs.
 
-import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import { NATIVE_ARTIFACTS } from "../../../../../scripts/native-artifacts.mjs";
 import { createEngine, type ExecValue } from "../../sqlite/src/index.ts";
 import { openEngine, type Cell, type Engine, type StepOutcome } from "./oracle.ts";
 import { emit, renderTable, type CliOptions } from "./util.ts";
+
+const harnessArtifact = NATIVE_ARTIFACTS.find(
+  (entry) => entry.hostPlatform === process.platform && entry.hostArch === process.arch,
+);
+if (!harnessArtifact) throw new Error(`没有 ${process.platform}-${process.arch} 的 SQLite 原生包映射`);
+
+const harnessRequire = createRequire(import.meta.url);
+const harnessAddon = harnessRequire(
+  fileURLToPath(new URL(`../../../platforms/${harnessArtifact.pkg}/${harnessArtifact.fileName}`, import.meta.url)),
+) as {
+  harnessDigest: (bytes: Buffer) => string;
+  harnessCheckBaseline: (baseline: string, current: string, observed: string) => string;
+};
+
+interface HarnessProblem {
+  readonly kind: string;
+  readonly key?: string;
+  readonly signal?: readonly string[];
+  readonly reason?: string;
+  readonly baseline?: unknown;
+  readonly current?: unknown;
+}
+
+interface HarnessVerdict {
+  readonly matched: number;
+  readonly problems: readonly HarnessProblem[];
+}
+
+function harnessBaseline(baseline: BaselineFile): Record<string, unknown> {
+  return {
+    identity: {
+      spec: { version: baseline.version, seed: baseline.seed, count: baseline.count },
+      digest: baseline.digest,
+    },
+    entries: baseline.entries.map((entry) => ({
+      key: entryKey(entry),
+      signal: [...entry.signal],
+      reason: entry.reason,
+    })),
+  };
+}
+
+function harnessCurrent(baseline: BaselineFile, seed: number, count: number, digest: string): Record<string, unknown> {
+  return { spec: { version: baseline.version, seed, count }, digest };
+}
+
+function runLedger(baseline: BaselineFile, current: Record<string, unknown>, observed: readonly ObservedDifference[]): HarnessVerdict {
+  const request = observed.map((diff) => ({
+    key: entryKey(diff.entry),
+    signal: [...diff.entry.signal],
+    reason: diff.entry.reason,
+  }));
+  return JSON.parse(
+    harnessAddon.harnessCheckBaseline(JSON.stringify(harnessBaseline(baseline)), JSON.stringify(current), JSON.stringify(request)),
+  ) as HarnessVerdict;
+}
 
 type Cluster = "ddl" | "dml" | "expression" | "aggregate" | "window" | "transaction";
 
@@ -708,10 +771,13 @@ export function loadBaseline(): BaselineFile {
 }
 
 export function identityProblems(baseline: BaselineFile, options: CorpusOptions, digest: string): string[] {
+  const verdict = runLedger(baseline, harnessCurrent(baseline, options.seed, options.count, digest), []);
   const problems: string[] = [];
-  if (baseline.seed !== options.seed) problems.push(`seed: baseline ${baseline.seed}, current ${options.seed}`);
-  if (baseline.count !== options.count) problems.push(`count: baseline ${baseline.count}, current ${options.count}`);
-  if (baseline.digest !== digest) problems.push(`corpus digest: baseline ${baseline.digest}, current ${digest}`);
+  for (const problem of verdict.problems) {
+    if (problem.kind === "seed-drift") problems.push(`seed: baseline ${problem.baseline}, current ${problem.current}`);
+    else if (problem.kind === "count-drift") problems.push(`count: baseline ${problem.baseline}, current ${problem.current}`);
+    else if (problem.kind === "digest-drift") problems.push(`corpus digest: baseline ${problem.baseline}, current ${problem.current}`);
+  }
   return problems;
 }
 
@@ -725,15 +791,14 @@ function describeOutput(diff: ObservedDifference): string[] {
 }
 
 export function checkBaseline(baseline: BaselineFile, observed: ObservedDifference[]): { problems: string[]; matched: number } {
-  const listed = new Map(baseline.entries.map((entry) => [entryKey(entry), entry]));
-  const seen = new Set<string>();
+  const verdict = runLedger(baseline, harnessCurrent(baseline, baseline.seed, baseline.count, baseline.digest), observed);
+  const byKey = new Map(observed.map((diff) => [entryKey(diff.entry), diff]));
+  const entriesByKey = new Map(baseline.entries.map((entry) => [entryKey(entry), entry]));
   const problems: string[] = [];
-  let matched = 0;
-  for (const diff of observed) {
-    const key = entryKey(diff.entry);
-    seen.add(key);
-    const expected = listed.get(key);
-    if (!expected) {
+  for (const problem of verdict.problems) {
+    if (problem.kind === "unlisted") {
+      const diff = byKey.get(problem.key ?? "");
+      if (!diff) throw new Error(`harness reported an unlisted difference for unknown key ${problem.key}`);
       problems.push(
         [
           "unexpected difference that the known-difference baseline does not explain",
@@ -741,32 +806,35 @@ export function checkBaseline(baseline: BaselineFile, observed: ObservedDifferen
           `  coordinates: ${diff.entry.coordinates}`,
         ].join("\n"),
       );
-      continue;
     }
-    if (JSON.stringify(expected.signal) !== JSON.stringify(diff.entry.signal)) {
+    else if (problem.kind === "signal-changed") {
+      const diff = byKey.get(problem.key ?? "");
+      if (!diff) throw new Error(`harness reported a changed signal for unknown key ${problem.key}`);
       problems.push(
         [
           `known difference changed shape: #${diff.id} [${diff.cluster}] ${diff.sql}`,
           ...describeOutput(diff).slice(1),
-          `  baseline signal: ${expected.signal.join(" | ")}`,
-          `  current signal:  ${diff.entry.signal.join(" | ")}`,
+          `  baseline signal: ${(problem.baseline as readonly string[]).join(" | ")}`,
+          `  current signal:  ${(problem.current as readonly string[]).join(" | ")}`,
           `  coordinates: ${diff.entry.coordinates}`,
         ].join("\n"),
       );
-      continue;
     }
-    matched += 1;
+    else if (problem.kind === "stale") {
+      const entry = entriesByKey.get(problem.key ?? "");
+      if (!entry) throw new Error(`harness reported a stale baseline entry for unknown key ${problem.key}`);
+      problems.push(
+        [
+          `baseline entry no longer differs: #${entry.id} [${entry.cluster}] ${entry.sql}`,
+          `  the case now matches both oracles, drop it with: pnpm corpus -- --update-baseline`,
+        ].join("\n"),
+      );
+    }
+    else if (problem.kind !== "seed-drift" && problem.kind !== "count-drift" && problem.kind !== "digest-drift") {
+      throw new Error(`unknown ledger problem kind ${problem.kind}`);
+    }
   }
-  for (const entry of baseline.entries) {
-    if (seen.has(entryKey(entry))) continue;
-    problems.push(
-      [
-        `baseline entry no longer differs: #${entry.id} [${entry.cluster}] ${entry.sql}`,
-        `  the case now matches both oracles, drop it with: pnpm corpus -- --update-baseline`,
-      ].join("\n"),
-    );
-  }
-  return { problems, matched };
+  return { problems, matched: verdict.matched };
 }
 
 function reasonCounts(entries: readonly BaselineEntry[]): Record<BaselineReason, number> {
@@ -828,9 +896,9 @@ export function parseCorpusOptions(argv: string[]): CorpusOptions {
 
 export async function commandCorpus(options: CorpusOptions): Promise<number> {
   const cases = generate(options.seed, options.count);
-  const digest = createHash("sha256")
-    .update(JSON.stringify(cases.map((item) => [item.cluster, item.sql, item.check ?? null])))
-    .digest("hex");
+  const digest = harnessAddon.harnessDigest(
+    Buffer.from(JSON.stringify(cases.map((item) => [item.cluster, item.sql, item.check ?? null]))),
+  );
 
   // The digest is checked before any engine starts. A silently edited corpus
   // fails here instead of quietly relaxing the gate.
