@@ -27,9 +27,10 @@ cargo build -p sqlite-wasm --target wasm32-unknown-unknown --release
 wasm-bindgen --target nodejs --out-dir projects/sqlite.ts/platforms/sqlite-unknown-wasm32/lib --out-name sqlite_wasm projects/sqlite.rs/target/wasm32-unknown-unknown/release/sqlite_wasm.wasm
 ```
 
-`../../sqlite.ts/packages/sqlite-wasm` runs both steps and scopes the generated glue to
-CommonJS. `wasm-opt -Oz` is optional; the reported size below was measured with
-`binaryen` release `version_123`.
+`../../../scripts/build-wasm.mjs` runs both steps and scopes the generated glue to
+CommonJS; the smoke check lives in the platform package at
+`tests/smoke.mjs`. `wasm-opt -Oz` is optional; the reported size below was measured
+with `binaryen` release `version_123`.
 
 ## Host contract
 

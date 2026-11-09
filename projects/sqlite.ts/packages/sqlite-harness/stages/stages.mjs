@@ -15,7 +15,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { repository, stagesDir } from "./paths.mjs";
+import { repository, stagesDir, wasmPlatform } from "./paths.mjs";
 
 const here = stagesDir;
 
@@ -65,13 +65,12 @@ function runNode() {
 }
 
 function runWasm() {
-  const wasmPackage = join(here, "..", "..", "sqlite-wasm");
-  const build = spawn(process.execPath, [join(wasmPackage, "build.mjs")], repository);
+  const build = spawn(process.execPath, [join(repository, "scripts/build-wasm.mjs")], repository);
   return summarize({
     name: "platforms/wasm",
     assertionsFloor: 45,
     sqlFloor: 42,
-    steps: [build, spawn(process.execPath, [join(wasmPackage, "smoke.mjs")], repository)],
+    steps: [build, spawn(process.execPath, [join(wasmPlatform, "tests/smoke.mjs")], repository)],
     truth: (text) => text.includes('"status": "PASS"') && text.includes('"integrity_check": "ok"'),
   });
 }

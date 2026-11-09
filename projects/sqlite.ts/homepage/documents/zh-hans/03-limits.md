@@ -31,4 +31,4 @@
 - CPython 标准库 `sqlite3` 打开文件并执行 `PRAGMA integrity_check`。
 - 行数与首行值必须与写入侧一致。
 
-平台 smoke（`stages/node`、`packages/sqlite-wasm`、`stages/python`）都按这条规则断言。
+平台 smoke（`stages/node`、`platforms/sqlite-unknown-wasm32`、`stages/python`）都按这条规则断言。

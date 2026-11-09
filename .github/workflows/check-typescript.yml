@@ -31,7 +31,7 @@ jobs:
         with:
           workspaces: projects/sqlite.rs
       - id: wasm-bindgen-version
-        run: echo "version=$(node projects/sqlite.ts/packages/sqlite-wasm/build.mjs --print-wasm-bindgen-version)" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(node scripts/build-wasm.mjs --print-wasm-bindgen-version)" >> "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-bindgen-cli@${{ steps.wasm-bindgen-version.outputs.version }}
