@@ -164,6 +164,16 @@ fn column_specs(columns: &Bound<'_, PyAny>) -> PyResult<Vec<ColumnSpec>> {
             Some(value) if !value.is_none() => Some(value.extract()?),
             _ => None,
         };
+        let collate = match column.get_item("collate")? {
+            Some(value) if !value.is_none() => {
+                let name: String = value.extract()?;
+                Some(
+                    sqlite::Collation::parse(&name)
+                        .ok_or_else(|| PyRuntimeError::new_err(format!("no such collation sequence: {name}")))?,
+                )
+            }
+            _ => None,
+        };
         specs.push(ColumnSpec {
             name,
             declared_type,
@@ -173,6 +183,7 @@ fn column_specs(columns: &Bound<'_, PyAny>) -> PyResult<Vec<ColumnSpec>> {
             primary_key,
             unique,
             autoincrement,
+            collate,
         });
     }
     Ok(specs)
