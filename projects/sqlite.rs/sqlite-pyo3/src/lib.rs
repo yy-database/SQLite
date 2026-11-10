@@ -430,7 +430,10 @@ fn json_to_py<'py>(py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyAny>> {
 /// `{"statement","affected","columns","rows"}` with integers, reals and strings
 /// as native values and blobs as `{"$blob":"<hex>"}`. Rejected statements raise
 /// `RuntimeError`; `try_execute` returns `{"ok": False, "error": {...}}` instead.
-#[pyclass]
+///
+/// 引擎持有按语句生效的 `Cell` / `RefCell` 记忆化缓存，因此不是 `Sync`；Python 侧
+/// 只允许创建它的线程访问，跨线程使用由 pyo3 直接拒绝。
+#[pyclass(unsendable)]
 pub struct SqliteEngine {
     inner: sqlite::Engine,
 }
