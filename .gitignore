@@ -31,6 +31,7 @@ __pycache__/
 
 # Build artifacts
 projects/sqlite.ts/packages/sqlite/dist/
+projects/sqlite.ts/packages/sqlite-harness/dist/
 projects/sqlite.ts/packages/sqlite-harness/stages/node/out/
 projects/sqlite.ts/packages/sqlite-harness/stages/python/wheels/
 projects/sqlite.ts/packages/sqlite-harness/stages/python/.venv/

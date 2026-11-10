@@ -6,16 +6,39 @@
     "license": "MPL-2.0",
     "type": "module",
     "exports": {
-        ".": "./src/index.ts",
-        "./conformance": "./src/conformance/index.ts",
-        "./bench": "./src/bench/index.ts",
-        "./fuzz": "./src/fuzz/index.ts",
-        "./report": "./src/report/index.ts"
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "default": "./dist/index.js"
+        },
+        "./conformance": {
+            "types": "./dist/conformance/index.d.ts",
+            "import": "./dist/conformance/index.js",
+            "default": "./dist/conformance/index.js"
+        },
+        "./bench": {
+            "types": "./dist/bench/index.d.ts",
+            "import": "./dist/bench/index.js",
+            "default": "./dist/bench/index.js"
+        },
+        "./fuzz": {
+            "types": "./dist/fuzz/index.d.ts",
+            "import": "./dist/fuzz/index.js",
+            "default": "./dist/fuzz/index.js"
+        },
+        "./report": {
+            "types": "./dist/report/index.d.ts",
+            "import": "./dist/report/index.js",
+            "default": "./dist/report/index.js"
+        }
     },
     "bin": {
         "sqlite-harness": "bin/cli.mjs"
     },
     "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "prepack": "tsc -p tsconfig.json",
+        "typecheck": "tsc --noEmit -p tsconfig.json",
         "test": "node bin/cli.mjs test",
         "bench": "node bin/cli.mjs bench",
         "conformance": "node bin/cli.mjs conformance",
@@ -24,8 +47,19 @@
         "corpus": "node bin/cli.mjs corpus",
         "fuzz": "node bin/cli.mjs fuzz"
     },
+    "files": [
+        "dist",
+        "bin",
+        "corpus",
+        "stages",
+        "!stages/python/.venv",
+        "!stages/python/wheels",
+        "!stages/node/out"
+    ],
+    "dependencies": {
+        "@yydb/sqlite": "workspace:*"
+    },
     "devDependencies": {
-        "@yydb/sqlite": "workspace:*",
         "better-sqlite3": "^12.2.0",
         "sql.js": "^1.15.2"
     },

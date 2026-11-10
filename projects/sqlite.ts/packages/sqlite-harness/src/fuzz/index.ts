@@ -18,7 +18,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { createEngine, type ExecValue } from "../../../sqlite/src/index.ts";
+import { createEngine, type ExecValue } from "@yydb/sqlite";
 import { openEngine, type Cell, type Engine, type StepOutcome } from "../conformance/oracle.ts";
 import { renderTable } from "../cli/util.ts";
 import {

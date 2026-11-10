@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createWriter, openDatabase } from "../../../sqlite/src/index.ts";
+import { createWriter, openDatabase } from "@yydb/sqlite";
 import { emit, envInt, repoPath, renderTable, type CliOptions } from "../cli/util.ts";
 import { benchSummary, type BenchRow, type BenchStats } from "../native/binding.ts";
 import { writeBenchCharts } from "../report/index.ts";
