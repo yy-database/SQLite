@@ -5,7 +5,8 @@
 // Run: `pnpm --dir projects/sqlite.ts/examples/vs-js-libraries benchmark`
 // Env: BENCH_ROWS (default 5000), BENCH_TXN (1000), BENCH_PAGE (4096), BENCH_ROUNDS (3),
 //      BENCH_POINT (1000), BENCH_RANGE (200), BENCH_MUTATE (1000), BENCH_SYNCHRONOUS (off|on),
-//      BENCH_LIMIT (200), BENCH_AGG (20), BENCH_JOIN (10)
+//      BENCH_LIMIT (200), BENCH_AGG (20), BENCH_JOIN (10), BENCH_DISTINCT (5), BENCH_SUBQUERY (20),
+//      BENCH_MULTI (10), BENCH_UPSERT (500)
 
 import Database from "better-sqlite3";
 import { spawnSync } from "node:child_process";
@@ -33,6 +34,11 @@ const MUTATE_OPS = Number(process.env.BENCH_MUTATE ?? 1_000);
 const LIMIT_OPS = Number(process.env.BENCH_LIMIT ?? 200);
 const AGG_OPS = Number(process.env.BENCH_AGG ?? 20);
 const JOIN_OPS = Number(process.env.BENCH_JOIN ?? 10);
+const DISTINCT_OPS = Number(process.env.BENCH_DISTINCT ?? 5);
+const SUBQUERY_OPS = Number(process.env.BENCH_SUBQUERY ?? 20);
+const MULTI_STATEMENTS = Number(process.env.BENCH_MULTI ?? 10);
+const MULTI_ROWS_PER_STATEMENT = 100;
+const UPSERT_OPS = Number(process.env.BENCH_UPSERT ?? 500);
 const SYNC = process.env.BENCH_SYNCHRONOUS ?? "off";
 
 // Fixed shapes for the analytic workloads (same statement text on every engine).
@@ -43,6 +49,14 @@ const POINT_UK_SQL = "select id, label, score from items where label = ?";
 const ORDER_LIMIT_SQL = `select id, label, score from items order by id limit ${ORDER_LIMIT_ROWS}`;
 const GROUP_BY_SQL = "select cast(score as integer) as bucket, count(*) as total from items group by cast(score as integer)";
 const JOIN_SQL = `select count(*) as matched from items join items as b on b.id = items.id % ${JOIN_MODULO}`;
+const DISTINCT_SQL = "select distinct label from items";
+const AGGREGATE_SQL = "select count(*) as n, sum(score) as total, min(score) as lo, max(score) as hi from items";
+const SUBQUERY_THRESHOLD = 1_000;
+const SUBQUERY_SQL = `select count(*) as n from items where id in (select id from items where score > ${SUBQUERY_THRESHOLD})`;
+const INDEX_RANGE_LOWER = "row-1000";
+const INDEX_RANGE_UPPER = "row-1499";
+const INDEX_RANGE_SQL = `select id from items where label between '${INDEX_RANGE_LOWER}' and '${INDEX_RANGE_UPPER}' order by label`;
+const UPSERT_SQL = "insert into items (id, label, score) values (?, ?, ?) on conflict(id) do update set score = excluded.score";
 
 function expectedJoinMatches(): number {
   let matches = 0;
@@ -57,6 +71,21 @@ function expectedGroupBuckets(): number {
   const buckets = new Set<number>();
   for (let id = 1; id <= ROWS; id += 1) buckets.add(Math.floor(id / 4));
   return buckets.size;
+}
+
+function expectedSubqueryRows(): number {
+  let count = 0;
+  for (let id = 1; id <= ROWS; id += 1) if (id / 4 > SUBQUERY_THRESHOLD) count += 1;
+  return count;
+}
+
+function expectedIndexRangeRows(): number {
+  let count = 0;
+  for (let id = 1; id <= ROWS; id += 1) {
+    const label = `row-${id}`;
+    if (label >= INDEX_RANGE_LOWER && label <= INDEX_RANGE_UPPER) count += 1;
+  }
+  return count;
 }
 
 const columns = JSON.stringify([
@@ -87,20 +116,26 @@ function formatRatio(timeRatio: number): string {
 type WorkloadKey =
   | "batch" | "scan" | "point" | "point_sql" | "point_uk" | "range" | "indexed"
   | "order_limit" | "group_by" | "join"
+  | "distinct" | "aggregate" | "subquery" | "index_range" | "insert_multi" | "upsert"
   | "update" | "delete" | "rollback" | "open";
 const WORKLOADS: WorkloadKey[] = [
   "batch", "scan", "point", "point_sql", "point_uk", "range", "indexed",
   "order_limit", "group_by", "join",
+  "distinct", "aggregate", "subquery", "index_range", "insert_multi", "upsert",
   "update", "delete", "rollback", "open",
 ];
 
 // Ops per workload for throughput normalization (batch/scan count rows; the rest count queries/mutations/opens).
 function workloadOps(workload: WorkloadKey): number {
   if (workload === "batch" || workload === "scan") return ROWS;
-  if (workload === "range") return RANGE_OPS;
+  if (workload === "range" || workload === "index_range") return RANGE_OPS;
   if (workload === "order_limit") return LIMIT_OPS;
-  if (workload === "group_by") return AGG_OPS;
+  if (workload === "group_by" || workload === "aggregate") return AGG_OPS;
   if (workload === "join") return JOIN_OPS;
+  if (workload === "distinct") return DISTINCT_OPS;
+  if (workload === "subquery") return SUBQUERY_OPS;
+  if (workload === "insert_multi") return MULTI_STATEMENTS * MULTI_ROWS_PER_STATEMENT;
+  if (workload === "upsert") return UPSERT_OPS;
   if (workload === "update" || workload === "delete" || workload === "rollback") return MUTATE_OPS;
   if (workload === "open") return ROUNDS;
   return POINT_OPS;
@@ -396,6 +431,145 @@ function nativeOpen(factory: (path: string, readOnly?: boolean) => PeerHandle, p
   return samples;
 }
 
+function nativeDistinct(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  const database = factory(path, true);
+  const select = database.prepare(DISTINCT_SQL);
+  const run = () => {
+    for (let op = 0; op < DISTINCT_OPS; op += 1) {
+      const rows = select.all();
+      if (rows.length !== ROWS) throw new Error(`distinct returned ${rows.length}, expected ${ROWS}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function nativeAggregate(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  const database = factory(path, true);
+  const select = database.prepare(AGGREGATE_SQL);
+  const expectedSum = (ROWS * (ROWS + 1)) / 8;
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const row = select.get() as { n?: number; total?: number; lo?: number; hi?: number } | undefined;
+      if (!row || Number(row.n) !== ROWS) throw new Error(`aggregate rows ${JSON.stringify(row)}, expected ${ROWS}`);
+      if (Math.abs(Number(row.total) - expectedSum) > 1e-6) throw new Error(`aggregate sum ${row.total}, expected ${expectedSum}`);
+      if (Number(row.lo) !== 0.25 || Number(row.hi) !== ROWS / 4) throw new Error(`aggregate bounds ${JSON.stringify(row)}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function nativeSubquery(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  const database = factory(path, true);
+  const select = database.prepare("select count(*) as n from items where id in (select id from items where score > ?)");
+  const expected = expectedSubqueryRows();
+  const run = () => {
+    for (let op = 0; op < SUBQUERY_OPS; op += 1) {
+      const row = select.get(SUBQUERY_THRESHOLD) as { n: number } | undefined;
+      if (!row || Number(row.n) !== expected) throw new Error(`subquery returned ${JSON.stringify(row)}, expected ${expected}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function nativeIndexRange(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  const writable = factory(path);
+  writable.exec("create index if not exists items_label on items(label)");
+  writable.close();
+  const database = factory(path, true);
+  const select = database.prepare(INDEX_RANGE_SQL);
+  const expected = expectedIndexRangeRows();
+  const run = () => {
+    for (let op = 0; op < RANGE_OPS; op += 1) {
+      const rows = select.all();
+      if (rows.length !== expected) throw new Error(`index_range returned ${rows.length}, expected ${expected}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function nativeInsertMulti(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    rmSync(path, { force: true });
+    const database = factory(path);
+    database.exec(`pragma page_size = ${PAGE_SIZE}`);
+    database.exec(`pragma synchronous = ${SYNC === "on" ? "full" : "off"}`);
+    database.exec("pragma journal_mode = memory");
+    database.exec("create table items (id integer primary key, label text, score real)");
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    for (let statement = 0; statement < MULTI_STATEMENTS; statement += 1) {
+      const values: string[] = [];
+      for (let row = 0; row < MULTI_ROWS_PER_STATEMENT; row += 1) {
+        const id = statement * MULTI_ROWS_PER_STATEMENT + row + 1;
+        values.push(`(${id}, 'multi-${id}', ${id / 4})`);
+      }
+      database.exec(`insert into items (id, label, score) values ${values.join(", ")}`);
+    }
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+    const count = database.prepare("select count(*) as n from items").get() as { n: number } | undefined;
+    if (!count || Number(count.n) !== MULTI_STATEMENTS * MULTI_ROWS_PER_STATEMENT) {
+      throw new Error(`insert_multi rows ${JSON.stringify(count)}`);
+    }
+    database.close();
+  }
+  return samples;
+}
+
+function nativeUpsert(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  nativeBatchLoad(factory, path);
+  const database = factory(path);
+  const upsert = database.prepare(UPSERT_SQL);
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    for (let op = 0; op < UPSERT_OPS; op += 1) {
+      const id = (op % ROWS) + 1;
+      upsert.run(id, `row-${id}`, 7.25);
+    }
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+  }
+  const row = database.prepare("select score from items where id = 1").get() as { score: number } | undefined;
+  if (!row || Number(row.score) !== 7.25) throw new Error(`upsert did not update: ${JSON.stringify(row)}`);
+  database.close();
+  return samples;
+}
+
 // ---------------------------------------------------------------------------
 // `@yydb/sqlite` (format-3 writer/reader + SQL engine)
 // ---------------------------------------------------------------------------
@@ -640,6 +814,126 @@ function ourOpen(path: string): number[] {
     openDatabase(path);
     samples.push(elapsedMs(start));
   }
+  return samples;
+}
+
+function ourDistinct(engine: Engine): number[] {
+  const run = () => {
+    for (let op = 0; op < DISTINCT_OPS; op += 1) {
+      const rows = engine.execute(DISTINCT_SQL).rows;
+      if (rows.length !== ROWS) throw new Error(`distinct returned ${rows.length}, expected ${ROWS}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function ourAggregate(engine: Engine): number[] {
+  const expectedSum = (ROWS * (ROWS + 1)) / 8;
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const row = engine.execute(AGGREGATE_SQL).rows[0];
+      if (!row) throw new Error("aggregate returned no row");
+      if (Number(row[0]) !== ROWS) throw new Error(`aggregate rows ${row[0]}, expected ${ROWS}`);
+      if (Math.abs(Number(row[1]) - expectedSum) > 1e-6) throw new Error(`aggregate sum ${row[1]}, expected ${expectedSum}`);
+      if (Number(row[2]) !== 0.25 || Number(row[3]) !== ROWS / 4) throw new Error(`aggregate bounds ${JSON.stringify(row)}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function ourSubquery(engine: Engine): number[] {
+  const expected = expectedSubqueryRows();
+  const run = () => {
+    for (let op = 0; op < SUBQUERY_OPS; op += 1) {
+      const rows = engine.execute(SUBQUERY_SQL).rows;
+      if (rows.length !== 1 || Number(rows[0][0]) !== expected) {
+        throw new Error(`subquery returned ${JSON.stringify(rows)}, expected ${expected}`);
+      }
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function ourIndexRange(): number[] {
+  const engine = buildEngine(true);
+  const expected = expectedIndexRangeRows();
+  const run = () => {
+    for (let op = 0; op < RANGE_OPS; op += 1) {
+      const rows = engine.execute(INDEX_RANGE_SQL).rows;
+      if (rows.length !== expected) throw new Error(`index_range returned ${rows.length}, expected ${expected}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function ourInsertMulti(): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const engine = createEngine(PAGE_SIZE);
+    engine.execute("create table items (id integer primary key, label text, score real)");
+    const start = process.hrtime.bigint();
+    engine.execute("begin");
+    for (let statement = 0; statement < MULTI_STATEMENTS; statement += 1) {
+      const values: string[] = [];
+      for (let row = 0; row < MULTI_ROWS_PER_STATEMENT; row += 1) {
+        const id = statement * MULTI_ROWS_PER_STATEMENT + row + 1;
+        values.push(`(${id}, 'multi-${id}', ${id / 4})`);
+      }
+      engine.execute(`insert into items (id, label, score) values ${values.join(", ")}`);
+    }
+    engine.execute("commit");
+    samples.push(elapsedMs(start));
+    const count = engine.execute("select count(*) as n from items").rows[0];
+    if (!count || Number(count[0]) !== MULTI_STATEMENTS * MULTI_ROWS_PER_STATEMENT) {
+      throw new Error(`insert_multi rows ${JSON.stringify(count)}`);
+    }
+  }
+  return samples;
+}
+
+function ourUpsert(): number[] {
+  const engine = buildEngine(false);
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    engine.execute("begin");
+    for (let op = 0; op < UPSERT_OPS; op += 1) {
+      const id = (op % ROWS) + 1;
+      engine.execute(`insert into items (id, label, score) values (${id}, 'row-${id}', 7.25) on conflict(id) do update set score = excluded.score`);
+    }
+    engine.execute("commit");
+    samples.push(elapsedMs(start));
+  }
+  const row = engine.execute("select score from items where id = 1").rows[0];
+  if (!row || Number(row[0]) !== 7.25) throw new Error(`upsert did not update: ${JSON.stringify(row)}`);
   return samples;
 }
 
@@ -1199,7 +1493,7 @@ function provenanceLines(): string {
     `- rustc: \`${commandOutput("rustc", ["-V"])}\``,
     `- repo rev: \`${commandOutput("git", ["rev-parse", "--short", "HEAD"], repoRoot)}\``,
     `- binding rev (\`database.rs\` pin in \`projects/sqlite.rs/Cargo.toml\`): \`${bindingPinnedRev()}\``,
-    `- data: \`${ROWS}\` rows (page \`${PAGE_SIZE}\`), \`BENCH_ROUNDS=${ROUNDS}\`, point/indexed \`${POINT_OPS}\`, range \`${RANGE_OPS}\`, order_limit \`${LIMIT_OPS}\`, group_by \`${AGG_OPS}\`, join \`${JOIN_OPS}\`, mutate \`${MUTATE_OPS}\``,
+    `- data: \`${ROWS}\` rows (page \`${PAGE_SIZE}\`), \`BENCH_ROUNDS=${ROUNDS}\`, point/indexed \`${POINT_OPS}\`, range \`${RANGE_OPS}\`, order_limit \`${LIMIT_OPS}\`, group_by \`${AGG_OPS}\`, join \`${JOIN_OPS}\`, distinct \`${DISTINCT_OPS}\`, subquery \`${SUBQUERY_OPS}\`, multi \`${MULTI_STATEMENTS}x${MULTI_ROWS_PER_STATEMENT}\`, upsert \`${UPSERT_OPS}\`, mutate \`${MUTATE_OPS}\``,
   ].join("\n");
 }
 
@@ -1215,6 +1509,8 @@ const nodeDeleteSpace = workspace("sqlite-vs-js-libraries-node-delete");
 const sqlJsSpace = workspace("sqlite-vs-js-libraries-sql-js");
 const sqlJsMutateSpace = workspace("sqlite-vs-js-libraries-sqljs-mutate");
 const sqlJsDeleteSpace = workspace("sqlite-vs-js-libraries-sqljs-delete");
+const nodeFeatureSpace = workspace("sqlite-vs-js-libraries-node-feature");
+const betterFeatureSpace = workspace("sqlite-vs-js-libraries-better-feature");
 const wasmSpace = workspace("sqlite-vs-js-libraries-wasm");
 
 try {
@@ -1236,6 +1532,12 @@ try {
     order_limit: nativeOrderLimit(openNode, nodeSpace.path),
     group_by: nativeGroupBy(openNode, nodeSpace.path),
     join: nativeJoin(openNode, nodeSpace.path),
+    distinct: nativeDistinct(openNode, nodeSpace.path),
+    aggregate: nativeAggregate(openNode, nodeSpace.path),
+    subquery: nativeSubquery(openNode, nodeSpace.path),
+    index_range: nativeIndexRange(openNode, nodeSpace.path),
+    insert_multi: nativeInsertMulti(openNode, nodeFeatureSpace.path),
+    upsert: nativeUpsert(openNode, nodeFeatureSpace.path),
     rollback: nativeRollback(openNode, nodeSpace.path),
     open: nativeOpen(openNode, nodeSpace.path),
     update: nativeUpdate(openNode, nodeMutateSpace.path),
@@ -1260,6 +1562,12 @@ try {
   oursSamples.order_limit = ourOrderLimit(analyticEngine);
   oursSamples.group_by = ourGroupBy(analyticEngine);
   oursSamples.join = ourJoin(analyticEngine);
+  oursSamples.distinct = ourDistinct(analyticEngine);
+  oursSamples.aggregate = ourAggregate(analyticEngine);
+  oursSamples.subquery = ourSubquery(analyticEngine);
+  oursSamples.index_range = ourIndexRange();
+  oursSamples.insert_multi = ourInsertMulti();
+  oursSamples.upsert = ourUpsert();
   ourBatchLoad(oursMutateSpace.path);
   oursSamples.update = ourUpdate(oursMutateSpace.path);
   oursSamples.delete = ourDelete(oursDeleteSpace.path);
@@ -1280,6 +1588,12 @@ try {
     order_limit: nativeOrderLimit(openBetter, betterSpace.path),
     group_by: nativeGroupBy(openBetter, betterSpace.path),
     join: nativeJoin(openBetter, betterSpace.path),
+    distinct: nativeDistinct(openBetter, betterSpace.path),
+    aggregate: nativeAggregate(openBetter, betterSpace.path),
+    subquery: nativeSubquery(openBetter, betterSpace.path),
+    index_range: nativeIndexRange(openBetter, betterSpace.path),
+    insert_multi: nativeInsertMulti(openBetter, betterFeatureSpace.path),
+    upsert: nativeUpsert(openBetter, betterFeatureSpace.path),
     rollback: nativeRollback(openBetter, betterSpace.path),
     open: nativeOpen(openBetter, betterSpace.path),
     update: nativeUpdate(openBetter, betterMutateSpace.path),
@@ -1343,7 +1657,7 @@ try {
   const report = `# Benchmark report
 
 Command: \`pnpm --dir projects/sqlite.ts/examples/vs-js-libraries benchmark\`
-Defaults: \`BENCH_ROWS=${ROWS}\`, \`BENCH_TXN=${ROWS_PER_TXN}\`, \`BENCH_PAGE=${PAGE_SIZE}\`, \`BENCH_ROUNDS=${ROUNDS}\`, \`BENCH_POINT=${POINT_OPS}\`, \`BENCH_RANGE=${RANGE_OPS}\`, \`BENCH_MUTATE=${MUTATE_OPS}\`, \`BENCH_LIMIT=${LIMIT_OPS}\`, \`BENCH_AGG=${AGG_OPS}\`, \`BENCH_JOIN=${JOIN_OPS}\`, \`BENCH_SYNCHRONOUS=${SYNC}\`
+Defaults: \`BENCH_ROWS=${ROWS}\`, \`BENCH_TXN=${ROWS_PER_TXN}\`, \`BENCH_PAGE=${PAGE_SIZE}\`, \`BENCH_ROUNDS=${ROUNDS}\`, \`BENCH_POINT=${POINT_OPS}\`, \`BENCH_RANGE=${RANGE_OPS}\`, \`BENCH_MUTATE=${MUTATE_OPS}\`, \`BENCH_LIMIT=${LIMIT_OPS}\`, \`BENCH_AGG=${AGG_OPS}\`, \`BENCH_JOIN=${JOIN_OPS}\`, \`BENCH_DISTINCT=${DISTINCT_OPS}\`, \`BENCH_SUBQUERY=${SUBQUERY_OPS}\`, \`BENCH_MULTI=${MULTI_STATEMENTS}\`, \`BENCH_UPSERT=${UPSERT_OPS}\`, \`BENCH_SYNCHRONOUS=${SYNC}\`
 Baseline: \`node:sqlite\` (\`DatabaseSync\`) = \`1.00x\`
 Ratio: subject_time / baseline_time (smaller is faster). Fastest cell in each row is bold.
 
@@ -1377,6 +1691,12 @@ ${markdownAbsoluteTable([
 - \`order_limit\`: \`select ... order by id limit ${ORDER_LIMIT_ROWS}\` — repeated ${LIMIT_OPS}x per round; separates the key-order scan constant from the per-statement fixed cost.
 - \`group_by\`: \`select cast(score as integer), count(*) ... group by cast(score as integer)\` (${AGG_OPS} queries per round, ${expectedGroupBuckets()} groups over ${ROWS} rows).
 - \`join\`: \`select count(*) from items join items as b on b.id = items.id % ${JOIN_MODULO}\` (${JOIN_OPS} queries per round, ${expectedJoinMatches()} matched pairs) — exposes a nested full scan of the inner side.
+- \`distinct\`: \`select distinct label from items\` (${DISTINCT_OPS} queries per round, ${ROWS} distinct labels) — worst case for the dedup structure because nothing collapses.
+- \`aggregate\`: \`select count(*), sum(score), min(score), max(score) from items\` (${AGG_OPS} queries per round) — single-pass aggregate without grouping.
+- \`subquery\`: \`select count(*) ... where id in (select id from items where score > ${SUBQUERY_THRESHOLD})\` (${SUBQUERY_OPS} queries per round, ${expectedSubqueryRows()} matches) — uncorrelated \`IN\` subquery.
+- \`index_range\`: \`select id from items where label between '${INDEX_RANGE_LOWER}' and '${INDEX_RANGE_UPPER}' order by label\` (${RANGE_OPS} queries per round, ${expectedIndexRangeRows()} rows) — range predicate on an indexed column.
+- \`insert_multi\`: ${MULTI_STATEMENTS} statements of ${MULTI_ROWS_PER_STATEMENT} literal rows in one transaction (${MULTI_STATEMENTS * MULTI_ROWS_PER_STATEMENT} rows total).
+- \`upsert\`: ${UPSERT_OPS} \`insert ... on conflict(id) do update\` statements in one transaction.
 - \`update\` / \`delete\`: ${MUTATE_OPS} mutations in one transaction + save (our writer) vs peers' prepared mutation in a transaction.
 - \`rollback\`: begin + ${MUTATE_OPS} inserts + rollback (nothing persisted).
 - \`open\`: open + close of the main file, no reads.
@@ -1388,7 +1708,9 @@ ${markdownAbsoluteTable([
 - sql.js peer scan rebuilds the WASM DB from the serialized image each round; peer batch/update/delete timings include \`export()\`.
 - \`point_sql\` has no separate peer path — peers' prepared \`get\` is the reference.
 - The wasm column reads the same in-memory image every round (\`SELECT\` re-scans the image; the binding has no seek), and its \`batch\` includes \`snapshot()\` + the file write.
-- The four SQL-engine workloads (\`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
+- sql.js and the wasm binding do not run the six SQL-feature workloads (\`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`), so those cells stay \`n/a\`; they are compared only on \`node:sqlite\` and \`better-sqlite3\`.
+- \`insert_multi\` and \`upsert\` on our side run on the in-memory SQL engine, while the two peer columns write through their file pager; the row set is validated on both sides.
+- The ten SQL-engine workloads (\`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`, \`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
 
 Regenerate: \`pnpm --dir projects/sqlite.ts/examples/vs-js-libraries benchmark\`
 `;
@@ -1410,5 +1732,7 @@ Regenerate: \`pnpm --dir projects/sqlite.ts/examples/vs-js-libraries benchmark\`
   sqlJsSpace.dispose();
   sqlJsMutateSpace.dispose();
   sqlJsDeleteSpace.dispose();
+  nodeFeatureSpace.dispose();
+  betterFeatureSpace.dispose();
   wasmSpace.dispose();
 }
