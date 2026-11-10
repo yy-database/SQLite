@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { sha256, fixturePath } from "./fixtures.ts";
-import { emit, repoPath, renderTable, type CliOptions } from "./util.ts";
+import { emit, repoPath, renderTable, type CliOptions } from "../cli/util.ts";
 
 const require = createRequire(repoPath("projects", "sqlite.ts", "packages", "sqlite", "package.json"));
 const BetterSqlite = require("better-sqlite3") as new (path: string, options?: Record<string, unknown>) => {

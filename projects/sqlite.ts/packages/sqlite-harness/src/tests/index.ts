@@ -19,9 +19,9 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import { emit, execFile, harnessAddon, nativeModulePath, platformKey, repoPath, type CliOptions, type CommandResult } from "./util.ts";
-import { platformStages } from "../stages/stages.mjs";
-import { stagesDir } from "../stages/paths.mjs";
+import { emit, execFile, harnessAddon, nativeModulePath, platformKey, repoPath, type CliOptions, type CommandResult } from "../cli/util.ts";
+import { platformStages } from "../../stages/stages.mjs";
+import { stagesDir } from "../../stages/paths.mjs";
 
 type LayerName = "external" | "storage" | "sql";
 

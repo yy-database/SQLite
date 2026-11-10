@@ -1,6 +1,6 @@
 // Side-by-side throughput with `node:sqlite` (`DatabaseSync`) as baseline.
 // Console + report show relative uplift/gap vs baseline only (same measurements underneath).
-// Timing style matches `packages/sqlite-harness/src/bench.ts` (hrtime, median).
+// Timing style matches `packages/sqlite-harness/src/bench/index.ts` (hrtime, median).
 //
 // Run: `pnpm --dir projects/sqlite.ts/examples/vs-js-libraries benchmark`
 // Env: BENCH_ROWS (default 5000), BENCH_TXN (1000), BENCH_PAGE (4096), BENCH_ROUNDS (3),

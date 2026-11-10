@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 
-export const HARNESS_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+export const HARNESS_ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 export const REPO_ROOT = join(HARNESS_ROOT, "..", "..", "..", "..");
 
 export function repoPath(...parts: string[]): string {

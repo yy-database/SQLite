@@ -4,7 +4,7 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const main = fileURLToPath(new URL("../src/main.ts", import.meta.url));
+const main = fileURLToPath(new URL("../src/cli/main.ts", import.meta.url));
 const result = spawnSync(
   process.execPath,
   ["--experimental-strip-types", "--no-warnings", main, ...process.argv.slice(2)],

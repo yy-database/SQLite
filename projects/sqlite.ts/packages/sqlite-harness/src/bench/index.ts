@@ -9,8 +9,8 @@ import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createWriter, openDatabase } from "../../sqlite/src/index.ts";
-import { emit, envInt, harnessAddon, repoPath, renderTable, type BenchStats, type CliOptions } from "./util.ts";
+import { createWriter, openDatabase } from "../../../sqlite/src/index.ts";
+import { emit, envInt, harnessAddon, repoPath, renderTable, type BenchStats, type CliOptions } from "../cli/util.ts";
 
 // median/p95 与分组柱图走上游 `database.harness` 的标准判定面（与产品共用 `.node`，
 // nearest-rank 公式已在 Rust 侧 golden vector 钉死），写到本包的 `reports/`（git 忽略）。

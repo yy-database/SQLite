@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 
-import { execFile, repoPath } from "./util.ts";
+import { execFile, repoPath } from "../cli/util.ts";
 
 export type Cell = null | { i: string } | { r: string } | { t: string } | { b: string };
 

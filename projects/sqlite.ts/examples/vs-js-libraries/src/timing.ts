@@ -1,7 +1,7 @@
 // 基准计时与统计。median/p95 走上游 `database.harness` 的基准统计（与产品共用 `.node`），
 // 不在本地重写统计算法；空样本等非法输入由上游拒绝，不返回貌似成功的 0/NaN。
 
-import { harnessAddon } from "../../../packages/sqlite-harness/src/util.ts";
+import { harnessAddon } from "../../../packages/sqlite-harness/src/cli/util.ts";
 
 export function elapsedMs(start: bigint): number {
   return Number(process.hrtime.bigint() - start) / 1_000_000;

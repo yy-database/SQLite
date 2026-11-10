@@ -18,9 +18,9 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { createEngine, type ExecValue } from "../../sqlite/src/index.ts";
-import { openEngine, type Cell, type Engine, type StepOutcome } from "./oracle.ts";
-import { harnessAddon as loadHarnessAddon, renderTable } from "./util.ts";
+import { createEngine, type ExecValue } from "../../../sqlite/src/index.ts";
+import { openEngine, type Cell, type Engine, type StepOutcome } from "../conformance/oracle.ts";
+import { harnessAddon as loadHarnessAddon, renderTable } from "../cli/util.ts";
 
 // fuzz 生成/重放/收缩与 baseline 判定走上游 `database.harness` 标准面（与产品共用
 // `.node`），不在本地重写随机、收缩或台账判定。
@@ -100,7 +100,7 @@ const FIXTURE_STEPS = [
   "insert into t2 values (1.5, 'abc'), (2.5, 'def')",
 ];
 
-const BASELINE_PATH = fileURLToPath(new URL("../corpus/fuzz-baseline.json", import.meta.url));
+const BASELINE_PATH = fileURLToPath(new URL("../../corpus/fuzz-baseline.json", import.meta.url));
 
 interface Side {
   readonly rows?: string[][];

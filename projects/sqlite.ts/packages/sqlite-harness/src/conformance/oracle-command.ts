@@ -5,7 +5,7 @@
 // rather than a real semantic difference.
 
 import { compareOutcomes, engineStatus, runOn, type EngineName, type Step } from "./oracle.ts";
-import { emit, renderTable, type CliOptions } from "./util.ts";
+import { emit, renderTable, type CliOptions } from "../cli/util.ts";
 
 interface Probe {
   readonly name: string;

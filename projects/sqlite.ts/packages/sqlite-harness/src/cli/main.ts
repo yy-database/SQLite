@@ -40,10 +40,10 @@ export async function main(argv: string[]): Promise<number> {
     process.env.SQLITE_NATIVE = nativeModulePath();
     try {
       if (command === "corpus") {
-        const { commandCorpus, parseCorpusOptions } = await import("./corpus.ts");
+        const { commandCorpus, parseCorpusOptions } = await import("../conformance/corpus.ts");
         return commandCorpus(parseCorpusOptions(rest));
       }
-      const { commandFuzz, parseFuzzOptions } = await import("./fuzz.ts");
+      const { commandFuzz, parseFuzzOptions } = await import("../fuzz/index.ts");
       return commandFuzz(parseFuzzOptions(rest));
     } catch (error) {
       process.stderr.write(`${(error as Error).message}\n`);
@@ -64,24 +64,24 @@ export async function main(argv: string[]): Promise<number> {
   // does not exist on a fresh checkout yet.
   switch (command) {
     case "test": {
-      const { commandTest } = await import("./test.ts");
+      const { commandTest } = await import("../tests/index.ts");
       return commandTest(options);
     }
     case "bench": {
       process.env.SQLITE_NATIVE = nativeModulePath();
-      const { commandBench } = await import("./bench.ts");
+      const { commandBench } = await import("../bench/index.ts");
       return commandBench(options);
     }
     case "conformance": {
-      const { commandConformance } = await import("./conformance.ts");
+      const { commandConformance } = await import("../conformance/index.ts");
       return commandConformance(options);
     }
     case "fixtures": {
-      const { commandFixtures } = await import("./fixtures.ts");
+      const { commandFixtures } = await import("../conformance/fixtures.ts");
       return commandFixtures(options);
     }
     case "oracle": {
-      const { commandOracle } = await import("./oracle-command.ts");
+      const { commandOracle } = await import("../conformance/oracle-command.ts");
       return commandOracle(options);
     }
     default:

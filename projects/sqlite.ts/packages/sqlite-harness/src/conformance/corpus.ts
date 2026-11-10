@@ -29,9 +29,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { createEngine, type ExecValue } from "../../sqlite/src/index.ts";
+import { createEngine, type ExecValue } from "../../../sqlite/src/index.ts";
 import { openEngine, type Cell, type Engine, type StepOutcome } from "./oracle.ts";
-import { emit, harnessAddon as loadHarnessAddon, renderTable, type CliOptions } from "./util.ts";
+import { emit, harnessAddon as loadHarnessAddon, renderTable, type CliOptions } from "../cli/util.ts";
 
 // digest 与 baseline 判定走上游 `database.harness` 标准面（与产品共用 `.node`），
 // 不在本地重写摘要或台账判定。
@@ -579,7 +579,7 @@ const DEFAULT_SEED = 20261106;
 const DEFAULT_COUNT = 200;
 
 const BASELINE_VERSION = 1;
-const BASELINE_PATH = fileURLToPath(new URL("../corpus/sql-differential-baseline.json", import.meta.url));
+const BASELINE_PATH = fileURLToPath(new URL("../../corpus/sql-differential-baseline.json", import.meta.url));
 
 type DifferenceKind = "mismatch" | "discarded";
 type BaselineReason = "structured-rejection" | "not-implemented" | "known-drift" | "oracle-disagreement";
