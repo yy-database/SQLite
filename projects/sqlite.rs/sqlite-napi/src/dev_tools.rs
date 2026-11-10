@@ -5,14 +5,18 @@
 
 use database::harness::chart::{BenchMetric, bench_chart_svg};
 use database::harness::{
-    Baseline, BaselineIdentity, BenchRow, Comparison, CompareMode, DifferenceObservation, Digest, FuzzInput, FuzzPlan, GatePolicy, Grammar,
-    KnownDifference, Observed, ReportEnvelope, ShrinkSession, Stats, SuiteReport, check_baseline, classify, compare, evaluate, generate, per_op_ms,
-    render, render_json, shrink_next, shrink_report, shrink_start, summarize,
+    Baseline, BaselineIdentity, BenchProblem, BenchRow, Comparison, CompareMode, DifferenceObservation, Digest, FuzzInput, FuzzPlan, GatePolicy,
+    Grammar, KnownDifference, Observed, ReportEnvelope, ShrinkSession, Stats, SuiteReport, check_baseline, classify, compare, evaluate, generate,
+    per_op_ms, render, render_json, shrink_next, shrink_report, shrink_start, summarize,
 };
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 
 fn harness_error(error: impl std::fmt::Display) -> napi::Error {
+    napi::Error::from_reason(error.to_string())
+}
+
+fn bench_error(error: BenchProblem) -> napi::Error {
     napi::Error::from_reason(error.to_string())
 }
 
@@ -54,11 +58,13 @@ pub fn harnessCompare(expected_json: String, actual_json: String, mode_json: Str
 }
 
 /// 把一次比对结果对照已知差异台账归类，返回 `DifferenceClass` 的 JSON。
+///
+/// `case_key` 是当前用例的稳定身份；缺省或与台账条目不匹配时记未登记。
 #[napi]
-pub fn harnessClassify(comparison_json: String, known_json: String) -> napi::Result<String> {
+pub fn harnessClassify(comparison_json: String, case_key: Option<String>, known_json: String) -> napi::Result<String> {
     let comparison: Comparison = serde_json::from_str(&comparison_json).map_err(harness_error)?;
     let known: Vec<KnownDifference> = serde_json::from_str(&known_json).map_err(harness_error)?;
-    let class = classify(&comparison, &known);
+    let class = classify(&comparison, case_key.as_deref(), &known);
     serde_json::to_string(&class).map_err(harness_error)
 }
 
@@ -97,17 +103,18 @@ impl From<Stats> for BenchStatsJson {
 
 /// 对一组毫秒样本求 median/p95/极值（nearest-rank，与 TS 既有实现逐字节一致）。
 #[napi]
-pub fn harnessBenchSummary(samples_ms: Vec<f64>) -> BenchStatsJson {
-    summarize(&samples_ms).into()
+pub fn harnessBenchSummary(samples_ms: Vec<f64>) -> napi::Result<BenchStatsJson> {
+    summarize(&samples_ms).map(Into::into).map_err(bench_error)
 }
 
-/// 单次操作的归一毫秒（median / ops）。`ops` 为 0 时返回 NaN。
+/// 单次操作的归一毫秒（median / ops）。`ops` 为 0 时抛错，不返回 NaN。
 #[napi]
-pub fn harnessBenchPerOp(stats: BenchStatsJson, ops: u32) -> f64 {
+pub fn harnessBenchPerOp(stats: BenchStatsJson, ops: u32) -> napi::Result<f64> {
     per_op_ms(
         &Stats { median_ms: stats.median_ms, p95_ms: stats.p95_ms, min_ms: stats.min_ms, max_ms: stats.max_ms, rounds: stats.rounds },
         u64::from(ops),
     )
+    .map_err(bench_error)
 }
 
 /// 把基准报告行渲染为分组柱图 SVG。

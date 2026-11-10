@@ -72,7 +72,7 @@ export interface ErrorShape {
 /** 一次观测的载荷。 */
 export type ObservedBody =
   | { readonly kind: "rows"; readonly rows: Cell[][] }
-  | { readonly kind: "wire"; readonly wire: number[] }
+  | { readonly kind: "wire"; readonly bytes: number[] }
   | { readonly kind: "error"; readonly fields: Readonly<Record<string, string>> }
   | { readonly kind: "unavailable"; readonly code: string; readonly reason: string };
 
@@ -104,6 +104,8 @@ export interface Comparison {
   readonly matched: boolean;
   /** 期望侧缺少来源标记时为真，此时即使一致也不计通过。 */
   readonly unverified: boolean;
+  /** 任一侧不可用时的执行状态证据；不可用不是值语义通过。 */
+  readonly unavailable: { readonly expected: string | null; readonly actual: string | null } | null;
   readonly signal: readonly string[];
   readonly diffs: readonly Diff[];
   readonly truncated: boolean;
@@ -113,6 +115,7 @@ export interface Comparison {
 export type DifferenceClass =
   | { readonly kind: "clean" }
   | { readonly kind: "unverified" }
+  | { readonly kind: "unavailable"; readonly expected: string | null; readonly actual: string | null }
   | { readonly kind: "known"; readonly key: string; readonly reason: string }
   | { readonly kind: "unlisted" };
 
@@ -144,6 +147,7 @@ export interface Baseline {
 
 /** 台账判定问题（kebab-case 判别值，与既有线名逐字节对齐）。 */
 export type BaselineProblem =
+  | { readonly kind: "version-drift"; readonly baseline: number; readonly current: number }
   | { readonly kind: "seed-drift"; readonly baseline: number; readonly current: number }
   | { readonly kind: "count-drift"; readonly baseline: number; readonly current: number }
   | { readonly kind: "digest-drift"; readonly baseline: string; readonly current: string }
@@ -192,10 +196,31 @@ export interface OracleQualification {
 /** 基线信号。 */
 export type BaselineSignal = "none" | "matched" | "stale" | "unlisted" | "changed";
 
+/** 一个用例的最终状态。 */
+export type CaseOutcome =
+  | "passed"
+  | "failed"
+  | "skipped"
+  | "unverified"
+  | "unavailable"
+  | "timed_out"
+  | "cancelled"
+  | "crashed"
+  | "not_run";
+
+/** 一个用例的一次执行记录。 */
+export interface CaseRecord {
+  readonly case: string;
+  readonly attempt: number;
+  readonly outcome: CaseOutcome;
+}
+
 /** 一个 suite 进门禁所需的全部证据。 */
 export interface SuiteReport {
   readonly name: string;
   readonly tally: SuiteTally;
+  /** 逐用例证据；完整验收必须提供。 */
+  readonly cases?: readonly CaseRecord[];
   readonly floors: readonly Floor[];
   readonly oracle: OracleQualification;
   readonly baseline: BaselineSignal;
@@ -203,13 +228,21 @@ export interface SuiteReport {
 
 /** 门禁策略。 */
 export interface GatePolicy {
-  readonly allow_partial: boolean;
-  readonly allow_skipped: boolean;
-  readonly required_suites: readonly string[];
+  readonly allow_partial?: boolean;
+  readonly allow_skipped?: boolean;
+  readonly allow_empty_suites?: boolean;
+  readonly require_case_evidence?: boolean;
+  readonly required_suites?: readonly string[];
 }
 
 /** 门禁问题（kebab-case 判别值）。 */
 export type GateProblem =
+  | { readonly kind: "tally-inconsistent"; readonly suite: string; readonly cases: number; readonly counted: number }
+  | { readonly kind: "empty-suite"; readonly suite: string }
+  | { readonly kind: "duplicate-suite"; readonly suite: string }
+  | { readonly kind: "missing-case-evidence"; readonly suite: string }
+  | { readonly kind: "duplicate-case"; readonly suite: string; readonly case: string; readonly attempt: number }
+  | { readonly kind: "case-tally-mismatch"; readonly suite: string; readonly field: string; readonly declared: number; readonly derived: number }
   | { readonly kind: "failed"; readonly suite: string; readonly count: number }
   | { readonly kind: "skipped"; readonly suite: string; readonly count: number }
   | { readonly kind: "unverified"; readonly suite: string; readonly count: number }
@@ -223,7 +256,7 @@ export type GateProblem =
   | { readonly kind: "baseline-stale"; readonly suite: string }
   | { readonly kind: "baseline-unlisted"; readonly suite: string }
   | { readonly kind: "baseline-changed"; readonly suite: string }
-  | { readonly kind: "floor-miss"; readonly suite: string; readonly metric: Metric; readonly min: number; readonly actual: number }
+  | { readonly kind: "floor-unmet"; readonly suite: string; readonly metric: Metric; readonly min: number; readonly actual: number }
   | { readonly kind: "missing-suite"; readonly suite: string };
 
 /** 门禁判定结果。 */
@@ -347,7 +380,7 @@ interface HarnessAddon {
   harnessCheckBaseline(baselineJson: string, currentJson: string, observedJson: string): string;
   harnessRenderReport(reportJson: string): string;
   harnessCompare(expectedJson: string, actualJson: string, modeJson: string): string;
-  harnessClassify(comparisonJson: string, knownJson: string): string;
+  harnessClassify(comparisonJson: string, caseKey: string | null, knownJson: string): string;
   harnessEvaluateGate(inputJson: string): string;
   harnessBenchSummary(samplesMs: number[]): BenchStats;
   harnessBenchPerOp(stats: BenchStats, ops: number): number;
@@ -383,7 +416,31 @@ export function digest(bytes: Uint8Array): Digest {
 
 /** 对结构化数据的规范 JSON 文本取摘要（语料摘要与台账键的字节口径）。 */
 export function digestJson(value: unknown): Digest {
-  return digest(Buffer.from(JSON.stringify(value)));
+  return digest(Buffer.from(canonicalJson(value)));
+}
+
+/**
+ * 规范 JSON：对象键按字典序排列，数组保序，拒绝无法稳定表示的值。
+ *
+ * 语料身份不能依赖对象字段的插入顺序；非有限数与 bigint 会静默变成
+ * `null` 或抛错，必须在入口明确拒绝，避免同一语料得到两个摘要。
+ */
+function canonicalJson(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error(`canonical JSON refuses non-finite number: ${value}`);
+    return JSON.stringify(value);
+  }
+  if (typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") throw new Error("canonical JSON refuses bigint; encode it as a string first");
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`).join(",")}}`;
+  }
+  throw new Error(`canonical JSON refuses ${typeof value}`);
 }
 
 /** 按已知差异台账判定一次语料运行。 */
@@ -405,9 +462,9 @@ export function compare(expected: Observed, actual: Observed, mode: CompareMode)
   return JSON.parse(addon().harnessCompare(JSON.stringify(expected), JSON.stringify(actual), JSON.stringify(mode))) as Comparison;
 }
 
-/** 把一次比对结果对照已知差异台账归类。 */
-export function classify(comparison: Comparison, known: readonly KnownDifference[]): DifferenceClass {
-  return JSON.parse(addon().harnessClassify(JSON.stringify(comparison), JSON.stringify(known))) as DifferenceClass;
+/** 把一次比对结果对照已知差异台账归类；`caseKey` 必须对应当前用例。 */
+export function classify(comparison: Comparison, caseKey: string | null, known: readonly KnownDifference[]): DifferenceClass {
+  return JSON.parse(addon().harnessClassify(JSON.stringify(comparison), caseKey, JSON.stringify(known))) as DifferenceClass;
 }
 
 /** 门禁判定：消费执行状态、oracle 资格、证据与 floors，失败关闭。 */
