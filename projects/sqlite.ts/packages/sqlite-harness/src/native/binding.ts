@@ -1,8 +1,11 @@
-// 绑定接合层：上游 `database.harness` 的能力经 N-API 以 JSON 文本进出。
+// 绑定接合层：上游 `database.harness` 的能力经 N-API 进出。
 //
-// 本文件是该包唯一对 addon 线协议做 `JSON.stringify` / `JSON.parse` 的地方：
-// 上层拿到的是结构化对象，不再手写序列化。比较、统计、收缩、台账与门禁算法
-// 全部在上游 Rust 侧，这里只做类型转换与字段命名适配，不实现第二份判定逻辑。
+// 本文件是该包唯一触碰 addon 线协议的地方：观测比对与归类（`compare` /
+// `classify`）走类型化直传——`bigint` 与 `Uint8Array` 原样穿过 ABI，不再
+// 经过 JSON 文本；台账、门禁、报告与 fuzz 等复杂结构仍以 JSON 文本进出，
+// 序列化收在本文件内部。上层拿到的是结构化对象，不再手写序列化。比较、
+// 统计、收缩、台账与门禁算法全部在上游 Rust 侧，这里只做类型转换与字段
+// 命名适配，不实现第二份判定逻辑。
 //
 // 与 `sqlite` 包并列：两者消费同一个 `.node`，产品面走 `SqliteConnection` 等句柄，
 // harness 面走这里的 `harness*` 函数。能力缺失时直接抛错，不回退 JS。
@@ -55,14 +58,14 @@ export type TruthProvenance =
   | { readonly kind: "official_corpus"; readonly id: string; readonly digest: Digest }
   | { readonly kind: "frozen_baseline"; readonly id: string; readonly digest: Digest };
 
-/** 行集合里的单元格（serde 外部标签形态）。 */
+/** 行集合里的单元格（serde 外部标签形态；`int` 对齐上游 i64，`blob` 对齐 Vec<u8>）。 */
 export type Cell =
   | "null"
   | { readonly bool: boolean }
-  | { readonly int: number }
+  | { readonly int: bigint }
   | { readonly float: number }
   | { readonly text: string }
-  | { readonly blob: number[] };
+  | { readonly blob: Uint8Array };
 
 /** 错误结构。 */
 export interface ErrorShape {
@@ -72,7 +75,7 @@ export interface ErrorShape {
 /** 一次观测的载荷。 */
 export type ObservedBody =
   | { readonly kind: "rows"; readonly rows: Cell[][] }
-  | { readonly kind: "wire"; readonly bytes: number[] }
+  | { readonly kind: "wire"; readonly bytes: Uint8Array }
   | { readonly kind: "error"; readonly fields: Readonly<Record<string, string>> }
   | { readonly kind: "unavailable"; readonly code: string; readonly reason: string };
 
@@ -379,8 +382,8 @@ interface HarnessAddon {
   harnessDigest(bytes: Uint8Array): string;
   harnessCheckBaseline(baselineJson: string, currentJson: string, observedJson: string): string;
   harnessRenderReport(reportJson: string): string;
-  harnessCompare(expectedJson: string, actualJson: string, modeJson: string): string;
-  harnessClassify(comparisonJson: string, caseKey: string | null, knownJson: string): string;
+  harnessCompare(expected: Observed, actual: Observed, mode: CompareMode): Comparison;
+  harnessClassify(comparison: Comparison, caseKey: string | null, known: readonly KnownDifference[]): DifferenceClass;
   harnessEvaluateGate(inputJson: string): string;
   harnessBenchSummary(samplesMs: number[]): BenchStats;
   harnessBenchPerOp(stats: BenchStats, ops: number): number;
@@ -457,14 +460,14 @@ export function renderReport(report: ReportEnvelope): string {
   return addon().harnessRenderReport(JSON.stringify(report));
 }
 
-/** 按指定模式比对两侧观测值。 */
+/** 按指定模式比对两侧观测值；`Cell` 的 `int`/`blob` 以 `bigint`/`Uint8Array` 类型化直传。 */
 export function compare(expected: Observed, actual: Observed, mode: CompareMode): Comparison {
-  return JSON.parse(addon().harnessCompare(JSON.stringify(expected), JSON.stringify(actual), JSON.stringify(mode))) as Comparison;
+  return addon().harnessCompare(expected, actual, mode);
 }
 
 /** 把一次比对结果对照已知差异台账归类；`caseKey` 必须对应当前用例。 */
 export function classify(comparison: Comparison, caseKey: string | null, known: readonly KnownDifference[]): DifferenceClass {
-  return JSON.parse(addon().harnessClassify(JSON.stringify(comparison), caseKey, JSON.stringify(known))) as DifferenceClass;
+  return addon().harnessClassify(comparison, caseKey, known);
 }
 
 /** 门禁判定：消费执行状态、oracle 资格、证据与 floors，失败关闭。 */
