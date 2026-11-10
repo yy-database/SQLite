@@ -5,6 +5,13 @@
     "description": "Self-improvement toolbox for SQLite: test, bench, conformance, fixtures and oracle",
     "license": "MPL-2.0",
     "type": "module",
+    "exports": {
+        ".": "./src/index.ts",
+        "./conformance": "./src/conformance/index.ts",
+        "./bench": "./src/bench/index.ts",
+        "./fuzz": "./src/fuzz/index.ts",
+        "./report": "./src/report/index.ts"
+    },
     "bin": {
         "sqlite-harness": "bin/cli.mjs"
     },
