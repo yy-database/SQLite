@@ -10,7 +10,7 @@ as the **throughput baseline**:
 - [`better-sqlite3`](https://github.com/WiseLibs/better-sqlite3)
 - [`sql.js`](https://sql.js.org/) (SQLite compiled to WASM; shared store is a serialized main-file image)
 - [`@yydb/sqlite-unknown-wasm32`](../../platforms/sqlite-unknown-wasm32) — our in-memory WASM binding
-  (`batch`/`scan`/`point_sql`/`range` only; the rest is `n/a`)
+  (`batch`/`scan`/`point_sql`/`range`/`order_limit`/`group_by`/`join` only; the rest is `n/a`)
 
 ## Layout
 
@@ -43,25 +43,41 @@ oracle suite uses).
 
 ## Benchmark (`benchmark`)
 
-One file measures `node:sqlite`, `@yydb/sqlite`, `better-sqlite3`, and `sql.js` on ten
-workloads — `batch`, `scan`, `point`, `point_sql`, `range`, `indexed`, `update`, `delete`,
-`rollback`, `open` — then prints a single relative table vs the `node:sqlite` baseline
-(`1.00x`, or `Nx` slower/faster). Defaults are lighter than the harness (`BENCH_ROWS=5000`);
+One file measures `node:sqlite`, `@yydb/sqlite`, `better-sqlite3`, and `sql.js` on fourteen
+workloads — `batch`, `scan`, `point`, `point_sql`, `point_uk`, `range`, `indexed`,
+`order_limit`, `group_by`, `join`, `update`, `delete`, `rollback`, `open` — then prints a
+single relative table vs the `node:sqlite` baseline (`1.00x`, or `Nx` slower/faster), plus
+absolute median/p95 round timings (harness `benchSummary`) and a provenance block (node,
+rustc, repo rev, binding rev, data scale) in the report.
+Defaults are lighter than the harness (`BENCH_ROWS=5000`);
 override with `BENCH_ROWS`, `BENCH_TXN`, `BENCH_PAGE`, `BENCH_ROUNDS`, `BENCH_POINT`,
-`BENCH_RANGE`, `BENCH_MUTATE`, `BENCH_SYNCHRONOUS` (`off|on` — `on` puts every library on
-`synchronous=FULL`).
+`BENCH_RANGE`, `BENCH_MUTATE`, `BENCH_LIMIT`, `BENCH_AGG`, `BENCH_JOIN`,
+`BENCH_SYNCHRONOUS` (`off|on` — `on` puts every library on `synchronous=FULL`).
 
 - `point` uses the reader's `rowByRowid` against each peer's prepared `get`;
   `point_sql` keeps the engine SQL path (peer cells reuse `point`).
+- `point_uk` runs a point lookup through a **unique** index on `label` (one untimed
+  warmup round, then `BENCH_ROUNDS` timed rounds).
 - `range` uses the reader's `range` against each peer's prepared `between`.
 - `indexed` runs an equality lookup on an indexed `label` column through the SQL engine
   vs each peer's index.
+- `order_limit` repeats `select ... order by id limit 50` to separate the key-order scan
+  constant from the per-statement fixed cost; `group_by` aggregates `cast(score as
+  integer)` buckets; `join` counts a self-join on `b.id = items.id % 50` — all three run
+  one untimed warmup round first and go through the SQL engine on our side.
 - `update` / `delete` mutate in one transaction and save; `rollback` inserts then rolls
   back without persisting; `open` measures open + close.
 
 ```shell
 pnpm --dir projects/sqlite.ts/examples/vs-js-libraries benchmark
 ```
+
+The committed `reports/benchmark.md` snapshot is captured at `BENCH_ROWS=2000` (with reduced
+`BENCH_POINT` / `BENCH_LIMIT` / `BENCH_AGG` / `BENCH_JOIN` / `BENCH_MUTATE`) so the
+SQL-heavy workloads (`indexed` / `point_uk` full scans and the wasm column's full scans)
+regenerate in a tractable time. The code defaults remain `BENCH_ROWS=5000`; regenerating
+at the default takes several minutes because the SQL engine still materializes the whole
+table per statement for the non-pinned workloads.
 
 ## Intentional deltas
 
