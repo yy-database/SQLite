@@ -4,16 +4,20 @@
 //! 这些是只读检视与快照构建的产品原语，不属于正式 SQL 连接入口；TS 侧经
 //! `inspect` 子路径或开发工具加载，主包不公开。
 
-use napi::bindgen_prelude::{BigInt, Buffer, ToNapiValue};
-use napi::sys;
+use napi::{
+    bindgen_prelude::{BigInt, Buffer, ToNapiValue},
+    sys,
+};
 use napi_derive::napi;
 use sqlite::{
     Collation, RecordLimits, RecordValue, SchemaObjectKind, TableLimits, TextEncoding, decode_library_version, decode_record,
     read_named_table, read_schema, validate_database,
 };
 
-use crate::error::storage_error;
-use crate::values::{RowKeys, create_array, create_integer, create_object, set_element, set_property, set_value};
+use crate::{
+    error::storage_error,
+    values::{RowKeys, create_array, create_integer, create_object, set_element, set_property, set_value},
+};
 
 /// Optional resource bounds for each schema or table scan.
 #[napi(object)]
@@ -212,7 +216,8 @@ impl ToNapiValue for DecodedIndexRows {
             let rows = create_array(env, val.payloads.len())?;
             for (row_index, payload) in val.payloads.iter().enumerate() {
                 let mut values = decode_record(payload, val.encoding, val.limits).map_err(storage_error)?;
-                let trailing = values.pop().ok_or_else(|| napi::Error::from_reason("sqlite index record has no rowid column"))?;
+                let trailing =
+                    values.pop().ok_or_else(|| napi::Error::from_reason("sqlite index record has no rowid column"))?;
                 let rowid = match trailing {
                     RecordValue::Integer(rowid) => rowid,
                     _ => return Err(napi::Error::from_reason("sqlite index record rowid is not an integer")),
@@ -529,7 +534,8 @@ fn blob_from_hex(hex: &str) -> Result<sqlite::WriteValue, String> {
     }
     let mut bytes = Vec::with_capacity(hex.len() / 2);
     for index in 0..hex.len() / 2 {
-        let byte = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).map_err(|_| "sqlite blob hex is not valid".to_string())?;
+        let byte =
+            u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).map_err(|_| "sqlite blob hex is not valid".to_string())?;
         bytes.push(byte);
     }
     Ok(sqlite::WriteValue::Blob(bytes))

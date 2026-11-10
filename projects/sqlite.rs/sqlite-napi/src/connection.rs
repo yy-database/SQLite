@@ -4,16 +4,20 @@
 //! 读写分类、提交边界落盘与备份全部由 `sqlite::Connection` 权威承担。
 //! 语句与游标不复制任何数据库语义。
 
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use napi::bindgen_prelude::{BigInt, Buffer};
 use napi_derive::napi;
 use sqlite::{Connection, ConnectionOptions, SqlError};
 
-use crate::error::sql_error;
-use crate::statement::SqliteStatement;
-use crate::values::{SqlParam, TypedRunResult};
+use crate::{
+    error::sql_error,
+    statement::SqliteStatement,
+    values::{SqlParam, TypedRunResult},
+};
 
 /// 连接与关闭标志一起放在共享状态里：语句句柄持有 `Arc`，
 /// 连接关闭后任何语句的原生调用都会被拒绝，而不是悬空。

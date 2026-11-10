@@ -3,11 +3,12 @@
 //! 这些是与产品 SQL 入口并列的正式能力，编译进同一个 `.node`，由 `sqlite-harness`
 //! 包按模块导出取用；不为这个边界另造 addon，也不降为 dev-dependency。
 
-use database::harness::chart::{BenchMetric, bench_chart_svg};
 use database::harness::{
-    Baseline, BaselineIdentity, BenchProblem, BenchRow, Comparison, CompareMode, DifferenceObservation, Digest, FuzzInput, FuzzPlan, GatePolicy,
-    Grammar, KnownDifference, Observed, ReportEnvelope, ShrinkSession, Stats, SuiteReport, check_baseline, classify, compare, evaluate, generate,
-    per_op_ms, render, render_json, shrink_next, shrink_report, shrink_start, summarize,
+    Baseline, BaselineIdentity, BenchProblem, BenchRow, CompareMode, Comparison, DifferenceObservation, Digest, FuzzInput,
+    FuzzPlan, GatePolicy, Grammar, KnownDifference, Observed, ReportEnvelope, ShrinkSession, Stats, SuiteReport,
+    chart::{BenchMetric, bench_chart_svg},
+    check_baseline, classify, compare, evaluate, generate, per_op_ms, render, render_json, shrink_next, shrink_report,
+    shrink_start, summarize,
 };
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
@@ -97,7 +98,13 @@ pub struct BenchStatsJson {
 
 impl From<Stats> for BenchStatsJson {
     fn from(stats: Stats) -> Self {
-        Self { median_ms: stats.median_ms, p95_ms: stats.p95_ms, min_ms: stats.min_ms, max_ms: stats.max_ms, rounds: stats.rounds }
+        Self {
+            median_ms: stats.median_ms,
+            p95_ms: stats.p95_ms,
+            min_ms: stats.min_ms,
+            max_ms: stats.max_ms,
+            rounds: stats.rounds,
+        }
     }
 }
 
@@ -111,7 +118,13 @@ pub fn harnessBenchSummary(samples_ms: Vec<f64>) -> napi::Result<BenchStatsJson>
 #[napi]
 pub fn harnessBenchPerOp(stats: BenchStatsJson, ops: u32) -> napi::Result<f64> {
     per_op_ms(
-        &Stats { median_ms: stats.median_ms, p95_ms: stats.p95_ms, min_ms: stats.min_ms, max_ms: stats.max_ms, rounds: stats.rounds },
+        &Stats {
+            median_ms: stats.median_ms,
+            p95_ms: stats.p95_ms,
+            min_ms: stats.min_ms,
+            max_ms: stats.max_ms,
+            rounds: stats.rounds,
+        },
         u64::from(ops),
     )
     .map_err(bench_error)

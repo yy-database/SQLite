@@ -65,12 +65,22 @@ pub(crate) unsafe fn set_property(
     napi::check_status!(unsafe { sys::napi_set_property(env, object, key, value) })
 }
 
-pub(crate) unsafe fn set_element(env: sys::napi_env, array: sys::napi_value, index: usize, value: sys::napi_value) -> napi::Result<()> {
+pub(crate) unsafe fn set_element(
+    env: sys::napi_env,
+    array: sys::napi_value,
+    index: usize,
+    value: sys::napi_value,
+) -> napi::Result<()> {
     napi::check_status!(unsafe { sys::napi_set_element(env, array, index as u32, value) })
 }
 
 /// 把一个解码值写进数组：整数用 bigint、实数用 number、文本用 string、blob 用 Buffer、NULL 用 null。
-pub(crate) unsafe fn set_value(env: sys::napi_env, array: sys::napi_value, index: usize, value: RecordValue<'_>) -> napi::Result<()> {
+pub(crate) unsafe fn set_value(
+    env: sys::napi_env,
+    array: sys::napi_value,
+    index: usize,
+    value: RecordValue<'_>,
+) -> napi::Result<()> {
     unsafe {
         let js = match value {
             RecordValue::Null => create_null(env)?,
@@ -84,7 +94,12 @@ pub(crate) unsafe fn set_value(env: sys::napi_env, array: sys::napi_value, index
 }
 
 /// 把一个执行结果单元格写进数组，映射与 [`set_value`] 同一套合同。
-pub(crate) unsafe fn set_cell(env: sys::napi_env, array: sys::napi_value, index: usize, cell: &sqlite::Cell) -> napi::Result<()> {
+pub(crate) unsafe fn set_cell(
+    env: sys::napi_env,
+    array: sys::napi_value,
+    index: usize,
+    cell: &sqlite::Cell,
+) -> napi::Result<()> {
     let js = unsafe {
         match cell {
             sqlite::Cell::Null => create_null(env)?,
@@ -119,7 +134,9 @@ impl FromNapiValue for SqlParam {
                     return Err(napi::Error::from_reason("sqlite parameter must not be undefined; SQL NULL is explicit"));
                 }
                 ValueType::Boolean => {
-                    return Err(napi::Error::from_reason("sqlite parameter boolean is not bindable; convert to 1 or 0 explicitly"));
+                    return Err(napi::Error::from_reason(
+                        "sqlite parameter boolean is not bindable; convert to 1 or 0 explicitly",
+                    ));
                 }
                 ValueType::Number => sqlite::Cell::Real(f64::from_napi_value(env, value)?),
                 ValueType::String => sqlite::Cell::Text(String::from_napi_value(env, value)?),

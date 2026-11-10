@@ -6,9 +6,11 @@
 use napi_derive::napi;
 use sqlite::{Prepared, SqlError};
 
-use crate::connection::SharedHandle;
-use crate::error::sql_error;
-use crate::values::{SqlParam, TypedRunResult};
+use crate::{
+    connection::SharedHandle,
+    error::sql_error,
+    values::{SqlParam, TypedRunResult},
+};
 
 /// 一个权威参数槽位：零基索引与书写原文。
 #[napi(object)]
