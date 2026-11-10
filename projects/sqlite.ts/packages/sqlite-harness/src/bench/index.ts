@@ -5,16 +5,18 @@
 // comparison row instead of a misleading side-by-side.
 
 import { createRequire } from "node:module";
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createWriter, openDatabase } from "../../../sqlite/src/index.ts";
-import { emit, envInt, harnessAddon, repoPath, renderTable, type BenchStats, type CliOptions } from "../cli/util.ts";
+import { emit, envInt, repoPath, renderTable, type CliOptions } from "../cli/util.ts";
+import { benchSummary, type BenchRow, type BenchStats } from "../native/binding.ts";
+import { writeBenchCharts } from "../report/index.ts";
 
 // median/p95 与分组柱图走上游 `database.harness` 的标准判定面（与产品共用 `.node`，
-// nearest-rank 公式已在 Rust 侧 golden vector 钉死），写到本包的 `reports/`（git 忽略）。
-const benchAddon = harnessAddon();
+// nearest-rank 公式已在 Rust 侧 golden vector 钉死），经 `native/binding.ts` 的
+// 结构化入口取用，写到本包的 `reports/`（git 忽略）。
 
 const require = createRequire(repoPath("projects", "sqlite.ts", "packages", "sqlite", "package.json"));
 const BetterSqlite = require("better-sqlite3") as new (
@@ -199,7 +201,7 @@ export function commandBench(options: CliOptions): number {
   }
 
   const ok = pairs.every((pair) => pair.ours.length > 0 && pair.oracle.length > 0);
-  const summaryOf = (samples: number[]): BenchStats => benchAddon.harnessBenchSummary(samples);
+  const summaryOf = (samples: number[]): BenchStats => benchSummary(samples);
   const workloads = pairs.map((pair) => ({
     workload: pair.workload,
     unit: pair.unit,
@@ -227,26 +229,19 @@ export function commandBench(options: CliOptions): number {
   };
 
   // 分组柱图：x=workload，颜色=引擎，median 与 p95 各一张，写进本包
-  // `reports/`。`rows_json` 用核心 `BenchRow` 的 serde 形态（snake_case 键）。
-  const benchRows = workloads.map((entry) => ({
+  // `reports/`。snake_case 线协议转换收在 `native/binding.ts`，这里只给结构化行。
+  const chartRows: BenchRow[] = workloads.map((entry) => ({
     workload: entry.workload,
     unit: entry.unit,
-    ours: { median_ms: entry.ours.medianMs, p95_ms: entry.ours.p95Ms, min_ms: entry.ours.minMs, max_ms: entry.ours.maxMs, rounds: entry.ours.rounds },
-    reference: { median_ms: entry.oracle.medianMs, p95_ms: entry.oracle.p95Ms, min_ms: entry.oracle.minMs, max_ms: entry.oracle.maxMs, rounds: entry.oracle.rounds },
-    reference_engine: "better-sqlite3",
+    ours: entry.ours,
+    reference: entry.oracle,
+    referenceEngine: "better-sqlite3",
   }));
-  const reportsDir = repoPath("projects", "sqlite.ts", "packages", "sqlite-harness", "reports");
-  mkdirSync(reportsDir, { recursive: true });
-  writeFileSync(
-    join(reportsDir, "bench-median.svg"),
-    benchAddon.harnessRenderBenchChart(JSON.stringify(benchRows), "median", `SQLite bench median (${ROWS} rows, ${ROUNDS} rounds)`),
-    "utf8",
-  );
-  writeFileSync(
-    join(reportsDir, "bench-p95.svg"),
-    benchAddon.harnessRenderBenchChart(JSON.stringify(benchRows), "p95", `SQLite bench p95 (${ROWS} rows, ${ROUNDS} rounds)`),
-    "utf8",
-  );
+  writeBenchCharts(chartRows, {
+    dir: repoPath("projects", "sqlite.ts", "packages", "sqlite-harness", "reports"),
+    medianTitle: `SQLite bench median (${ROWS} rows, ${ROUNDS} rounds)`,
+    p95Title: `SQLite bench p95 (${ROWS} rows, ${ROUNDS} rounds)`,
+  });
   const text = () => {
     const rows = payload.workloads.map((entry) => [
       entry.workload,

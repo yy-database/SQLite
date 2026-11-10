@@ -1,7 +1,8 @@
 // Single dispatch point for the toolbox. Each subcommand is imported lazily so
 // an unbuilt native module only breaks the commands that need it.
 
-import { nativeModulePath, parseOptions } from "./util.ts";
+import { nativeModulePath } from "../native/binding.ts";
+import { parseOptions } from "./util.ts";
 
 const USAGE = `sqlite-harness
 

@@ -12,7 +12,7 @@
 // exact same sequence can be replayed byte-for-byte later.
 //
 // Findings flow through the same known-difference ledger as the corpus:
-// `harnessCheckBaseline` judges them against `corpus/fuzz-baseline.json`.
+// `checkBaseline` judges them against `corpus/fuzz-baseline.json`.
 // `--check` gates, `--update-baseline` records.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -20,15 +20,31 @@ import { fileURLToPath } from "node:url";
 
 import { createEngine, type ExecValue } from "../../../sqlite/src/index.ts";
 import { openEngine, type Cell, type Engine, type StepOutcome } from "../conformance/oracle.ts";
-import { harnessAddon as loadHarnessAddon, renderTable } from "../cli/util.ts";
+import { renderTable } from "../cli/util.ts";
+import {
+  checkBaseline,
+  digest,
+  fuzzEnvelopeText,
+  fuzzGenerate,
+  fuzzRender,
+  fuzzShrinkNext,
+  fuzzShrinkReport,
+  fuzzShrinkStart,
+  type Baseline,
+  type BaselineIdentity,
+  type BaselineVerdict,
+  type DifferenceObservation,
+  type FuzzInput,
+  type Grammar,
+} from "../native/binding.ts";
 
 // fuzz 生成/重放/收缩与 baseline 判定走上游 `database.harness` 标准面（与产品共用
-// `.node`），不在本地重写随机、收缩或台账判定。
-const harnessAddon = loadHarnessAddon();
+// `.node`），经 `native/binding.ts` 的结构化入口取用，线协议序列化收在接合层，
+// 不在本地重写随机、收缩或台账判定。
 
 // Product-side grammar data. Rule alternatives follow the harness convention
 // "simplest first": the shrink state machine prefers lower indices.
-const GRAMMAR = {
+const GRAMMAR: Grammar = {
   version: 1,
   start: "stmt",
   rules: [
@@ -136,7 +152,7 @@ interface BaselineFile {
 
 interface Finding {
   readonly key: string;
-  readonly envelope: string;
+  readonly envelope: FuzzInput;
   readonly repro: readonly string[];
   readonly signal: readonly string[];
 }
@@ -247,43 +263,38 @@ function loadBaseline(): BaselineFile | undefined {
   return JSON.parse(readFileSync(BASELINE_PATH, "utf8")) as BaselineFile;
 }
 
-function baselineJson(file: BaselineFile): string {
-  return JSON.stringify({
+function ledgerBaseline(file: BaselineFile): Baseline {
+  return {
     identity: {
       spec: { version: file.version, seed: file.seed, count: file.count },
       digest: file.digest,
     },
     entries: file.entries.map((entry) => ({ key: entry.key, signal: [...entry.signal], reason: entry.reason })),
-  });
+  };
 }
 
-interface LedgerVerdict {
-  readonly matched: number;
-  readonly problems: readonly { readonly kind: string; readonly key?: string }[];
-}
-
-function runLedger(baseline: BaselineFile, current: { spec: unknown; digest: string }, findings: readonly Finding[]): LedgerVerdict {
-  const observed = findings.map((finding) => ({ key: finding.key, signal: [...finding.signal], reason: "fuzz-mismatch" }));
-  return JSON.parse(
-    harnessAddon.harnessCheckBaseline(baselineJson(baseline), JSON.stringify(current), JSON.stringify(observed)),
-  ) as LedgerVerdict;
+function runLedger(baseline: BaselineFile, current: BaselineIdentity, findings: readonly Finding[]): BaselineVerdict {
+  const observed: DifferenceObservation[] = findings.map((finding) => ({
+    key: finding.key,
+    signal: [...finding.signal],
+    reason: "fuzz-mismatch",
+  }));
+  return checkBaseline(ledgerBaseline(baseline), current, observed);
 }
 
 export async function commandFuzz(options: FuzzOptions): Promise<number> {
-  const grammarJson = JSON.stringify(GRAMMAR);
-  const cases: string[] = [];
+  const cases: FuzzInput[] = [];
   for (let index = 0; index < options.count; index += 1) {
-    const plan = JSON.stringify({ seed: options.seed + index, depth: options.depth, count: options.stmts });
-    cases.push(harnessAddon.harnessFuzzGenerate(grammarJson, plan));
+    cases.push(fuzzGenerate(GRAMMAR, { seed: options.seed + index, depth: options.depth, count: options.stmts }));
   }
-  const corpusDigest = harnessAddon.harnessDigest(Buffer.from(cases.join("\n")));
+  const corpusDigest = digest(Buffer.from(cases.map((input) => fuzzEnvelopeText(input)).join("\n")));
 
   const better = await openEngine("better-sqlite3");
   const python = await openEngine("python");
   let discarded = 0;
   const findings: Finding[] = [];
-  for (const envelope of cases) {
-    const statements = JSON.parse(harnessAddon.harnessFuzzRender(grammarJson, envelope)) as string[];
+  for (const input of cases) {
+    const statements = fuzzRender(GRAMMAR, input);
     const verdict = await classify(better, python, statements);
     if (verdict.status === "disagreement") {
       discarded += 1;
@@ -291,31 +302,28 @@ export async function commandFuzz(options: FuzzOptions): Promise<number> {
     }
     if (verdict.status !== "finding") continue;
 
-    let session = JSON.parse(harnessAddon.harnessFuzzShrinkStart(grammarJson, envelope)) as Record<string, unknown>;
+    let session = fuzzShrinkStart(GRAMMAR, input);
     for (let step = 0; step < options.maxShrink; step += 1) {
-      const probe = JSON.parse(harnessAddon.harnessFuzzShrinkNext(grammarJson, JSON.stringify(session))) as {
-        session: Record<string, unknown>;
-        candidate: [Record<string, unknown>, string[]] | null;
-      };
+      const probe = fuzzShrinkNext(GRAMMAR, session);
       session = probe.session;
       if (!probe.candidate) break;
       const failing = (await classify(better, python, probe.candidate[1])).status === "finding";
-      session = JSON.parse(harnessAddon.harnessFuzzShrinkReport(JSON.stringify(session), failing)) as Record<string, unknown>;
+      session = fuzzShrinkReport(session, failing);
     }
-    const base = JSON.stringify(session.base);
-    const repro = JSON.parse(harnessAddon.harnessFuzzRender(grammarJson, base)) as string[];
+    const base = session.base;
+    const repro = fuzzRender(GRAMMAR, base);
     const shrunk = await classify(better, python, repro);
     findings.push({
-      key: harnessAddon.harnessDigest(Buffer.from(base)),
+      key: digest(Buffer.from(fuzzEnvelopeText(base))),
       envelope: base,
       repro,
       signal: [`step-${shrunk.status === "finding" ? shrunk.index : 0}`, "oracle-vs-ours"],
     });
   }
 
-  const current = { spec: { version: 1, seed: options.seed, count: options.count }, digest: corpusDigest };
+  const current: BaselineIdentity = { spec: { version: 1, seed: options.seed, count: options.count }, digest: corpusDigest };
   const baseline = loadBaseline();
-  let ledger: LedgerVerdict | undefined;
+  let ledger: BaselineVerdict | undefined;
   if (options.updateBaseline) {
     const file: BaselineFile = {
       version: 1,
@@ -340,7 +348,7 @@ export async function commandFuzz(options: FuzzOptions): Promise<number> {
       stmts: options.stmts,
       digest: corpusDigest,
       discarded,
-      findings: findings.map((finding) => ({ key: finding.key, repro: finding.repro, envelope: JSON.parse(finding.envelope) })),
+      findings: findings.map((finding) => ({ key: finding.key, repro: finding.repro, envelope: finding.envelope })),
       ledger: ledger ?? null,
     }, null, 2)}\n`);
   }
@@ -349,12 +357,13 @@ export async function commandFuzz(options: FuzzOptions): Promise<number> {
     process.stdout.write(`${options.count} cases: ${discarded} discarded (oracle-disagreement) / ${findings.length} findings\n`);
     for (const finding of findings) {
       process.stdout.write(`\nfinding ${finding.key.slice(0, 12)}\n${renderTable(["repro statements"], finding.repro.map((line) => [line]))}\n`);
-      process.stdout.write(`repro envelope: ${finding.envelope}\n`);
+      process.stdout.write(`repro envelope: ${fuzzEnvelopeText(finding.envelope)}\n`);
     }
     if (ledger) {
       process.stdout.write(`\nledger: ${ledger.matched} matched / ${problems.length} problems\n`);
       for (const problem of problems) {
-        process.stdout.write(`  ${problem.kind}${problem.key ? ` ${problem.key.slice(0, 12)}` : ""}\n`);
+        const key = "key" in problem ? problem.key : undefined;
+        process.stdout.write(`  ${problem.kind}${key ? ` ${key.slice(0, 12)}` : ""}\n`);
       }
     }
     else {

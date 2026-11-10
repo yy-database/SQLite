@@ -19,7 +19,8 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import { emit, execFile, harnessAddon, nativeModulePath, platformKey, repoPath, type CliOptions, type CommandResult } from "../cli/util.ts";
+import { emit, execFile, repoPath, type CliOptions, type CommandResult } from "../cli/util.ts";
+import { evaluateGate, nativeModulePath, platformKey, type GatePolicy, type SuiteReport } from "../native/binding.ts";
 import { platformStages } from "../../stages/stages.mjs";
 import { stagesDir } from "../../stages/paths.mjs";
 
@@ -263,24 +264,19 @@ function tsFiles(): { external: string[]; storage: string[]; sql: string[] } {
   };
 }
 
-// floor 判定走上游 `database.harness` 门禁：把解析出的计数交给 `harnessEvaluateGate`，
+// floor 判定走上游 `database.harness` 门禁：把解析出的计数交给 `evaluateGate`，
 // `ok` 由上游失败关闭规则给出（failed/skipped/floor-unmet 各记问题，任一即红），
 // 不在本地重写判定算法。空文件层 cases=0 时，`ok` 等价于 `floor === 0`。
 function gateOk(name: string, cases: number, passed: number, failed: number, skipped: number, floor: number): boolean {
-  const input = JSON.stringify({
-    suites: [
-      {
-        name,
-        tally: { cases, assertions: 0, attempts: cases, passed, failed, skipped, unverified: 0, unavailable: 0, timed_out: 0, cancelled: 0, crashed: 0, not_run: 0 },
-        floors: [{ metric: "cases", min: floor }],
-        oracle: { required: false, available: false, provenance: null },
-        baseline: "none",
-      },
-    ],
-    policy: { allow_partial: false, allow_skipped: false, required_suites: [] },
-  });
-  const verdict = JSON.parse(harnessAddon().harnessEvaluateGate(input)) as { ok: boolean };
-  return verdict.ok;
+  const suite: SuiteReport = {
+    name,
+    tally: { cases, assertions: 0, attempts: cases, passed, failed, skipped, unverified: 0, unavailable: 0, timed_out: 0, cancelled: 0, crashed: 0, not_run: 0 },
+    floors: [{ metric: "cases", min: floor }],
+    oracle: { required: false, available: false, provenance: null },
+    baseline: "none",
+  };
+  const policy: GatePolicy = { allow_partial: false, allow_skipped: false, required_suites: [] };
+  return evaluateGate({ suites: [suite], policy }).ok;
 }
 
 function runTsLayer(layer: LayerName, files: string[]): Suite {

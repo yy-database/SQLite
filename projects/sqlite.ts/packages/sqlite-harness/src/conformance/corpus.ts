@@ -31,27 +31,21 @@ import { fileURLToPath } from "node:url";
 
 import { createEngine, type ExecValue } from "../../../sqlite/src/index.ts";
 import { openEngine, type Cell, type Engine, type StepOutcome } from "./oracle.ts";
-import { emit, harnessAddon as loadHarnessAddon, renderTable, type CliOptions } from "../cli/util.ts";
+import { emit, renderTable, type CliOptions } from "../cli/util.ts";
+import {
+  checkBaseline as harnessCheckBaseline,
+  digestJson,
+  type Baseline,
+  type BaselineIdentity,
+  type BaselineVerdict,
+  type DifferenceObservation,
+} from "../native/binding.ts";
 
 // digest 与 baseline 判定走上游 `database.harness` 标准面（与产品共用 `.node`），
+// 经 `native/binding.ts` 的结构化入口取用，线协议序列化收在接合层，
 // 不在本地重写摘要或台账判定。
-const harnessAddon = loadHarnessAddon();
 
-interface HarnessProblem {
-  readonly kind: string;
-  readonly key?: string;
-  readonly signal?: readonly string[];
-  readonly reason?: string;
-  readonly baseline?: unknown;
-  readonly current?: unknown;
-}
-
-interface HarnessVerdict {
-  readonly matched: number;
-  readonly problems: readonly HarnessProblem[];
-}
-
-function harnessBaseline(baseline: BaselineFile): Record<string, unknown> {
+function harnessBaseline(baseline: BaselineFile): Baseline {
   return {
     identity: {
       spec: { version: baseline.version, seed: baseline.seed, count: baseline.count },
@@ -65,19 +59,17 @@ function harnessBaseline(baseline: BaselineFile): Record<string, unknown> {
   };
 }
 
-function harnessCurrent(baseline: BaselineFile, seed: number, count: number, digest: string): Record<string, unknown> {
+function harnessCurrent(baseline: BaselineFile, seed: number, count: number, digest: string): BaselineIdentity {
   return { spec: { version: baseline.version, seed, count }, digest };
 }
 
-function runLedger(baseline: BaselineFile, current: Record<string, unknown>, observed: readonly ObservedDifference[]): HarnessVerdict {
-  const request = observed.map((diff) => ({
+function runLedger(baseline: BaselineFile, current: BaselineIdentity, observed: readonly ObservedDifference[]): BaselineVerdict {
+  const request: DifferenceObservation[] = observed.map((diff) => ({
     key: entryKey(diff.entry),
     signal: [...diff.entry.signal],
     reason: diff.entry.reason,
   }));
-  return JSON.parse(
-    harnessAddon.harnessCheckBaseline(JSON.stringify(harnessBaseline(baseline)), JSON.stringify(current), JSON.stringify(request)),
-  ) as HarnessVerdict;
+  return harnessCheckBaseline(harnessBaseline(baseline), current, request);
 }
 
 type Cluster = "ddl" | "dml" | "expression" | "aggregate" | "window" | "transaction";
@@ -786,7 +778,7 @@ export function checkBaseline(baseline: BaselineFile, observed: ObservedDifferen
   const problems: string[] = [];
   for (const problem of verdict.problems) {
     if (problem.kind === "unlisted") {
-      const diff = byKey.get(problem.key ?? "");
+      const diff = byKey.get(problem.key);
       if (!diff) throw new Error(`harness reported an unlisted difference for unknown key ${problem.key}`);
       problems.push(
         [
@@ -797,20 +789,20 @@ export function checkBaseline(baseline: BaselineFile, observed: ObservedDifferen
       );
     }
     else if (problem.kind === "signal-changed") {
-      const diff = byKey.get(problem.key ?? "");
+      const diff = byKey.get(problem.key);
       if (!diff) throw new Error(`harness reported a changed signal for unknown key ${problem.key}`);
       problems.push(
         [
           `known difference changed shape: #${diff.id} [${diff.cluster}] ${diff.sql}`,
           ...describeOutput(diff).slice(1),
-          `  baseline signal: ${(problem.baseline as readonly string[]).join(" | ")}`,
-          `  current signal:  ${(problem.current as readonly string[]).join(" | ")}`,
+          `  baseline signal: ${problem.baseline.join(" | ")}`,
+          `  current signal:  ${problem.current.join(" | ")}`,
           `  coordinates: ${diff.entry.coordinates}`,
         ].join("\n"),
       );
     }
     else if (problem.kind === "stale") {
-      const entry = entriesByKey.get(problem.key ?? "");
+      const entry = entriesByKey.get(problem.key);
       if (!entry) throw new Error(`harness reported a stale baseline entry for unknown key ${problem.key}`);
       problems.push(
         [
@@ -885,9 +877,7 @@ export function parseCorpusOptions(argv: string[]): CorpusOptions {
 
 export async function commandCorpus(options: CorpusOptions): Promise<number> {
   const cases = generate(options.seed, options.count);
-  const digest = harnessAddon.harnessDigest(
-    Buffer.from(JSON.stringify(cases.map((item) => [item.cluster, item.sql, item.check ?? null]))),
-  );
+  const digest = digestJson(cases.map((item) => [item.cluster, item.sql, item.check ?? null]));
 
   // The digest is checked before any engine starts. A silently edited corpus
   // fails here instead of quietly relaxing the gate.
