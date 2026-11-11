@@ -85,7 +85,7 @@ db.backup("app.backup.sqlite");
 | `foreignKeys`              | `true`       | Applied via `PRAGMA foreign_keys` on open                    |
 | `pageSize`                 | `4096`       | Page size for **new** databases                              |
 | `synchronous`              | `true`       | `false` skips durable flush on commit                        |
-| `journalMode`              | `"preserve"` | Only `"preserve"` is supported; `"wal"` / `"delete"` throw   |
+| `journalMode`              | `"preserve"` | `"preserve"` / `"delete"` / `"truncate"`; `"wal"` throws `unsupported` |
 | `busyTimeoutMs`            | `0`          | Milliseconds to retry the cross-process write lock (`busy`)  |
 | `limits`                   | —            | Unsupported — passing it throws `unsupported`                |
 
@@ -230,7 +230,9 @@ try {
   UPSERT, joins, subqueries, recursive CTEs, set operators, aggregates, window functions, JSON, date/time and math
   functions, transactions and savepoints, `ATTACH` / `DETACH`, `PRAGMA` and `VACUUM` / `VACUUM INTO`. Statements outside
   that surface reject with a structured `SQLiteError` instead of being approximated.
-- **Journal / locking:** only `journalMode: "preserve"`; no WAL write surface. File writers using this package serialize
+- **Journal / locking:** `journalMode` supports `"preserve"`, `"delete"` and `"truncate"`; there is still no WAL write
+  surface. `"delete"` removes `<db>-journal` after a commit and `"truncate"` leaves it at zero bytes; both write the
+  rollback journal before publishing, so a reopen can restore the previous image. File writers using this package serialize
   on a cross-process lock with `busyTimeoutMs` retry. That lock is not SQLite's byte-range/journal lock and is invisible
   to external engines, so it does not make concurrent external SQLite writes safe.
 - **UDF / aggregate / window registration:** `function()` / `aggregate()` / `window()` always throw `unsupported`.

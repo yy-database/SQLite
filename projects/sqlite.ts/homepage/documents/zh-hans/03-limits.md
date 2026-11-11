@@ -11,7 +11,7 @@
 ## Node-API 与 PyO3
 
 - 文件 I/O、快照导出与 SQL 执行都在同一套 Rust 引擎上；SQL 语义只有一份实现。
-- 写入侧不产生 `-wal` 或 `-journal` 文件；读取侧可以回放既有文件。
+- 写入侧不产生 `-wal`；`journalMode` 为 `preserve` 时不写 sidecar，`delete` 在提交后删除 `<db>-journal`，`truncate` 在提交后保留 0 字节 sidecar。读取侧可以回放既有 `-wal` 或热 journal。
 - 写入文本为 UTF-8；读取支持 UTF-8、UTF-16LE、UTF-16BE。
 - 页面大小必须是 512 到 65536 之间的 2 的幂。
 - `save` 会生成索引树并递增 change counter；直接取 `pages` 得到的镜像不包含尚未保存的索引数据。
@@ -25,7 +25,7 @@
 ## 共同限制
 
 - 不提供宿主 UDF / 聚合 / 窗口注册；SQL 里写的窗口函数不受影响。
-- journal 仅 `preserve` 模式；`wal` / `delete` 在选项校验时抛 `unsupported`，仍无 WAL 写入面。文件写连接支持 `busyTimeoutMs` 的跨进程写锁重试，但该锁只在上面“跨进程并发”的范围内有效。
+- `journalMode` 支持 `preserve` / `delete` / `truncate`；`wal` 与未知值在选项校验时分别抛 `unsupported` / `option-invalid`，仍无 WAL 写入面。文件写连接支持 `busyTimeoutMs` 的跨进程写锁重试，但该锁只在上面“跨进程并发”的范围内有效。
 - 查询结果整体物化，不是流式游标；`iterate()` 只是对已物化结果的 Iterator 协议，峰值内存随结果行数增长。需要流式消费时应在 SQL 侧分页。
 - 同步 API：事务回调不能是异步函数。
 - 不属于本项目的范围：上游 SQLite C 引擎、YYDB 存储、文件系统事务管理。
