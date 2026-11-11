@@ -1,110 +1,132 @@
 # SQLite
 
-Distribution shell for the SQLite format-3 product (snapshot import / export).
+An embedded **SQLite format-3** engine: ordinary `.sqlite` files you can open in stock SQLite, plus a fail-closed SQL subset on Node, Python, and WebAssembly.
 
-Rust codecs live in the aggregated [`database.rs`](https://github.com/oovm/database.rs) workspace
-(`sqlite-formats`, `sqlite-storage`, `sqlite`). This repo owns FFI, packaging, and branding — same
-shape as `yydb` / `yyds` / `iris-orm`.
+[![Check Rust](https://github.com/yy-database/SQLite/actions/workflows/check-rust.yml/badge.svg?branch=dev)](https://github.com/yy-database/SQLite/actions/workflows/check-rust.yml)
+[![Check TypeScript](https://github.com/yy-database/SQLite/actions/workflows/check-typescript.yml/badge.svg?branch=dev)](https://github.com/yy-database/SQLite/actions/workflows/check-typescript.yml)
+[![npm](https://img.shields.io/npm/v/@yydb/sqlite?label=%40yydb%2Fsqlite)](https://www.npmjs.com/package/@yydb/sqlite)
+[![License](https://img.shields.io/badge/license-MPL--2.0-blue)](./License.md)
 
-A fail-closed SQL subset (`CREATE TABLE`, `INSERT`, `SELECT` with optional `WHERE`, `ORDER BY` and
-`LIMIT`) runs over this repository's own format-3 writer in the `sqlite` facade
-(`projects/facades/sqlite/src/sql` in the aggregated `database.rs` workspace) and is
-exposed by the Node-API, PyO3 and WebAssembly bindings. `WHERE` accepts plain predicates (comparisons,
-`AND` / `OR` / `NOT`, `IS [NOT] NULL`, column references and literals). Richer SQL (joins, `GROUP BY`,
-aggregates beyond `count(*)`, subqueries) is rejected with a structured error and is **not** here.
+[`@yydb/sqlite`](https://www.npmjs.com/package/@yydb/sqlite) · [User guides (Chinese)](./projects/sqlite.ts/homepage/documents/zh-hans/index.md) · [Examples](./projects/sqlite.ts/examples) · [Maintainer docs](./documentation/README.md)
 
-## Layout
+## 💡 What is SQLite?
 
-| Path | Role |
-|------|------|
-| `projects/sqlite.rs/` | Rust FFI workspace (`sqlite-napi` produces `sqlite.node`, shared SQL core comes from the `sqlite` facade) |
-| `projects/sqlite.ts/` | TypeScript packages, platform packages, homepage and acceptance suite |
-| `projects/sqlite.ts/packages/sqlite/` | TypeScript binding over `sqlite.node` |
-| `projects/sqlite.ts/packages/sqlite-harness/` | Self-improvement toolbox: `test`, `bench`, `conformance`, `fixtures`, `oracle` |
-| `projects/sqlite.ts/packages/sqlite-fixtures/` | Binary fixtures written by external engines |
-| `projects/sqlite.ts/platforms/` | Node platform packages plus the WebAssembly package |
-| `projects/sqlite.ts/homepage/` | Capability and binding documents |
-| `projects/sqlite.py/packages/sqlite/` | PyO3 packaging metadata plus the Python acceptance suite for the `sqlite-format3` wheel |
+This repository ships a **format-3 compatible** embedded database. Files written here are real SQLite main-database images: `better-sqlite3`, Node’s `node:sqlite`, CPython `sqlite3`, and the upstream CLI can open them. Images those engines write can be read back here.
 
-```shell
-cargo check --manifest-path projects/sqlite.rs/Cargo.toml --workspace
+It is **not** a drop-in replacement for the full SQLite C engine. SQL is a **fail-closed subset** (`CREATE TABLE`, `INSERT`, `SELECT` with plain `WHERE` / `ORDER BY` / `LIMIT`). Joins, rich aggregates, subqueries, and other unsupported forms are rejected with a structured error — they are never silently approximated. Journal mode is limited; there is no WAL writer story and no UDF surface.
+
+For a local schema-in-file store that is not SQLite format-3, see [YYDB](https://github.com/yy-database/yydb). For server-shaped Redis / PostgreSQL / MongoDB / MySQL compatibility lines, see the sibling `yy-database` repositories.
+
+## 🚀 Getting started
+
+### 1. Agent / prompt (recommended)
+
+Paste into your coding agent:
+
+```text
+Install @yydb/sqlite (Node 18+). Open or create a format-3 file with `new SQLite({ filename })`.
+Create an `account` table, insert one row with bigint ids, select it back, then close.
+Prefer the `SQLite` class API. Treat unsupported SQL as a hard error, not something to work around.
+Do not import `@yydb/sqlite-*` platform packages directly.
 ```
 
-Toolchain: `projects/sqlite.rs/rust-toolchain.toml` (`nightly`).
+Package API depth: [`@yydb/sqlite` README](./projects/sqlite.ts/packages/sqlite/readme.md). Binding choice and limits: [homepage docs](./projects/sqlite.ts/homepage/documents/zh-hans/index.md).
 
-Core crates come from `database.rs` via git `rev` in `Cargo.toml`. Local absolute path overrides go
-in `projects/sqlite.rs/.cargo/config.toml` (see `config.example.toml`).
+### 2. Manual install
 
-## Test entry points
+| You are using | Start with |
+|---------------|------------|
+| Node.js / TypeScript | [`@yydb/sqlite`](https://www.npmjs.com/package/@yydb/sqlite) |
+| Browser / WASM | [`@yydb/sqlite-unknown-wasm32`](https://www.npmjs.com/package/@yydb/sqlite-unknown-wasm32) |
+| Python | `sqlite-format3` wheel (maturin over the PyO3 binding) |
 
-```shell
-# build `sqlite.node`, run both suites and all three platform smokes
-node projects/sqlite.ts/packages/sqlite-harness/bin/cli.mjs test
+**Node.js**
 
-# one suite at a time
-cd projects/sqlite.ts/packages/sqlite && node --experimental-strip-types --test "tests/**/*.test.ts"
-cd projects/sqlite.py/packages/sqlite && python -m unittest discover -v -s tests -t tests
-
-# Rust keeps a single smoke: it compiles, opens a database and round-trips one row
-cargo test --release --workspace
+```bash
+pnpm add @yydb/sqlite
 ```
 
-`node scripts/check-test-floor.mjs` delegates to `projects/sqlite.ts/packages/sqlite-harness`, so CI and local runs share one
-implementation. Coverage is reported as three independent layers, never as one aggregate:
+```ts
+import {SQLite} from "@yydb/sqlite";
 
-| Layer | What it counts | Current floor |
-|-------|----------------|---------------|
-| `external` | Cross-engine conformance judged by `better-sqlite3`, `node:sqlite`, `sql.js` and the CPython `sqlite3` module. Reported but not repository coverage | 283 TS + 265 PY |
-| `storage` | This repository's writer / reader / snapshot primitives, platform packages and the installed wheel | 62 TS + 35 PY + 31 stage assertions |
-| `sql` | SQL text executed by this repository's own engine | 8 TS + 0 PY + 56 stage assertions |
-
-The Python SQL acceptance runs against the installed wheel inside `platforms/python`, so it is
-reported by the stage rather than counted again as a Python suite case.
-
-The floors are overridable through `TS_EXTERNAL_FLOOR`, `TS_STORAGE_FLOOR`, `TS_SQL_FLOOR`,
-`PY_EXTERNAL_FLOOR`, `PY_STORAGE_FLOOR` and `PY_SQL_FLOOR`. The harness fails when a suite reports
-a failure, executes fewer cases than its layer floor, or skips a case. Platform stages report
-assertion counts and keep the written row count in a separate `rows` (data volume) field, with a
-separate SQL assertion floor per stage. It also reads the suite sources and fails if they stop
-calling a real external engine (`better-sqlite3`, Python `sqlite3`, `PRAGMA integrity_check`).
-There is no JSON metadata and no allowlist.
-
-### `projects/sqlite.ts/packages/sqlite/tests`
-
-Suites are grouped by the harness layers (`external`, `storage`, `sql`).
-
-| File | Cases | Coverage |
-|------|-------|----------|
-| `external/sql-semantics.test.ts` | 283 | `external/corpus/sql-*.json` judged by three external builds at once (`better-sqlite3`, `node:sqlite`, `sql.js`) |
-| `storage/format3.test.ts` | 13 | header, splits, dividers, overflow, serial types, affinity, rowid alias, schema, indexes, update/delete/rollback, WITHOUT ROWID read, UTF-16 read, views/STRICT/virtual tables |
-| `storage/scenarios.test.ts` | 15 | end-to-end scenarios against `better-sqlite3` and Python `sqlite3` |
-| `storage/boundary.test.ts` | 6 | snapshot byte/limit boundaries, truncation, missing names, virtual tables, view depth, `decodeRecord` |
-| `storage/edge-cases.test.ts` | 4 | 65536 page size, composite PRIMARY KEY WITHOUT ROWID, exact page counts, catalog root pages |
-| `storage/differential.test.ts` | 3 | seeded insert/update/delete streams replayed against `better-sqlite3` and Python `sqlite3`, index scan parity |
-| `storage/corpus.test.ts` | 2 | externally written corpus (all storage classes, index/view/STRICT), UTF-16LE and UTF-16BE |
-| `storage/stress-matrix.test.ts` | 7 | 10k-row sequential/shuffled/bulk/hollow/overflow/index-churn loads, Python oracle |
-| `storage/wal-journal.test.ts` | 2 | committed WAL frames and hot rollback journal semantics |
-| `storage/node-sqlite.test.ts` | 5 | round-trips against Node's built-in `node:sqlite` |
-| `storage/sqlite-api.test.ts` | 18 | `SQLite` class contract: types, binding, cursors, transactions, read-only, options honesty |
-| `sql/sql-engine.test.ts` | 8 | this repository's SQL engine: statement envelopes, batches, structured rejections, blobs, and a snapshot read by `better-sqlite3` |
-| `sql/sql-expression.test.ts` | 26 | projection, predicates, functions, subqueries, and join expression surface |
-| `sql/three-valued-logic.test.ts` | 16 | SQL `NULL` three-valued predicate cases against `better-sqlite3` |
-
-### `projects/sqlite.py/packages/sqlite/tests`
-
-| File | Cases | Coverage |
-|------|-------|----------|
-| `test_format3.py` | 13 | format-3 reader/writer parity |
-| `test_scenarios.py` | 15 | end-to-end scenarios against Python `sqlite3` |
-| `test_edges.py` | 5 | 65536 page size, composite WITHOUT ROWID, exact page counts, seeded differential stream, fixture and rejection boundaries |
-| `test_wal_journal.py` | 2 | WAL and hot journal semantics |
-| `test_sql_semantics.py` | 265 | the shared `sql-*.json` corpus replayed on Python's standard-library `sqlite3` |
-
-## Branch
-
-`dev` is the default branch and holds all work. `master` is kept only for the initial commit, so
-clone normally:
-
-```shell
-git clone https://github.com/yy-database/SQLite.git
+const db = new SQLite({filename: "app.sqlite"});
+db.exec("create table account (id integer primary key, label text not null)");
+db.run("insert into account (id, label) values (?, ?)", [1n, "alpha"]);
+const row = db.get<{ id: bigint; label: string }>(
+    "select id, label from account where id = ?",
+    [1n],
+);
+console.log(row);
+db.close();
 ```
+
+Matching `@yydb/sqlite-<os>-<arch>` optional dependencies supply the native binding on supported hosts. Application code imports the facade only.
+
+**Inspect without SQL**
+
+```ts
+import {openDatabase} from "@yydb/sqlite/inspect";
+
+const reader = openDatabase("app.sqlite");
+console.log(reader.schema(), reader.table("account"));
+```
+
+## ✨ Highlights
+
+| Capability | What it means in practice |
+|------------|---------------------------|
+| **Format-3 files** | On-disk images are ordinary SQLite main databases — dual read/write with peer engines. |
+| **Fail-closed SQL** | Unsupported statements error out; the engine does not pretend to run them. |
+| **Sync Node API** | `prepare` / `run` / `get` / `all` / `transaction` on a connection that opens immediately. |
+| **Faithful storage classes** | `INTEGER` → `bigint`, `BLOB` → `Uint8Array`, no silent Date/boolean coercion. |
+| **Inspect path** | `@yydb/sqlite/inspect` reads schema and tables without opening a SQL connection. |
+| **Several hosts** | Node native sidecars, Python wheel, and an in-memory WASM `MemoryDatabase`. |
+
+## 📊 How it compares
+
+| | This product | `better-sqlite3` / `node:sqlite` | `sql.js` |
+|--|--------------|----------------------------------|---------|
+| File format | SQLite format-3 | Upstream SQLite | In-memory / serialized image |
+| SQL surface | Fail-closed subset | Full upstream engine | Full upstream (WASM) |
+| Typical use | Embed + interop with stock SQLite files | App DB with full SQL | Browser / no native addon |
+| Truth for acceptance | Peer engines + official corpora | Upstream itself | Upstream itself |
+
+Cross-library on-disk checks and timings live under [vs-js-libraries](./projects/sqlite.ts/examples/vs-js-libraries).
+
+## 📝 SQL surface
+
+Accepted today (plain predicates only):
+
+```sql
+create table account (
+    id integer primary key,
+    label text not null
+);
+
+insert into account (id, label) values (1, 'alpha');
+
+select id, label
+from account
+where id = 1
+order by label
+limit 10;
+```
+
+`WHERE` may use comparisons, `AND` / `OR` / `NOT`, `IS [NOT] NULL`, column references, and literals. Joins, `GROUP BY`, subqueries, and richer aggregates are rejected. Full API notes and error codes: [package README](./projects/sqlite.ts/packages/sqlite/readme.md).
+
+## 🧪 Examples
+
+| Example | What it shows |
+|---------|----------------|
+| [roundtrip.ts](./projects/sqlite.ts/examples/roundtrip.ts) | Minimal write / read path |
+| [vs-js-libraries](./projects/sqlite.ts/examples/vs-js-libraries) | Cross-read/write vs `better-sqlite3`, `node:sqlite`, `sql.js` + benchmark |
+| [with-drizzle-orm](./projects/sqlite.ts/examples/with-drizzle-orm) | Drizzle via `sqlite-proxy` |
+| [with-type-orm](./projects/sqlite.ts/examples/with-type-orm) | TypeORM `better-sqlite3` driver hook |
+| [with-prisma](./projects/sqlite.ts/examples/with-prisma) | Prisma driver-adapter contract smoke |
+| [sql-logic-test](./projects/sqlite.ts/examples/sql-logic-test) | External SQLLogicTest corpus runners |
+
+Python roundtrip: [`projects/sqlite.py/examples/roundtrip.py`](./projects/sqlite.py/examples/roundtrip.py).
+
+## 📜 License
+
+[Mozilla Public License 2.0](./License.md)
