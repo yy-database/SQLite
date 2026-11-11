@@ -22,6 +22,21 @@ const TRANSACTION_CONTROL_NAMES = new Set(["begin", "commit", "rollback", "savep
 
 let savepointCounter = 0;
 
+/**
+ * 未显式 `close()` 的连接在实例被回收时兜底释放写锁。
+ *
+ * 持有原生连接本体：finalize 阶段实例已不可达，只有强引用才能调用原生关闭。
+ * 显式 `close()` 先反注册，因此不会二次释放；终结器里的失败没有调用方可以接收，
+ * 留给进程退出时由操作系统回收。
+ */
+const pendingConnections = new FinalizationRegistry<NativeConnection>((connection) => {
+  try {
+    connection.close();
+  } catch {
+    // 兜底路径没有调用方可以接收错误。
+  }
+});
+
 /** 把绑定值转成 `PRAGMA name = value` 的字面量文本。 */
 function pragmaLiteral(value: SQLiteValue | boolean): string {
   if (value === null) return "NULL";
@@ -46,6 +61,7 @@ export class SQLite {
       throw toSQLiteError(error);
     }
     this.#readOnly = normalized.readOnly;
+    pendingConnections.register(this, this.#connection, this);
     if (!this.#readOnly) {
       this.#exec(`PRAGMA foreign_keys = ${normalized.foreignKeys ? "ON" : "OFF"}`);
     }
@@ -200,6 +216,7 @@ export class SQLite {
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
+    pendingConnections.unregister(this);
     try {
       this.#connection.close();
     } catch (error) {

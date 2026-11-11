@@ -89,12 +89,13 @@ db.backup("app.backup.sqlite");
 | `busyTimeoutMs`            | `0`          | Milliseconds to retry the cross-process write lock (`busy`)  |
 | `limits`                   | —            | Unsupported — passing it throws `unsupported`                |
 
-A file write connection takes an OS advisory lock on `<db>.lock` and holds it until `close()` (or process exit). Another
-writer from **this package** on the same file is rejected with `code: "busy"` and a `SQLITE_BUSY` message;
-`busyTimeoutMs` retries for that many milliseconds first. `0` attempts once. Read-only and in-memory connections never
-take the write lock. External engines (`sqlite3`, `node:sqlite`, `better-sqlite3`) do not create or check this lock, so
-concurrent writes from another engine are **outside the contract** — keep a single writer per file, including across
-engines.
+A file write connection takes an OS advisory lock on `<db>.lock` and holds it until `close()`, a finalizer close, or
+process exit. Another writer from **this package** on the same file is rejected with `code: "busy"` and a
+`SQLITE_BUSY` message; `busyTimeoutMs` retries for that many milliseconds first. `0` attempts once. Read-only and
+in-memory connections never take the write lock. A connection garbage-collected without `close()` is closed by a
+finalizer, which releases the lock, but explicit `close()` (or `using`) remains the recommended contract. External
+engines (`sqlite3`, `node:sqlite`, `better-sqlite3`) do not create or check this lock, so concurrent writes from
+another engine are **outside the contract** — keep a single writer per file, including across engines.
 
 ### `Statement`
 
