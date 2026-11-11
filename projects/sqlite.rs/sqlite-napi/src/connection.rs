@@ -37,6 +37,8 @@ pub struct SqliteConnectionOptions {
     pub create: Option<bool>,
     pub page_size: Option<u32>,
     pub synchronous: Option<bool>,
+    /// 写连接等待跨进程写锁的毫秒数；`None` 与 `0` 都表示只尝试一次。
+    pub busy_timeout_ms: Option<u32>,
 }
 
 /// 一个真实连接：解析、执行、事务、文件发布与备份都发生在 Rust。
@@ -67,6 +69,7 @@ impl SqliteConnection {
             create: None,
             page_size: None,
             synchronous: None,
+            busy_timeout_ms: None,
         });
         let facade = ConnectionOptions {
             filename: options.filename.map(PathBuf::from),
@@ -75,6 +78,7 @@ impl SqliteConnection {
             create: options.create.unwrap_or(true),
             page_size: options.page_size,
             synchronous: options.synchronous.unwrap_or(true),
+            busy_timeout_ms: u64::from(options.busy_timeout_ms.unwrap_or(0)),
         };
         let connection = Connection::open(facade).map_err(sql_error)?;
         Ok(Self { inner: Arc::new(Mutex::new(Shared { connection, closed: false })) })

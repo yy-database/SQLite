@@ -298,7 +298,6 @@ test("data creates a private copy; serialize/backup round-trip", () => {
 });
 
 test("options honesty: unsupported knobs throw, foreignKeys is real", () => {
-  expectCode("unsupported", () => new SQLite({ busyTimeoutMs: 100 }));
   expectCode("unsupported", () => new SQLite({ journalMode: "wal" }));
   expectCode("unsupported", () => new SQLite({ limits: { sqlBytes: 10 } }));
   expectCode("unsupported", () => new SQLite({ integers: "bigint" } as unknown as Record<string, unknown>));

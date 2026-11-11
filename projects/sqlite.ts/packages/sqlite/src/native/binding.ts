@@ -14,6 +14,7 @@ export interface NativeConnectionOptions {
   create?: boolean;
   pageSize?: number;
   synchronous?: boolean;
+  busyTimeoutMs?: number;
 }
 
 /** 权威参数槽位：零基索引与书写原文。 */

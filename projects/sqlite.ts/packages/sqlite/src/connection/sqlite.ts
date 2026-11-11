@@ -3,8 +3,9 @@
 // 本文件只做作者体验与 JS 控制流：选项形状校验、行投影编排、事务闭包、
 // addon 桥接。SQL 怎么解释、参数有几个槽位、语句是否写入、提交边界在哪、
 // 文件何时落盘，全部读取原生的权威信息（见 `native/binding.ts`）。
-// 需要上游链路才能成立的选项（`busyTimeoutMs`、`journalMode`、`limits`、
-// UDF）在被显式请求时抛 `unsupported`，而不是在 TS 里记一个字段假装实现。
+// 需要上游链路才能成立的选项（`journalMode`、`limits`、UDF）在被显式请求时
+// 抛 `unsupported`，而不是在 TS 里记一个字段假装实现；`busyTimeoutMs` 已由
+// 上游跨进程写锁承担，这里只把毫秒数透传给原生。
 
 import { fileURLToPath } from "node:url";
 

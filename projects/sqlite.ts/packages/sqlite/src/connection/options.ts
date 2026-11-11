@@ -25,7 +25,10 @@ export interface SQLiteOptions {
   pageSize?: number;
   /** `PRAGMA synchronous`：`false` 时落盘跳过持久化刷新，默认 `true`。 */
   synchronous?: boolean;
-  /** 未支持：需要真实锁实现。传入即抛 `unsupported`。 */
+  /**
+   * 文件写连接等待跨进程写锁的毫秒数，默认 `0`（只尝试一次）。
+   * 超时以 `busy` 拒绝；只读、内存与字节镜像连接不参与加锁，该值无意义。
+   */
   busyTimeoutMs?: number;
   /** 未支持：需要上游限额链路。传入即抛 `unsupported`。 */
   limits?: Record<string, number>;
@@ -41,7 +44,13 @@ export interface NormalizedOptions {
 /** 校验选项的 JS 形状，返回可交给原生的值；未实现的能力显式拒绝。 */
 export function normalizeOptions(options: SQLiteOptions): NormalizedOptions {
   if (options.busyTimeoutMs !== undefined) {
-    throw new SQLiteError("unsupported", "busyTimeoutMs requires the real lock implementation; this engine has no busy handler");
+    const timeout = options.busyTimeoutMs;
+    if (typeof timeout !== "number" || !Number.isInteger(timeout) || timeout < 0 || timeout > 0xffff_ffff) {
+      throw new SQLiteError(
+        "option-invalid",
+        `busyTimeoutMs must be a non-negative integer number of milliseconds (<= 4294967295), got ${String(timeout)}`,
+      );
+    }
   }
   if (options.limits !== undefined) {
     throw new SQLiteError("unsupported", "limits requires the upstream resource-limit chain; apply explicit checks at the call site for now");
@@ -66,6 +75,9 @@ export function normalizeOptions(options: SQLiteOptions): NormalizedOptions {
   }
   if (options.pageSize !== undefined) {
     native.pageSize = options.pageSize;
+  }
+  if (options.busyTimeoutMs !== undefined) {
+    native.busyTimeoutMs = options.busyTimeoutMs;
   }
   return { native, foreignKeys: options.foreignKeys ?? true, readOnly };
 }
