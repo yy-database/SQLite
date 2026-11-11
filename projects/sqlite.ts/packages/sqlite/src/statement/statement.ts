@@ -152,13 +152,25 @@ export class Statement<Row = SQLiteRow, Params extends SQLiteParams = SQLitePara
   }
 
   /**
-   * 逐行读取。`for...of` 的耗尽、`break`、异常都会释放游标；手动 `next()`
-   * 中途退出需要 `return()`。同一句柄有活跃游标时禁止重复执行，
-   * 不静默打断旧游标。
+   * 逐行读取。原生游标按固定窗口（256 行）取值，JS 只在窗口内构造行对象。
+   * `for...of` 的耗尽、`break`、异常都会释放游标；手动 `next()` 中途退出
+   * 需要 `return()`。同一句柄有活跃游标时禁止重复执行，不静默打断旧游标。
    */
   iterate(params?: Params): Generator<Row, void, unknown> {
-    const result = this.#execute(params);
-    return createIterator(result, this.#view, this.#shared.state) as Generator<Row, void, unknown>;
+    const state = this.#shared.state;
+    if (state.closed) throw new SQLiteError("statement-closed", "statement is closed");
+    if (state.activeCursor) throw new SQLiteError("cursor-active", "statement has an active cursor; finish or close it before re-executing");
+    this.#shared.guard(this.#shared.native.statementName());
+    const cells = bindCells(this.#shared.native.slots(), this.#shared.native.parameterCount(), params);
+    let opened;
+    try {
+      opened = this.#shared.native.openCursor(cells);
+    } catch (error) {
+      throw toSQLiteError(error);
+    }
+    state.columns = opened.columns;
+    state.activeCursor = true;
+    return createIterator(this.#shared.native, opened.handle, opened.columns, this.#view, state) as Generator<Row, void, unknown>;
   }
 
   /** 释放原生预编译句柄；共享该句柄的所有视图同时失效。 */

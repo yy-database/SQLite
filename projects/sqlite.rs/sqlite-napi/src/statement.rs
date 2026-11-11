@@ -9,8 +9,15 @@ use sqlite::{Prepared, SqlError};
 use crate::{
     connection::SharedHandle,
     error::sql_error,
-    values::{SqlParam, TypedRunResult},
+    values::{SqlParam, TypedCursorBatch, TypedRunResult},
 };
+
+/// 打开游标的结果：连接内句柄与执行期结果列标签。
+#[napi(object)]
+pub struct SqliteCursorOpen {
+    pub handle: u32,
+    pub columns: Vec<String>,
+}
 
 /// 一个权威参数槽位：零基索引与书写原文。
 #[napi(object)]
@@ -50,6 +57,45 @@ impl SqliteStatement {
         let result = guard.connection.run(prepared, &cells).map_err(sql_error)?;
         let last_insert_rowid = guard.connection.last_insert_rowid();
         Ok(TypedRunResult { result, last_insert_rowid })
+    }
+
+    /// 执行语句并把完整结果集放进连接内的游标表，返回句柄与表头。
+    ///
+    /// 执行语义（只读拒绝、参数槽位、提交边界）仍由 facade `Connection`
+    /// 权威承担；本层只做参数与结果的类型转换。事务内打开的游标在事务
+    /// 结束后失效，`cursorNext` 会以 `cursor-expired` 拒绝。
+    #[napi]
+    pub fn openCursor(&self, parameters: Option<Vec<SqlParam>>) -> napi::Result<SqliteCursorOpen> {
+        let prepared = self.prepared()?;
+        let cells = parameters.unwrap_or_default().into_iter().map(SqlParam::into_cell).collect::<Vec<_>>();
+        let mut guard = self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if guard.closed {
+            return Err(sql_error(SqlError::new("db-closed", "database connection is closed")));
+        }
+        let opened = guard.connection.open_cursor(prepared, &cells).map_err(sql_error)?;
+        Ok(SqliteCursorOpen { handle: opened.handle as u32, columns: opened.columns })
+    }
+
+    /// 从游标读取至多 `limit` 行，返回本窗口与 `done` 标志。
+    #[napi]
+    pub fn cursorNext(&self, handle: u32, limit: u32) -> napi::Result<TypedCursorBatch> {
+        let mut guard = self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if guard.closed {
+            return Err(sql_error(SqlError::new("db-closed", "database connection is closed")));
+        }
+        let batch = guard.connection.cursor_next(u64::from(handle), limit as usize).map_err(sql_error)?;
+        Ok(TypedCursorBatch { rows: batch.rows, done: batch.done })
+    }
+
+    /// 释放游标。重复释放同一句柄为空操作，连接已关闭时同样静默返回，
+    /// 便于 TS 在 `finally` 里清理。
+    #[napi]
+    pub fn cursorClose(&self, handle: u32) {
+        let mut guard = self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if guard.closed {
+            return;
+        }
+        let _ = guard.connection.cursor_close(u64::from(handle));
     }
 
     /// 提交的 SQL 原文。

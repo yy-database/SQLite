@@ -1,17 +1,20 @@
-// 大结果集物化边界：`all()` 与 `iterate()` 都在原生侧一次取回完整行集，
-// TS 层再投影。这里用 50,000 行验证结果完整、不崩溃，并输出行数、耗时与
-// RSS 变化；不设绝对内存/耗时上限，避免把机器差异当成回归。
+// 大结果集内存对比：`all()` 与窗口化 `iterate()` 在 50,000 行上的 RSS 增量。
 //
-// 已知边界：`iterate()` 只是对已物化结果的 Iterator 协议，不是流式游标，
-// 峰值内存随结果行数增长。需要流式消费时应在 SQL 侧分页。
+// `iterate()` 通过连接内游标按 256 行窗口取行，JS 侧不再一次构造全部行对象；
+// 但 Rust 侧打开游标时仍物化完整行集（引擎没有逐行执行接口），所以这不是
+// 端到端流式执行，内存收益只来自 JS 侧的行对象与结果数组。
+//
+// 两种模式各跑在独立子进程里，避免前一次测量的 RSS 高水位污染后一次基线。
+// RSS 是进程级高水位指标，这里只如实报告测量值，不设绝对上限。
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { SQLite, createWriter, writeSlots } from "../../src/index.ts";
+import { createWriter, writeSlots } from "../../src/index.ts";
 
 const ROWS = 50_000;
 
@@ -44,41 +47,66 @@ function seed(path: string): void {
   writer.save(path);
 }
 
-function assertRows(rows: { id: bigint; label: string }[], label: string): void {
-  assert.equal(rows.length, ROWS, `${label}: row count`);
-  for (let index = 0; index < rows.length; index += 1) {
-    if (rows[index]!.id !== BigInt(index + 1) || rows[index]!.label !== `row-${index + 1}`) {
-      assert.fail(`${label}: broken row at ${index}: ${JSON.stringify(rows[index])}`);
-    }
-  }
+interface Measurement {
+  rows: number;
+  ms: number;
+  rss: number;
+  after: number;
 }
 
-test("known boundary: a 50,000-row result is fully materialized, not streaming", { timeout: 120_000 }, (t) => {
+/** 在独立进程里运行一种读取方式，返回行数、耗时与 RSS 增量。 */
+function measure(mode: "all" | "iterate", filename: string): Measurement {
+  const entry = new URL("../../src/index.ts", import.meta.url).href;
+  const script = `
+const { SQLite } = await import(process.env.SQLITE_ENTRY);
+const db = new SQLite({ filename: process.env.SQLITE_DB, readOnly: true });
+const sql = "select id, label from big order by id";
+const before = process.memoryUsage().rss;
+const started = performance.now();
+let count = 0;
+let rows;
+if (process.env.SQLITE_MODE === "all") {
+  rows = db.all(sql);
+  count = rows.length;
+} else {
+  for (const row of db.iterate(sql)) {
+    count += 1;
+    if (count === 1 && (row.id !== 1n || row.label !== "row-1")) throw new Error("bad first row");
+    if (row.id !== BigInt(count) || row.label !== "row-" + count) throw new Error("bad row " + count);
+  }
+}
+const ms = performance.now() - started;
+const after = process.memoryUsage().rss;
+if (rows !== undefined && rows.length !== count) throw new Error("row count drift");
+db.close();
+console.log(JSON.stringify({ rows: count, ms, rss: after - before, after }));
+`;
+  const result = spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", script], {
+    env: { ...process.env, SQLITE_ENTRY: entry, SQLITE_DB: filename, SQLITE_MODE: mode },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, `${mode} child failed: ${result.stderr}`);
+  const line = result.stdout.trim().split(/\r?\n/).at(-1);
+  assert.ok(line, `${mode} child produced no measurement`);
+  return JSON.parse(line) as Measurement;
+}
+
+test("windowed iterate and all() RSS deltas over 50,000 rows", { timeout: 180_000 }, (t) => {
   const space = workspace("materialize");
   try {
     seed(space.path);
-    const db = new SQLite({ filename: space.path, readOnly: true });
-    try {
-      const rssBefore = process.memoryUsage().rss;
-      const started = performance.now();
-      const rows = db.all<{ id: bigint; label: string }>("select id, label from big order by id");
-      const allMs = performance.now() - started;
-      assertRows(rows, "all");
+    const all = measure("all", space.path);
+    const iterate = measure("iterate", space.path);
+    assert.equal(all.rows, ROWS);
+    assert.equal(iterate.rows, ROWS);
 
-      const iterStarted = performance.now();
-      const iterated: { id: bigint; label: string }[] = [];
-      for (const row of db.iterate<{ id: bigint; label: string }>("select id, label from big order by id")) iterated.push(row);
-      const iterateMs = performance.now() - iterStarted;
-      assertRows(iterated, "iterate");
-      const rssAfter = process.memoryUsage().rss;
-
-      t.diagnostic(
-        `rows=${ROWS} all=${allMs.toFixed(1)}ms iterate=${iterateMs.toFixed(1)}ms ` +
-          `rss +${((rssAfter - rssBefore) / 1048576).toFixed(1)}MiB (after ${(rssAfter / 1048576).toFixed(1)}MiB)`,
-      );
-    } finally {
-      db.close();
-    }
+    t.diagnostic(
+      `all: rows=${all.rows} ${all.ms.toFixed(1)}ms rss +${(all.rss / 1048576).toFixed(1)}MiB (after ${(all.after / 1048576).toFixed(1)}MiB)`,
+    );
+    t.diagnostic(
+      `iterate(256-row windows): rows=${iterate.rows} ${iterate.ms.toFixed(1)}ms ` +
+        `rss +${(iterate.rss / 1048576).toFixed(1)}MiB (after ${(iterate.after / 1048576).toFixed(1)}MiB)`,
+    );
   } finally {
     space.dispose();
   }

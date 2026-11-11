@@ -37,6 +37,13 @@ pub(crate) unsafe fn create_integer(env: sys::napi_env, integer: i64) -> napi::R
     Ok(value)
 }
 
+/// 布尔值（游标 `done` 标志）。
+pub(crate) unsafe fn create_boolean(env: sys::napi_env, value: bool) -> napi::Result<sys::napi_value> {
+    let mut out = ptr::null_mut();
+    napi::check_status!(unsafe { sys::napi_get_boolean(env, value, &mut out) })?;
+    Ok(out)
+}
+
 /// 无符号计数（affected rows）同样以 `bigint` 呈现，不截断到 32 位。
 pub(crate) unsafe fn create_count(env: sys::napi_env, count: u64) -> napi::Result<sys::napi_value> {
     let mut value = ptr::null_mut();
@@ -196,6 +203,35 @@ impl ToNapiValue for TypedRunResult {
                 set_element(env, rows, row_index, array)?;
             }
             set_property(env, object, key_rows, rows)?;
+            Ok(object)
+        }
+    }
+}
+
+/// 一次游标窗口：`{rows, done}`，单元格映射与 [`TypedRunResult`] 同一套合同。
+pub struct TypedCursorBatch {
+    pub(crate) rows: Vec<Vec<sqlite::Cell>>,
+    pub(crate) done: bool,
+}
+
+impl ToNapiValue for TypedCursorBatch {
+    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
+        unsafe {
+            let object = create_object(env)?;
+
+            let key_rows = js_string(env, b"rows")?;
+            let rows = create_array(env, val.rows.len())?;
+            for (row_index, row) in val.rows.iter().enumerate() {
+                let array = create_array(env, row.len())?;
+                for (column_index, cell) in row.iter().enumerate() {
+                    set_cell(env, array, column_index, cell)?;
+                }
+                set_element(env, rows, row_index, array)?;
+            }
+            set_property(env, object, key_rows, rows)?;
+
+            let key_done = js_string(env, b"done")?;
+            set_property(env, object, key_done, create_boolean(env, val.done)?)?;
             Ok(object)
         }
     }

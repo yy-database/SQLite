@@ -35,8 +35,26 @@ export interface NativeRunResult {
   rows: NativeCell[][];
 }
 
+/** 打开游标的结果：连接内句柄与执行期结果列标签。 */
+export interface NativeCursorOpen {
+  handle: number;
+  columns: string[];
+}
+
+/** 一次有界窗口：至多 `limit` 行与是否已到末尾。 */
+export interface NativeCursorBatch {
+  rows: NativeCell[][];
+  done: boolean;
+}
+
 export interface NativeStatement {
   run(parameters?: unknown[]): NativeRunResult;
+  /** 执行并把完整行集放进连接内的游标表；返回句柄与表头。 */
+  openCursor(parameters?: unknown[]): NativeCursorOpen;
+  /** 从游标读取至多 `limit` 行。 */
+  cursorNext(handle: number, limit: number): NativeCursorBatch;
+  /** 释放游标；重复释放为空操作。 */
+  cursorClose(handle: number): void;
   sql(): string;
   statementName(): string;
   slots(): NativeSlot[];
