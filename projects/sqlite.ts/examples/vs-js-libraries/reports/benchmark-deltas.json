@@ -1,0 +1,9 @@
+{
+  "defaultMaxRatio": 100,
+  "deltas": {
+    "upsert": {
+      "maxRatio": 2500,
+      "reason": "The snapshot writer saves the full image once per round while each UPSERT still executes per statement; tracked as an intentional delta, not a stream-pager comparison."
+    }
+  }
+}

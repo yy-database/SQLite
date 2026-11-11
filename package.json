@@ -12,6 +12,7 @@
         "test:py": "python -m unittest discover -s projects/sqlite.py/packages/sqlite/tests -t projects/sqlite.py/packages/sqlite/tests",
         "examples:ts": "node --experimental-strip-types projects/sqlite.ts/examples/roundtrip.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/cross-read-write-better-sqlite3.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/cross-read-write-node-sqlite.ts && node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/cross-read-write-sql-js.ts && node --experimental-strip-types projects/sqlite.ts/examples/with-drizzle-orm/tests/roundtrip.ts && node --experimental-strip-types projects/sqlite.ts/examples/with-type-orm/tests/roundtrip.ts && node --experimental-strip-types projects/sqlite.ts/examples/with-prisma/tests/adapter-roundtrip.ts",
         "examples:benchmark": "node --experimental-strip-types projects/sqlite.ts/examples/vs-js-libraries/tests/benchmark.ts",
+        "bench:check": "node scripts/check-benchmark-ratios.mjs",
         "examples:py": "python projects/sqlite.py/examples/roundtrip.py",
         "test:gate": "node scripts/check-test-floor.mjs",
         "corpus": "node projects/sqlite.ts/packages/sqlite-harness/bin/cli.mjs corpus"

@@ -72,6 +72,20 @@ override with `BENCH_ROWS`, `BENCH_TXN`, `BENCH_PAGE`, `BENCH_ROUNDS`, `BENCH_PO
 pnpm --dir projects/sqlite.ts/examples/vs-js-libraries benchmark
 ```
 
+### Ratio regression gate
+
+The committed report is also an input to a standalone ratio gate. It is deliberately **not** part of `pnpm test`, so
+CI never depends on absolute timing:
+
+```shell
+pnpm bench:check
+```
+
+The script reads `reports/benchmark.md` and fails when an `@yydb/sqlite / node:sqlite` time ratio exceeds **100x**.
+Intentional, explained gaps are listed in `reports/benchmark-deltas.json` with a per-workload `maxRatio` and `reason`
+(currently `upsert`). `--report`, `--ledger` and `--max-ratio` override the defaults. The gate measures nothing itself,
+so it does not fluctuate with machine load.
+
 The committed `reports/benchmark.md` snapshot is captured at `BENCH_ROWS=2000` (with reduced
 `BENCH_POINT` / `BENCH_LIMIT` / `BENCH_AGG` / `BENCH_JOIN` / `BENCH_MUTATE`) so the
 SQL-heavy workloads (`indexed` / `point_uk` full scans and the wasm column's full scans)

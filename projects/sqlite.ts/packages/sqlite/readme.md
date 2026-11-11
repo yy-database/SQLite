@@ -90,8 +90,11 @@ db.backup("app.backup.sqlite");
 | `limits`                   | —            | Unsupported — passing it throws `unsupported`                |
 
 A file write connection takes an OS advisory lock on `<db>.lock` and holds it until `close()` (or process exit). Another
-writer on the same file is rejected with `code: "busy"` and a `SQLITE_BUSY` message; `busyTimeoutMs` retries for that
-many milliseconds first. `0` attempts once. Read-only and in-memory connections never take the write lock.
+writer from **this package** on the same file is rejected with `code: "busy"` and a `SQLITE_BUSY` message;
+`busyTimeoutMs` retries for that many milliseconds first. `0` attempts once. Read-only and in-memory connections never
+take the write lock. External engines (`sqlite3`, `node:sqlite`, `better-sqlite3`) do not create or check this lock, so
+concurrent writes from another engine are **outside the contract** — keep a single writer per file, including across
+engines.
 
 ### `Statement`
 
@@ -227,11 +230,13 @@ try {
   UPSERT, joins, subqueries, recursive CTEs, set operators, aggregates, window functions, JSON, date/time and math
   functions, transactions and savepoints, `ATTACH` / `DETACH`, `PRAGMA` and `VACUUM` / `VACUUM INTO`. Statements outside
   that surface reject with a structured `SQLiteError` instead of being approximated.
-- **Journal / locking:** only `journalMode: "preserve"`; no WAL write surface. File writers serialize on a
-  cross-process lock with `busyTimeoutMs` retry, so two processes never write the same file at once.
+- **Journal / locking:** only `journalMode: "preserve"`; no WAL write surface. File writers using this package serialize
+  on a cross-process lock with `busyTimeoutMs` retry. That lock is not SQLite's byte-range/journal lock and is invisible
+  to external engines, so it does not make concurrent external SQLite writes safe.
 - **UDF / aggregate / window registration:** `function()` / `aggregate()` / `window()` always throw `unsupported`.
   Window functions written in SQL are supported; the host registration APIs are not.
-- **Result materialization:** query results are fully materialized arrays, not a streaming cursor.
+- **Result materialization:** query results are fully materialized arrays, not a streaming cursor. `iterate()` is an
+  Iterator protocol over an already-materialized native result, so peak memory grows with the result row count.
 - **Hosts:** Node native sidecars for the four platforms above; browsers use the WASM package. No published binding for
   other arches yet.
 - **Sync-only API:** no Promise-based query surface; transaction callbacks cannot be async.
