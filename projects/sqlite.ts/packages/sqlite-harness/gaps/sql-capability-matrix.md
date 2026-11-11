@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (121 feature rows): **120 gated / 0 uncovered / 1 missing** at the pin.
+Cluster totals (121 feature rows): **121 gated / 0 uncovered / 0 missing** at the pin.
 
 ## DDL
 
@@ -189,22 +189,16 @@ Cluster totals (121 feature rows): **120 gated / 0 uncovered / 1 missing** at th
 | `snapshot()` byte export | `engine.snapshot()` | gated | storage and platform suites |
 | `ATTACH DATABASE` | `attach database ':memory:' as aux` | gated | accepts `:memory:` / `''` and file paths, creates a missing file empty and materializes it on the first write, opens an existing image with its catalog, caps at ten attached databases, and resolves `aux.tbl`, `main.tbl`, `temp.tbl`, cross-schema joins, unqualified fall-through and triggers through the owning schema; `attach, qualified names and detach follow better-sqlite3` plus `attached_databases_resolve_qualified_names_and_list_themselves`, `main_and_temp_qualifiers_pin_the_schema`, `attached_files_are_created_and_keep_their_rows_across_reattach` |
 | `DETACH DATABASE` | `detach database aux` | gated | flushes the attached image, removes the schema, refuses `main` / `temp` with `cannot detach database <name>` and an unknown name with `no such database: <name>`; same gates |
-| `VACUUM` / `VACUUM INTO` | `vacuum` | missing | `unsupported-statement` at `vacuum` |
+| `VACUUM` / `VACUUM INTO` | `vacuum` | gated | `VACUUM` rebuilds a compacted image with `integrity_check = ok`, zero freelist pages and every table row, index, view and trigger retained, `VACUUM INTO` writes the same image to a new file that better-sqlite3 opens with `integrity_check = ok`, and the transaction and existing-target refusals match both oracles; `vacuum compacts the image and vacuum into writes an external-valid copy` |
 
-## Unimplemented: top 1 by impact
+## Unimplemented
 
-`VACUUM` / `VACUUM INTO` is the only statement still outside the accepted surface at this pin. Date/time and
-math functions, `trim`, `replace`, `ifnull`, `nullif`, `printf`, multi-argument `min` / `max`, foreign keys,
-recursive CTEs, transaction control, `SELECT DISTINCT`, modulo, `instr`, `CREATE TABLE ... AS SELECT`,
-`INSERT ... SELECT`, `REPLACE`, `IS DISTINCT FROM`, `GLOB`, `NULLS FIRST|LAST`, aggregate `FILTER` / `DISTINCT` /
-argument `ORDER BY`, window `GROUPS` / `EXCLUDE`, JSON functions with `->` / `->>`, and `COLLATE` on columns,
-expressions, indexes and `ORDER BY` are all gated at this pin.
+No feature row is `missing` at this pin. `VACUUM` / `VACUUM INTO` landed with the pin bump and is covered by
+`vacuum compacts the image and vacuum into writes an external-valid copy`.
 
-| # | Gap | Impact | Upstream coordinates |
-|---|-----|--------|---------------------|
-| 1 | `VACUUM` / `VACUUM INTO` | Compaction and copy-out tooling | `sql.rs`, statement dispatch rejects `vacuum` before planning |
-
-Next tier: none. Every other probe row in this file is gated.
+Known boundary: `VACUUM` rebuilds the image through the SQL layer with the source page size and text encoding, so a
+source image carrying non-zero reserved bytes is normalized to zero. This is outside the probe rows and does not
+reject a statement.
 
 ## Landed at this pin
 

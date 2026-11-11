@@ -136,8 +136,6 @@ test("unsupported clauses return a structured rejection", () => {
   const twoStatements = engine.tryExecute("select * from t; select * from t");
   assert.equal(twoStatements.ok, false);
   assert.equal(twoStatements.error?.code, "multiple-statements");
-
-  assert.throws(() => engine.execute("vacuum"), /unsupported statement starting at/i);
 });
 
 test("where predicates and order by follow SQLite comparison rules", () => {
@@ -412,16 +410,17 @@ function betterOracleRows(steps: string[], queries: string[]): unknown[][] {
 function pythonOracleRows(steps: string[], queries: string[]): unknown[][] {
   const script = [
     "import json, sqlite3, sys",
-    "payload = json.loads(sys.argv[1])",
-    "connection = sqlite3.connect(':memory:')",
+    "payload = json.loads(sys.stdin.read())",
+    "connection = sqlite3.connect(':memory:', isolation_level=None)",
     "for step in payload['steps']:",
     "    connection.execute(step)",
     "print(json.dumps([[list(row) for row in connection.execute(query).fetchall()] for query in payload['queries']]))",
     "connection.close()",
   ].join("\n");
-  const output = spawnSync(PYTHON, ["-c", script, JSON.stringify({ steps, queries })], {
+  const output = spawnSync(PYTHON, ["-c", script], {
     encoding: "utf8",
     timeout: 30_000,
+    input: JSON.stringify({ steps, queries }),
   });
   assert.ifError(output.error);
   assert.equal(output.status, 0, output.stderr);
@@ -431,8 +430,8 @@ function pythonOracleRows(steps: string[], queries: string[]): unknown[][] {
 function pythonOracleError(steps: string[], statement: string): string {
   const script = [
     "import json, sqlite3, sys",
-    "payload = json.loads(sys.argv[1])",
-    "connection = sqlite3.connect(':memory:')",
+    "payload = json.loads(sys.stdin.read())",
+    "connection = sqlite3.connect(':memory:', isolation_level=None)",
     "for step in payload['steps']:",
     "    connection.execute(step)",
     "try:",
@@ -443,9 +442,10 @@ function pythonOracleError(steps: string[], statement: string): string {
     "print(json.dumps(message))",
     "connection.close()",
   ].join("\n");
-  const output = spawnSync(PYTHON, ["-c", script, JSON.stringify({ steps, statement })], {
+  const output = spawnSync(PYTHON, ["-c", script], {
     encoding: "utf8",
     timeout: 30_000,
+    input: JSON.stringify({ steps, statement }),
   });
   assert.ifError(output.error);
   assert.equal(output.status, 0, output.stderr);
@@ -1844,6 +1844,112 @@ test("pragma integrity_check reports ok across tables, indexes, views and a free
     }
   } finally {
     workspaceHandle.dispose();
+  }
+});
+
+test("vacuum compacts the image and vacuum into writes an external-valid copy", () => {
+  const values = Array.from({ length: 600 }, (_, index) => `(${index + 1}, '${"x".repeat(200)}')`).join(", ");
+  const build = [
+    "create table t (id integer primary key, v text)",
+    `insert into t values ${values}`,
+    "create index tv on t(v)",
+    "create view vv as select id, v from t",
+    "create table log (n integer)",
+    "create trigger tr after insert on t begin insert into log values (new.id); end",
+    "delete from t where id > 20",
+  ];
+  const queries = [
+    "select count(*) from t",
+    "select id, v from t order by id",
+    "select name from sqlite_master where type = 'index' order by name",
+    "select name from sqlite_master where type = 'view' order by name",
+    "select name from sqlite_master where type = 'trigger' order by name",
+  ];
+  const steps = [...build, "vacuum"];
+  const expected = betterOracleRows(steps, queries);
+  assert.deepEqual(expected, pythonOracleRows(steps, queries), "better-sqlite3 and CPython sqlite3 disagree");
+  assert.deepEqual(
+    betterOracleRows(steps, ["pragma freelist_count"]),
+    pythonOracleRows(steps, ["pragma freelist_count"]),
+    "oracles disagree on the compacted freelist",
+  );
+  const oracleFreelist = betterOracleRows(steps, ["pragma freelist_count"])[0][0][0];
+  assert.equal(oracleFreelist, 0);
+
+  const engine = createEngine(1024);
+  for (const step of build) engine.execute(step);
+  const workspaceHandle = workspace();
+  try {
+    // The deleted pages stay on the freelist until VACUUM compacts them.
+    writeFileSync(workspaceHandle.path, engine.snapshot());
+    const before = new BetterSqlite(workspaceHandle.path) as unknown as OracleDatabase;
+    try {
+      assert.ok(Number(oracleRows(before, "pragma freelist_count")[0][0]) > 0);
+    } finally {
+      before.close();
+    }
+
+    const compacted = engine.execute("vacuum");
+    assert.equal(compacted.statement, "vacuum");
+    assert.equal(compacted.affected, 0);
+
+    writeFileSync(workspaceHandle.path, engine.snapshot());
+    const after = new BetterSqlite(workspaceHandle.path) as unknown as OracleDatabase;
+    try {
+      assert.equal((after.prepare("pragma integrity_check").all()[0] as { integrity_check: string }).integrity_check, "ok");
+      assert.deepEqual(oracleRows(after, "pragma freelist_count"), [[oracleFreelist]]);
+      queries.forEach((sql, index) => assert.deepEqual(oracleRows(after, sql), expected[index], sql));
+    } finally {
+      after.close();
+    }
+    assert.deepEqual(engine.execute("pragma integrity_check").rows, betterOracleRows(steps, ["pragma integrity_check"])[0]);
+  } finally {
+    workspaceHandle.dispose();
+  }
+
+  // VACUUM INTO writes the same compacted image to a new path.
+  const intoHandle = workspace();
+  try {
+    const target = intoHandle.path.replace(/\\/g, "/");
+    const copied = engine.execute(`vacuum into '${target}'`);
+    assert.equal(copied.statement, "vacuum");
+    const copy = new BetterSqlite(intoHandle.path) as unknown as OracleDatabase;
+    try {
+      assert.equal((copy.prepare("pragma integrity_check").all()[0] as { integrity_check: string }).integrity_check, "ok");
+      queries.forEach((sql, index) => assert.deepEqual(oracleRows(copy, sql), expected[index], sql));
+    } finally {
+      copy.close();
+    }
+  } finally {
+    intoHandle.dispose();
+  }
+
+  // Inside a transaction both oracles refuse with the same message.
+  const transactionMessage = withOracleMessage(["create table q (a integer)", "begin"], "vacuum");
+  const transaction = createEngine(4096);
+  transaction.execute("create table q (a integer)");
+  transaction.execute("begin");
+  const inTransaction = transaction.tryExecute("vacuum");
+  assert.equal(inTransaction.ok, false);
+  assert.equal(inTransaction.error?.message, transactionMessage);
+  assert.equal(pythonOracleError(["create table q (a integer)", "begin"], "vacuum"), transactionMessage);
+  transaction.execute("rollback");
+
+  // VACUUM INTO never overwrites an existing file.
+  const existingHandle = workspace();
+  try {
+    const seed = new BetterSqlite(existingHandle.path) as unknown as OracleDatabase;
+    seed.exec("create table seed (a integer)");
+    seed.close();
+    const sql = `vacuum into '${existingHandle.path.replace(/\\/g, "/")}'`;
+    const existingMessage = withOracleMessage([], sql);
+    assert.equal(existingMessage, "output file already exists");
+    assert.equal(pythonOracleError([], sql), existingMessage);
+    const rejected = engine.tryExecute(sql);
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error?.message, existingMessage);
+  } finally {
+    existingHandle.dispose();
   }
 });
 

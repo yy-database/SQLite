@@ -63,10 +63,15 @@ db.close();
 
 ## Limitations
 
-- Same fail-closed SQL subset as the Node engine (no joins / `GROUP BY` / rich aggregates / subqueries).
-- Result path is **JSON text**, not the Node `bigint` / `Uint8Array` facade — decode and convert at the boundary when you need faithful types.
-- In-memory only via this class; persist by writing `snapshot()` yourself.
-- Not a drop-in replacement for `@yydb/sqlite`’s `SQLite` class API.
+- **Fail-closed SQL:** the same engine surface as the Node build, including joins, subqueries, recursive CTEs, set
+  operators, aggregates, window functions, JSON, date/time and math functions, transactions, `PRAGMA` and
+  `VACUUM` / `VACUUM INTO`. Statements outside that surface return a structured error instead of being approximated.
+- **Result path is JSON text:** `execute` / `exec` / `executeBatch` return JSON strings, not the Node `bigint` /
+  `Uint8Array` facade. Decode and convert at the boundary when you need faithful types.
+- **Journal / locking:** in-memory only, so there is no WAL, busy handler or concurrent-writer story.
+- **UDF / aggregate / window registration:** no host-function registration surface.
+- **In-memory only:** persist by writing `snapshot()` yourself.
+- **Not a drop-in replacement** for `@yydb/sqlite`’s `SQLite` class API. All calls are synchronous.
 
 ## Related
 

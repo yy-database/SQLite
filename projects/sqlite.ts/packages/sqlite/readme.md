@@ -216,11 +216,15 @@ try {
 
 ## Limitations
 
-- **SQL subset (fail-closed):** `CREATE TABLE`, `INSERT`, `SELECT` with plain `WHERE` / `ORDER BY` / `LIMIT`. Joins,
-  `GROUP BY`, rich aggregates (beyond what the engine accepts), and subqueries are rejected with a structured error —
-  they are not silently approximated.
+- **Fail-closed SQL:** the implemented surface covers `CREATE TABLE` (`WITHOUT ROWID`, `STRICT`, foreign keys), indexes
+  (composite, partial, expression and `COLLATE`), views, triggers, `INSERT` / `UPDATE` / `DELETE` with `RETURNING` and
+  UPSERT, joins, subqueries, recursive CTEs, set operators, aggregates, window functions, JSON, date/time and math
+  functions, transactions and savepoints, `ATTACH` / `DETACH`, `PRAGMA` and `VACUUM` / `VACUUM INTO`. Statements outside
+  that surface reject with a structured `SQLiteError` instead of being approximated.
 - **Journal / locking:** only `journalMode: "preserve"`; no WAL, no busy handler, no concurrent-writer story.
-- **UDF / aggregate / window:** `function()` / `aggregate()` / `window()` always throw `unsupported`.
+- **UDF / aggregate / window registration:** `function()` / `aggregate()` / `window()` always throw `unsupported`.
+  Window functions written in SQL are supported; the host registration APIs are not.
+- **Result materialization:** query results are fully materialized arrays, not a streaming cursor.
 - **Hosts:** Node native sidecars for the four platforms above; browsers use the WASM package. No published binding for
   other arches yet.
 - **Sync-only API:** no Promise-based query surface; transaction callbacks cannot be async.
