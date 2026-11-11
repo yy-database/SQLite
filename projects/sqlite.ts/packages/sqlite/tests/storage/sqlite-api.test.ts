@@ -327,13 +327,34 @@ test("closed connections and closed statements fail with stable codes", () => {
   assert.equal(db.isOpen, false);
 });
 
-test("columns() reports the honest prepare-time limitation", () => {
+test("columns() resolves the header at prepare time for row-set statements", () => {
   const db = new SQLite();
   db.exec("create table col (id integer primary key, name text)");
   const statement = db.prepare("select id, name from col");
-  expectCode("columns-pending", () => statement.columns());
+  assert.deepEqual(statement.columns(), ["id", "name"]);
   statement.all();
   assert.deepEqual(statement.columns(), ["id", "name"]);
+});
+
+test("prepare-time columns() matches the key order of all()", () => {
+  const db = new SQLite();
+  db.exec("create table ord (a integer, b text, c real)");
+  db.run("insert into ord values (1, 'x', 2.5)");
+  const statement = db.prepare("select c, a, b from ord");
+  const labels = statement.columns();
+  assert.deepEqual(labels, ["c", "a", "b"]);
+  assert.deepEqual(Object.keys(statement.all()[0]!), labels);
+});
+
+test("columns() reports honest shapes for non-row-set and undecodable statements", () => {
+  const db = new SQLite();
+  db.exec("create table shape (id integer primary key, name text)");
+  assert.deepEqual(db.prepare("insert into shape (id, name) values (1, 'a')").columns(), []);
+  assert.deepEqual(db.prepare("create table other (id integer)").columns(), []);
+  assert.deepEqual(db.prepare("pragma foreign_keys = on").columns(), []);
+  const pragma = db.prepare("pragma table_info(shape)");
+  assert.deepEqual(Object.keys(pragma.all()[0]!), pragma.columns());
+  expectCode("columns-pending", () => db.prepare("select id, name from missing_table").columns());
 });
 
 test("Symbol.dispose closes the connection", () => {

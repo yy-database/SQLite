@@ -87,8 +87,9 @@ impl SqliteStatement {
         Ok(self.prepared()?.is_write())
     }
 
-    /// 结果列标签。引擎在执行时才计算结果头，预编译期如实返回 `null`。
-    /// TODO(oak-sql): 引擎长出 describe 步骤后返回真实表头。
+    /// 结果列标签。引擎在 prepare 时刻由目录定格：行集语句返回与执行后
+    /// `ExecResult.columns` 逐字节一致的表头；非行集语句（无 `RETURNING` 的
+    /// DML、DDL、事务控制、写形 `PRAGMA`）与 describe 折叠失败返回 `null`。
     #[napi]
     pub fn columns(&self) -> napi::Result<Option<Vec<String>>> {
         Ok(self.prepared()?.columns())

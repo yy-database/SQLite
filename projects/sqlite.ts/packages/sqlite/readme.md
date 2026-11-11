@@ -109,7 +109,7 @@ byId.close();
 - `undefined` is not bindable — use explicit `null` for SQL NULL.
 - `boolean`, `Date`, plain objects, and nested arrays are rejected (`param-type`); convert at the call site.
 - `bigint` must fit signed 64-bit INTEGER.
-- `columns()` is available only **after** the first execution (`columns-pending` before that).
+- `columns()` returns the result header captured at **prepare** time for row-set statements; statements without a result set return `[]`, and `columns-pending` only surfaces for a row-set statement whose header the engine cannot resolve until the first execution.
 - An active `iterate()` cursor blocks re-execution until exhausted, `return()`d, or closed (`cursor-active`).
 
 ### Transactions

@@ -1,8 +1,8 @@
 // Statement：持有真实原生预编译句柄的执行入口。
 //
-// 解析、槽位、读写分类、只读拒绝与参数个数都来自原生句柄（Rust 权威）；
-// TS 只做参数容器的 JS 形状检查与行投影。`raw()`/`pluck()` 视图共享同一
-// 句柄包（原生句柄 + 忙状态），生命周期一致。
+// 解析、槽位、读写分类、只读拒绝、参数个数与 prepare 期结果列标签都来自
+// 原生句柄（Rust 权威）；TS 只做参数容器的 JS 形状检查与行投影。
+// `raw()`/`pluck()` 视图共享同一句柄包（原生句柄 + 忙状态），生命周期一致。
 
 import { SQLiteError, toSQLiteError } from "../errors.ts";
 import type { NativeRunResult, NativeSlot, NativeStatement } from "../native/binding.ts";
@@ -13,11 +13,26 @@ import { projectRow, type ResultView } from "./rows.ts";
 /** 连接侧的执行前守卫：受管事务所有权等 JS 控制流检查。 */
 export type ExecutionGuard = (statementName: string) => void;
 
+/**
+ * 恒产行集的语句种类：`describe` 成功给标签，目录不足时折叠为 `null`。
+ * 其余种类（DDL、无 `RETURNING` 的 DML、事务控制、写形 `PRAGMA`）在
+ * prepare 期为 `null` 即无行集表头。
+ */
+export const ROW_SET_STATEMENTS: ReadonlySet<string> = new Set(["select", "explain"]);
+
 /** 同一原生句柄及其忙状态与列标签，被所有视图共享。 */
 export interface StatementHandle {
   native: NativeStatement;
   guard: ExecutionGuard;
-  state: { activeCursor: boolean; closed: boolean; columns: string[] | null };
+  state: {
+    activeCursor: boolean;
+    closed: boolean;
+    columns: string[] | null;
+    /** prepare 期原生 describe 定格的结果列标签；`null` 表示非行集或目录折叠失败。 */
+    described: string[] | null;
+    /** 语句是否确属行集，prepare 时刻一次判定，不再触碰原生句柄。 */
+    rowSet: boolean;
+  };
 }
 
 function normalizeBindValue(value: unknown): SQLiteBindValue {
@@ -98,13 +113,18 @@ export class Statement<Row = SQLiteRow, Params extends SQLiteParams = SQLitePara
     return this.#shared.state.closed;
   }
 
-  /** 结果列标签。prepare 期元数据需要上游 describe 支持，首次执行前会抛 `columns-pending`。 */
+  /**
+   * 结果列标签，prepare 时刻由原生引擎目录定格：行集语句首次执行前即返回
+   * 标签数组；非行集语句返回空数组（better-sqlite3 口径）；仅当语句确属
+   * 行集而目录不足以定格表头（describe 折叠失败，执行期必报错）时，首次
+   * 执行前抛 `columns-pending`。执行后以执行期表头为准。
+   */
   columns(): string[] {
-    const columns = this.#shared.state.columns;
-    if (columns === null) {
-      throw new SQLiteError("columns-pending", "column metadata is captured on first execution; prepare-time describe is not available yet");
-    }
-    return [...columns];
+    const state = this.#shared.state;
+    if (!state.rowSet) return [];
+    if (state.described !== null) return [...(state.columns ?? state.described)];
+    if (state.columns !== null) return [...state.columns];
+    throw new SQLiteError("columns-pending", "column metadata is captured on first execution; prepare-time describe could not resolve the header for this row-set statement");
   }
 
   raw(): Statement<SQLiteValue[], Params> {

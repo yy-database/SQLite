@@ -1,8 +1,8 @@
 // 加载结果与实际 N-API 构建的声明接合。
 //
 // 这里的接口逐字对应 `sqlite-napi` 导出的类与函数，不做任何 `as unknown as`
-// 的能力假定：声明的方法在 addon 里真实存在，缺失的能力（如预编译期表头）
-// 以 `null` 如实呈现。
+// 的能力假定：声明的方法在 addon 里真实存在，`columns()` 在语句没有行集表头
+// 或 prepare 期目录折叠失败时以 `null` 如实呈现。
 
 import { loadNative } from "./load.ts";
 
@@ -40,7 +40,7 @@ export interface NativeStatement {
   slots(): NativeSlot[];
   parameterCount(): number;
   isWrite(): boolean;
-  /** 引擎在执行时才计算结果头，预编译期返回 `null`。 */
+  /** prepare 时刻由引擎目录定格的结果列标签；非行集语句与目录折叠失败返回 `null`。 */
   columns(): string[] | null;
   finalize(): void;
 }

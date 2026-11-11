@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { SQLiteError, toSQLiteError } from "../errors.ts";
 import { addon, type NativeConnection, type NativeRunResult } from "../native/binding.ts";
-import { Statement, type ExecutionGuard, type StatementHandle } from "../statement/statement.ts";
+import { ROW_SET_STATEMENTS, Statement, type ExecutionGuard, type StatementHandle } from "../statement/statement.ts";
 import type { SQLiteParams, SQLiteRow, SQLiteRunResult, SQLiteValue } from "../values.ts";
 import { normalizeOptions, type SQLiteOptions } from "./options.ts";
 import { checkTransactionMode, runTransaction, type TransactionBridge, type TransactionScope } from "./transaction.ts";
@@ -88,7 +88,9 @@ export class SQLite {
       throw toSQLiteError(error);
     }
     const guard: ExecutionGuard = (statementName) => this.#assertUsable(statementName);
-    const shared: StatementHandle = { native, guard, state: { activeCursor: false, closed: false, columns: null } };
+    const described = native.columns();
+    const rowSet = described !== null || ROW_SET_STATEMENTS.has(native.statementName());
+    const shared: StatementHandle = { native, guard, state: { activeCursor: false, closed: false, columns: null, described, rowSet } };
     return new Statement<Row, Params>(shared);
   }
 
