@@ -86,7 +86,12 @@ db.backup("app.backup.sqlite");
 | `pageSize`                 | `4096`       | Page size for **new** databases                              |
 | `synchronous`              | `true`       | `false` skips durable flush on commit                        |
 | `journalMode`              | `"preserve"` | Only `"preserve"` is supported; `"wal"` / `"delete"` throw   |
-| `busyTimeoutMs` / `limits` | —            | Unsupported — passing them throws `unsupported`              |
+| `busyTimeoutMs`            | `0`          | Milliseconds to retry the cross-process write lock (`busy`)  |
+| `limits`                   | —            | Unsupported — passing it throws `unsupported`                |
+
+A file write connection takes an OS advisory lock on `<db>.lock` and holds it until `close()` (or process exit). Another
+writer on the same file is rejected with `code: "busy"` and a `SQLITE_BUSY` message; `busyTimeoutMs` retries for that
+many milliseconds first. `0` attempts once. Read-only and in-memory connections never take the write lock.
 
 ### `Statement`
 
@@ -195,8 +200,9 @@ envelope on the native error message and are unpacked into `code` / `message`.
 
 | Code (examples)                                                                | When                                                                  |
 |--------------------------------------------------------------------------------|-----------------------------------------------------------------------|
-| `unsupported`                                                                  | Requested option/API not implemented (`wal`, UDF, `busyTimeoutMs`, …) |
-| `option-invalid` / `option-conflict`                                           | Bad pragma name or mutually exclusive options                         |
+| `unsupported`                                                                  | Requested option/API not implemented (`wal`, UDF, `limits`, …)        |
+| `busy`                                                                         | The file write lock is held elsewhere past `busyTimeoutMs`            |
+| `option-invalid` / `option-conflict`                                           | Bad pragma name, invalid `busyTimeoutMs`, or conflicting options      |
 | `param-*`                                                                      | Missing / extra / wrong-shape / wrong-type / out-of-range binds       |
 | `db-closed` / `statement-closed` / `cursor-active`                             | Lifecycle misuse                                                      |
 | `transaction-ownership` / `async-callback` / `commit-failed` / `scope-escaped` | Transaction control flow                                              |
@@ -221,7 +227,8 @@ try {
   UPSERT, joins, subqueries, recursive CTEs, set operators, aggregates, window functions, JSON, date/time and math
   functions, transactions and savepoints, `ATTACH` / `DETACH`, `PRAGMA` and `VACUUM` / `VACUUM INTO`. Statements outside
   that surface reject with a structured `SQLiteError` instead of being approximated.
-- **Journal / locking:** only `journalMode: "preserve"`; no WAL, no busy handler, no concurrent-writer story.
+- **Journal / locking:** only `journalMode: "preserve"`; no WAL write surface. File writers serialize on a
+  cross-process lock with `busyTimeoutMs` retry, so two processes never write the same file at once.
 - **UDF / aggregate / window registration:** `function()` / `aggregate()` / `window()` always throw `unsupported`.
   Window functions written in SQL are supported; the host registration APIs are not.
 - **Result materialization:** query results are fully materialized arrays, not a streaming cursor.

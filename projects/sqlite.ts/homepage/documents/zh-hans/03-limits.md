@@ -19,7 +19,7 @@
 ## 共同限制
 
 - 不提供宿主 UDF / 聚合 / 窗口注册；SQL 里写的窗口函数不受影响。
-- journal 仅 `preserve` 模式，没有 WAL 写入面、busy handler 或并发写者故事。
+- journal 仅 `preserve` 模式；仍无 WAL 写入面，但文件写连接支持 `busyTimeoutMs` 的跨进程写锁重试。
 - 查询结果整体物化，不是流式游标。
 - 同步 API：事务回调不能是异步函数。
 - 不属于本项目的范围：上游 SQLite C 引擎、YYDB 存储、文件系统事务管理。
