@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { createWriter, openDatabase, openSnapshot, openWriter, writeSlots } from "../src/index.ts";
+import { createWriter, openDatabase, openSnapshot, openWriter, writeSlots } from "../../src/index.ts";
 
 function workspace(label: string): { path: string; dispose: () => void } {
   const root = mkdtempSync(join(tmpdir(), `sqlite-node-${label}-`));

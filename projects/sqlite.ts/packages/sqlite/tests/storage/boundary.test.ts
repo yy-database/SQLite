@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { bindings, createWriter, openSnapshot, writeSlots } from "../src/index.ts";
-import type { DecodedValue } from "../src/index.ts";
+import { bindings, createWriter, openSnapshot, writeSlots } from "../../src/index.ts";
+import type { DecodedValue } from "../../src/index.ts";
 
 // External truth for this file: `better-sqlite3` writes the reference files and
 // every assertion that matters is cross-checked with `PRAGMA integrity_check`.
@@ -18,7 +18,7 @@ const BetterSqlite = require("better-sqlite3") as new (path: string) => {
   close(): void;
 };
 
-const BLANK = fileURLToPath(new URL("../../sqlite-fixtures/fixtures/blank.sqlite", import.meta.url));
+const BLANK = fileURLToPath(new URL("../../../sqlite-fixtures/fixtures/blank.sqlite", import.meta.url));
 
 // 存储类别由 JS 值类型判别，只在断言里还原成 SQLite 名字。
 function storageKind(value: DecodedValue): "null" | "integer" | "real" | "text" | "blob" {

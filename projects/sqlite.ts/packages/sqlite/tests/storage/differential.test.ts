@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createWriter, openDatabase, writeSlots } from "../src/index.ts";
+import { createWriter, openDatabase, writeSlots } from "../../src/index.ts";
 
 // External truth: the same operation stream is replayed into `better-sqlite3`
 // (and once through Python `sqlite3`) and the full table contents are compared.

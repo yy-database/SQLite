@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createEngine, createEngineFromSnapshot } from "../src/index.ts";
+import { createEngine, createEngineFromSnapshot } from "../../src/index.ts";
 
 const require = createRequire(import.meta.url);
 

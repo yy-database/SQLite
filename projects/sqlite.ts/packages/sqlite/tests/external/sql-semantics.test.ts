@@ -10,9 +10,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { compareOutcomes, runOn, type Cell, type EngineName, type Step, type StepOutcome } from "../../sqlite-harness/src/conformance/oracle.ts";
+import { compareOutcomes, runOn, type Cell, type EngineName, type Step, type StepOutcome } from "../../../sqlite-harness/src/conformance/oracle.ts";
 
-const TESTS_DIR = fileURLToPath(new URL(".", import.meta.url));
+const CORPUS_DIR = fileURLToPath(new URL("./corpus", import.meta.url));
 const ENGINES: EngineName[] = ["better-sqlite3", "node:sqlite", "sql.js"];
 
 interface Case {
@@ -31,13 +31,13 @@ interface Corpus {
 
 function loadCorpus(): Array<{ file: string; corpus: Corpus }> {
   const only = process.env.SQL_CORPUS?.split(",").map((name) => name.trim()).filter(Boolean);
-  return readdirSync(TESTS_DIR)
+  return readdirSync(CORPUS_DIR)
     .filter((name) => name.startsWith("sql-") && name.endsWith(".json"))
     .filter((name) => only === undefined || only.includes(name))
     .sort()
     .map((name) => ({
       file: name,
-      corpus: JSON.parse(readFileSync(join(TESTS_DIR, name), "utf8")) as Corpus,
+      corpus: JSON.parse(readFileSync(join(CORPUS_DIR, name), "utf8")) as Corpus,
     }));
 }
 

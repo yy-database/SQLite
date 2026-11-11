@@ -247,20 +247,34 @@ function build(): { ok: boolean; output: string } {
   };
 }
 
+function collectTestFiles(directory: string, relative = "tests"): string[] {
+  const entries = readdirSync(directory, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const next = `${relative}/${entry.name}`;
+    if (entry.isDirectory()) {
+      files.push(...collectTestFiles(join(directory, entry.name), next));
+    } else if (entry.isFile() && entry.name.endsWith(".test.ts")) {
+      files.push(next);
+    }
+  }
+  return files.sort();
+}
+
 function tsFiles(): { external: string[]; storage: string[]; sql: string[] } {
   const directory = repoPath("projects", "sqlite.ts", "packages", "sqlite", "tests");
-  let names: string[] = [];
+  let paths: string[] = [];
   try {
-    names = readdirSync(directory).filter((name) => name.endsWith(".test.ts")).sort();
+    paths = collectTestFiles(directory);
   } catch {
-    names = [];
+    paths = [];
   }
   return {
-    external: names.filter((name) => TS_EXTERNAL_FILES.includes(name)).map((name) => `tests/${name}`),
-    sql: names.filter((name) => TS_SQL_FILES.includes(name)).map((name) => `tests/${name}`),
-    storage: names
-      .filter((name) => !TS_EXTERNAL_FILES.includes(name) && !TS_SQL_FILES.includes(name))
-      .map((name) => `tests/${name}`),
+    external: paths.filter((path) => TS_EXTERNAL_FILES.includes(basename(path))),
+    sql: paths.filter((path) => TS_SQL_FILES.includes(basename(path))),
+    storage: paths.filter(
+      (path) => !TS_EXTERNAL_FILES.includes(basename(path)) && !TS_SQL_FILES.includes(basename(path)),
+    ),
   };
 }
 
@@ -390,10 +404,16 @@ function runPyLayer(layer: LayerName, modules: string[]): Suite {
 
 function sources(directory: string): string {
   try {
-    return readdirSync(directory)
-      .filter((name) => name.endsWith(".ts") || name.endsWith(".py"))
-      .map((name) => readFileSync(join(directory, name), "utf8"))
-      .join("\n");
+    const chunks: string[] = [];
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        chunks.push(sources(path));
+      } else if (entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".py"))) {
+        chunks.push(readFileSync(path, "utf8"));
+      }
+    }
+    return chunks.join("\n");
   } catch {
     return "";
   }

@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { openDatabase } from "../src/index.ts";
+import { openDatabase } from "../../src/index.ts";
 
 const require = createRequire(import.meta.url);
 const BetterSqlite = require("better-sqlite3") as new (path: string) => {
@@ -74,7 +74,7 @@ test("hot rollback journal rolls partially written pages back", () => {
       process.kill(process.pid, "SIGKILL");
     `;
     const result = spawnSync(process.execPath, ["-e", child], {
-      cwd: join(import.meta.dirname, ".."),
+      cwd: join(import.meta.dirname, "../.."),
       stdio: "ignore",
     });
     // Windows 的 `spawnSync` 不填 `signal`，被强杀的子进程以非零退出码呈现。

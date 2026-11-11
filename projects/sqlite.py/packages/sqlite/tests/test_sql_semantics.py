@@ -13,7 +13,13 @@ import unittest
 from pathlib import Path
 
 CORPUS_DIR = (
-    Path(__file__).resolve().parents[4] / "sqlite.ts" / "packages" / "sqlite" / "tests"
+    Path(__file__).resolve().parents[4]
+    / "sqlite.ts"
+    / "packages"
+    / "sqlite"
+    / "tests"
+    / "external"
+    / "corpus"
 )
 
 

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { SQLite, SQLiteError } from "../src/index.ts";
+import { SQLite, SQLiteError } from "../../src/index.ts";
 
 function tempDir(): { root: string; path: string; dispose: () => void } {
   const root = mkdtempSync(join(tmpdir(), "sqlite-class-"));

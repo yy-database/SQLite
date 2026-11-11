@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createEngine } from "../src/index.ts";
+import { createEngine } from "../../src/index.ts";
 
 function scalarEngine(): ReturnType<typeof createEngine> {
   const engine = createEngine();
