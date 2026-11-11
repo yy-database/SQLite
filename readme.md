@@ -13,7 +13,7 @@ An embedded **SQLite format-3** engine: ordinary `.sqlite` files you can open in
 
 This repository ships a **format-3 compatible** embedded database. Files written here are real SQLite main-database images: `better-sqlite3`, Node’s `node:sqlite`, CPython `sqlite3`, and the upstream CLI can open them. Images those engines write can be read back here.
 
-It is **not** a drop-in replacement for the full SQLite C engine. SQL is a **fail-closed subset** (`CREATE TABLE`, `INSERT`, `SELECT` with plain `WHERE` / `ORDER BY` / `LIMIT`). Joins, rich aggregates, subqueries, and other unsupported forms are rejected with a structured error — they are never silently approximated. Journal mode is limited; there is no WAL writer story and no UDF surface.
+It is **not** a drop-in replacement for the full SQLite C engine. SQL is a **fail-closed subset** of SQLite's dialect: DDL/DML, joins, subqueries, recursive CTEs, set operators, aggregates, window functions, JSON, date/time and math functions, transactions and savepoints, triggers, views, `ATTACH` and `VACUUM` / `VACUUM INTO` are covered; forms outside that surface reject with a structured error instead of being approximated. Journal mode is limited to `preserve` (no WAL writer), host UDF registration is unsupported, and results are materialized rather than streamed.
 
 For a local schema-in-file store that is not SQLite format-3, see [YYDB](https://github.com/yy-database/yydb). For server-shaped Redis / PostgreSQL / MongoDB / MySQL compatibility lines, see the sibling `yy-database` repositories.
 
@@ -112,7 +112,7 @@ order by label
 limit 10;
 ```
 
-`WHERE` may use comparisons, `AND` / `OR` / `NOT`, `IS [NOT] NULL`, column references, and literals. Joins, `GROUP BY`, subqueries, and richer aggregates are rejected. Full API notes and error codes: [package README](./projects/sqlite.ts/packages/sqlite/readme.md).
+`WHERE` may use comparisons, `AND` / `OR` / `NOT`, `IS [NOT] NULL`, column references, and literals. Joins, `GROUP BY`, subqueries, CTEs, aggregates, window functions and `COLLATE` are part of the implemented surface; unsupported forms still reject with a structured error. The authoritative row-by-row matrix is [`sql-capability-matrix.md`](./projects/sqlite.ts/packages/sqlite-harness/gaps/sql-capability-matrix.md). Full API notes and error codes: [package README](./projects/sqlite.ts/packages/sqlite/readme.md).
 
 ## 🧪 Examples
 

@@ -7,9 +7,9 @@
 | 宿主 | Node.js | CPython | 浏览器 / Node（WebAssembly） |
 | 构建 | `scripts/build-napi.mjs` | `maturin build --release` | `cargo build --target wasm32-unknown-unknown` + `wasm-bindgen` |
 | 文件 I/O | 有 | 有 | 无，纯内存 |
-| 读取面 | 表、`WITHOUT ROWID`、索引、schema | 同左 | 无 |
-| 写入面 | 表、索引、写入行、更新、删除、事务、保存 | 同左（不含事务） | 仅 `CREATE TABLE` / `INSERT` |
-| SQL | 无 | 无 | 受限子集 |
+| 读取面 | 表、`WITHOUT ROWID`、索引、schema | 同左 | 同左（内存镜像） |
+| 写入面 | 表、索引、写入行、更新、删除、事务、保存 | 同左 | 同左（内存） |
+| SQL | 有 | 有 | 有（结果 JSON 文本） |
 | 错误载体 | `napi::Error` | `RuntimeError` | `JsError` |
 
 选择建议：
