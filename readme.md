@@ -71,18 +71,24 @@ There is no JSON metadata and no allowlist.
 
 ### `projects/sqlite.ts/packages/sqlite/tests`
 
+Suites are grouped by the harness layers (`external`, `storage`, `sql`).
+
 | File | Cases | Coverage |
 |------|-------|----------|
-| `format3.test.ts` | 13 | header, splits, dividers, overflow, serial types, affinity, rowid alias, schema, indexes, update/delete/rollback, WITHOUT ROWID read, UTF-16 read, views/STRICT/virtual tables |
-| `scenarios.test.ts` | 15 | end-to-end scenarios against `better-sqlite3` and Python `sqlite3` |
-| `boundary.test.ts` | 6 | snapshot byte/limit boundaries, truncation, missing names, virtual tables, view depth, `decodeRecord` |
-| `edge-cases.test.ts` | 4 | 65536 page size, composite PRIMARY KEY WITHOUT ROWID, exact page counts, catalog root pages |
-| `differential.test.ts` | 3 | seeded insert/update/delete streams replayed against `better-sqlite3` and Python `sqlite3`, index scan parity |
-| `corpus.test.ts` | 2 | externally written corpus (all storage classes, index/view/STRICT), UTF-16LE and UTF-16BE |
-| `stress-matrix.test.ts` | 7 | 10k-row sequential/shuffled/bulk/hollow/overflow/index-churn loads, Python oracle |
-| `wal-journal.test.ts` | 2 | committed WAL frames and hot rollback journal semantics |
-| `sql-semantics.test.ts` | 283 | `sql-*.json` corpus judged by three external builds at once (`better-sqlite3`, `node:sqlite`, `sql.js`) |
-| `sql-engine.test.ts` | 8 | this repository's SQL engine: statement envelopes, batches, structured rejections, blobs, and a snapshot read by `better-sqlite3` |
+| `external/sql-semantics.test.ts` | 283 | `external/corpus/sql-*.json` judged by three external builds at once (`better-sqlite3`, `node:sqlite`, `sql.js`) |
+| `storage/format3.test.ts` | 13 | header, splits, dividers, overflow, serial types, affinity, rowid alias, schema, indexes, update/delete/rollback, WITHOUT ROWID read, UTF-16 read, views/STRICT/virtual tables |
+| `storage/scenarios.test.ts` | 15 | end-to-end scenarios against `better-sqlite3` and Python `sqlite3` |
+| `storage/boundary.test.ts` | 6 | snapshot byte/limit boundaries, truncation, missing names, virtual tables, view depth, `decodeRecord` |
+| `storage/edge-cases.test.ts` | 4 | 65536 page size, composite PRIMARY KEY WITHOUT ROWID, exact page counts, catalog root pages |
+| `storage/differential.test.ts` | 3 | seeded insert/update/delete streams replayed against `better-sqlite3` and Python `sqlite3`, index scan parity |
+| `storage/corpus.test.ts` | 2 | externally written corpus (all storage classes, index/view/STRICT), UTF-16LE and UTF-16BE |
+| `storage/stress-matrix.test.ts` | 7 | 10k-row sequential/shuffled/bulk/hollow/overflow/index-churn loads, Python oracle |
+| `storage/wal-journal.test.ts` | 2 | committed WAL frames and hot rollback journal semantics |
+| `storage/node-sqlite.test.ts` | 5 | round-trips against Node's built-in `node:sqlite` |
+| `storage/sqlite-api.test.ts` | 18 | `SQLite` class contract: types, binding, cursors, transactions, read-only, options honesty |
+| `sql/sql-engine.test.ts` | 8 | this repository's SQL engine: statement envelopes, batches, structured rejections, blobs, and a snapshot read by `better-sqlite3` |
+| `sql/sql-expression.test.ts` | 26 | projection, predicates, functions, subqueries, and join expression surface |
+| `sql/three-valued-logic.test.ts` | 16 | SQL `NULL` three-valued predicate cases against `better-sqlite3` |
 
 ### `projects/sqlite.py/packages/sqlite/tests`
 
