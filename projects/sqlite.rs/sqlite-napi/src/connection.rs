@@ -11,7 +11,7 @@ use std::{
 
 use napi::bindgen_prelude::{BigInt, Buffer};
 use napi_derive::napi;
-use sqlite::{Connection, ConnectionOptions, SqlError};
+use sqlite::{Connection, ConnectionOptions, JournalMode, SqlError};
 
 use crate::{
     error::sql_error,
@@ -37,8 +37,28 @@ pub struct SqliteConnectionOptions {
     pub create: Option<bool>,
     pub page_size: Option<u32>,
     pub synchronous: Option<bool>,
+    /// 提交时如何发布镜像：`preserve` / `delete` / `truncate`。
+    pub journal_mode: Option<String>,
     /// 写连接等待跨进程写锁的毫秒数；`None` 与 `0` 都表示只尝试一次。
     pub busy_timeout_ms: Option<u32>,
+}
+
+/// 字符串到 facade `JournalMode` 的映射：合法值交给 facade 解析，
+/// `wal` 保持明确的 `unsupported`，其余未知值以 `option-invalid` 拒绝。
+fn parse_journal_mode(name: Option<String>) -> Result<JournalMode, SqlError> {
+    let Some(name) = name else {
+        return Ok(JournalMode::Preserve);
+    };
+    match JournalMode::parse(&name) {
+        Ok(mode) => Ok(mode),
+        Err(_) if name.trim().eq_ignore_ascii_case("wal") => {
+            Err(SqlError::new("unsupported", "journalMode `wal` is not supported (use preserve|delete|truncate)"))
+        }
+        Err(_) => Err(SqlError::new(
+            "option-invalid",
+            format!("journalMode `{}` is not recognized (use preserve|delete|truncate)", name.trim()),
+        )),
+    }
 }
 
 /// 一个真实连接：解析、执行、事务、文件发布与备份都发生在 Rust。
@@ -69,6 +89,7 @@ impl SqliteConnection {
             create: None,
             page_size: None,
             synchronous: None,
+            journal_mode: None,
             busy_timeout_ms: None,
         });
         let facade = ConnectionOptions {
@@ -78,6 +99,7 @@ impl SqliteConnection {
             create: options.create.unwrap_or(true),
             page_size: options.page_size,
             synchronous: options.synchronous.unwrap_or(true),
+            journal_mode: parse_journal_mode(options.journal_mode).map_err(sql_error)?,
             busy_timeout_ms: u64::from(options.busy_timeout_ms.unwrap_or(0)),
         };
         let connection = Connection::open(facade).map_err(sql_error)?;

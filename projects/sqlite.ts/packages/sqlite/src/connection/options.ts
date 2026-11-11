@@ -19,8 +19,8 @@ export interface SQLiteOptions {
   readOnly?: boolean;
   /** 外键约束，默认开启（本绑定的明确产品策略）。 */
   foreignKeys?: boolean;
-  /** 仅支持 `"preserve"`（提交时发布一致镜像）；`"delete"`/`"wal"` 需要真实日志实现，显式请求会抛 unsupported。 */
-  journalMode?: "preserve" | "delete" | "wal";
+  /** 提交时的回滚日志模式，默认 `"preserve"`；`"wal"` 与未知值显式拒绝。 */
+  journalMode?: "preserve" | "delete" | "truncate";
   /** 新建库的页大小，默认 4096。 */
   pageSize?: number;
   /** `PRAGMA synchronous`：`false` 时落盘跳过持久化刷新，默认 `true`。 */
@@ -58,8 +58,14 @@ export function normalizeOptions(options: SQLiteOptions): NormalizedOptions {
   if ((options as { integers?: unknown }).integers !== undefined) {
     throw new SQLiteError("unsupported", "the integers mode was removed; INTEGER is always bigint, REAL is always number");
   }
-  if (options.journalMode !== undefined && options.journalMode !== "preserve") {
-    throw new SQLiteError("unsupported", `journalMode "${options.journalMode}" needs a real journal/locking implementation`);
+  if (options.journalMode !== undefined) {
+    const mode: string = options.journalMode;
+    if (mode === "wal") {
+      throw new SQLiteError("unsupported", "journalMode \"wal\" needs a WAL writer; use \"preserve\", \"delete\", or \"truncate\"");
+    }
+    if (mode !== "preserve" && mode !== "delete" && mode !== "truncate") {
+      throw new SQLiteError("option-invalid", `journalMode ${JSON.stringify(mode)} is not recognized (use "preserve", "delete", or "truncate")`);
+    }
   }
   if (options.data !== undefined && (options.filename !== undefined || options.create !== undefined)) {
     throw new SQLiteError("option-conflict", "data is mutually exclusive with filename/create");
@@ -78,6 +84,9 @@ export function normalizeOptions(options: SQLiteOptions): NormalizedOptions {
   }
   if (options.busyTimeoutMs !== undefined) {
     native.busyTimeoutMs = options.busyTimeoutMs;
+  }
+  if (options.journalMode !== undefined) {
+    native.journalMode = options.journalMode;
   }
   return { native, foreignKeys: options.foreignKeys ?? true, readOnly };
 }

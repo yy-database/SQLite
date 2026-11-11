@@ -14,6 +14,7 @@ export interface NativeConnectionOptions {
   create?: boolean;
   pageSize?: number;
   synchronous?: boolean;
+  journalMode?: "preserve" | "delete" | "truncate";
   busyTimeoutMs?: number;
 }
 
