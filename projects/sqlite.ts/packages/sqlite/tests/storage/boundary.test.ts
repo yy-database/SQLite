@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fixturePath } from "@yydb/sqlite-fixtures";
 import { bindings, createWriter, openSnapshot, writeSlots } from "../../src/index.ts";
 import type { DecodedValue } from "../../src/index.ts";
 
@@ -18,7 +18,7 @@ const BetterSqlite = require("better-sqlite3") as new (path: string) => {
   close(): void;
 };
 
-const BLANK = fileURLToPath(new URL("../../../sqlite-fixtures/fixtures/blank.sqlite", import.meta.url));
+const BLANK = fixturePath("blank.sqlite");
 
 // 存储类别由 JS 值类型判别，只在断言里还原成 SQLite 名字。
 function storageKind(value: DecodedValue): "null" | "integer" | "real" | "text" | "blob" {

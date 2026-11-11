@@ -230,20 +230,19 @@ function installState(target: PackTarget): PackProbe {
   }
 }
 
-// The native module and the compiled TypeScript entry are both build outputs.
-// Workspace consumers resolve `@yydb/sqlite` through `dist`, so the gate builds
-// it before any suite runs instead of trusting a stale checkout.
+// The native module and the compiled TypeScript entries are build outputs.
+// Product tests import `@yydb/sqlite` and `@yydb/sqlite-harness/oracle` through
+// `dist`, so the gate builds both packages before any suite runs.
 function build(): { ok: boolean; output: string } {
   const native = execFile(process.execPath, [repoPath("scripts", "build-napi.mjs")], repoPath());
+  const tsc = repoPath("node_modules", "typescript", "bin", "tsc");
   const packageDirectory = repoPath("projects", "sqlite.ts", "packages", "sqlite");
-  const typescript = execFile(
-    process.execPath,
-    [repoPath("node_modules", "typescript", "bin", "tsc"), "-p", join(packageDirectory, "tsconfig.json")],
-    packageDirectory,
-  );
+  const harnessDirectory = repoPath("projects", "sqlite.ts", "packages", "sqlite-harness");
+  const typescript = execFile(process.execPath, [tsc, "-p", join(packageDirectory, "tsconfig.json")], packageDirectory);
+  const harness = execFile(process.execPath, [tsc, "-p", join(harnessDirectory, "tsconfig.json")], harnessDirectory);
   return {
-    ok: native.status === 0 && typescript.status === 0,
-    output: `${native.stdout}${native.stderr}${typescript.stdout}${typescript.stderr}`.trim(),
+    ok: native.status === 0 && typescript.status === 0 && harness.status === 0,
+    output: `${native.stdout}${native.stderr}${typescript.stdout}${typescript.stderr}${harness.stdout}${harness.stderr}`.trim(),
   };
 }
 

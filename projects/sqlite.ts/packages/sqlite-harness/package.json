@@ -30,6 +30,11 @@
             "types": "./dist/report/index.d.ts",
             "import": "./dist/report/index.js",
             "default": "./dist/report/index.js"
+        },
+        "./oracle": {
+            "types": "./dist/conformance/oracle.d.ts",
+            "import": "./dist/conformance/oracle.js",
+            "default": "./dist/conformance/oracle.js"
         }
     },
     "bin": {

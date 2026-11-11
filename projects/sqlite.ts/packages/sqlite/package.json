@@ -26,7 +26,12 @@
     "scripts": {
         "build": "tsc -p tsconfig.json",
         "prepack": "tsc -p tsconfig.json",
-        "typecheck": "tsc --noEmit -p tsconfig.json"
+        "typecheck": "tsc --noEmit -p tsconfig.json",
+        "test": "node --experimental-strip-types --test \"tests/**/*.test.ts\""
+    },
+    "devDependencies": {
+        "@yydb/sqlite-fixtures": "workspace:*",
+        "@yydb/sqlite-harness": "workspace:*"
     },
     "optionalDependencies": {
         "@yydb/sqlite-darwin-arm64": "workspace:*",
