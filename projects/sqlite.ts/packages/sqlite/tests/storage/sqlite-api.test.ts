@@ -346,6 +346,34 @@ test("prepare-time columns() matches the key order of all()", () => {
   assert.deepEqual(Object.keys(statement.all()[0]!), labels);
 });
 
+test("prepare-time columns() never executes and keeps faithful value mapping", () => {
+  const db = new SQLite();
+  db.exec("create table typed (id integer primary key, score real, name text, payload blob, missing)");
+  db.run("insert into typed (id, score, name, payload, missing) values (?, ?, ?, ?, ?)", [
+    1n,
+    2.5,
+    "x",
+    new Uint8Array([1, 2]),
+    null,
+  ]);
+
+  // `RETURNING` 让写语句成为行集：表头在 execute 前已定格，且 describe 不写入。
+  const insert = db.prepare("insert into typed (id, name) values (100, 'y') returning id, name");
+  assert.deepEqual(insert.columns(), ["id", "name"]);
+  assert.equal(db.prepare("select count(*) from typed").pluck<bigint>().get(), 1n);
+
+  const statement = db.prepare("select id, score, name, payload, missing from typed");
+  assert.deepEqual(statement.columns(), ["id", "score", "name", "payload", "missing"]);
+  const row = statement.all()[0]!;
+  assert.deepEqual(Object.keys(row), statement.columns());
+  assert.equal(typeof row.id, "bigint");
+  assert.equal(typeof row.score, "number");
+  assert.equal(typeof row.name, "string");
+  assert.ok(row.payload instanceof Uint8Array);
+  assert.equal(row.missing, null);
+  assert.deepEqual(statement.columns(), ["id", "score", "name", "payload", "missing"]);
+});
+
 test("columns() reports honest shapes for non-row-set and undecodable statements", () => {
   const db = new SQLite();
   db.exec("create table shape (id integer primary key, name text)");
