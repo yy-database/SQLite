@@ -9,9 +9,9 @@ import { createSqliteDrizzleDatabase } from "../src/database.ts";
 import { users } from "../src/schema.ts";
 
 async function main(): Promise<void> {
-  const { engine, db } = createSqliteDrizzleDatabase(4096);
+  const { connection, db } = createSqliteDrizzleDatabase(4096);
 
-  engine.execute(
+  connection.exec(
     "create table users (id integer primary key autoincrement not null, name text not null, score real)",
   );
 

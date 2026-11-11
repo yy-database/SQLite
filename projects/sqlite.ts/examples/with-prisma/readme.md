@@ -20,7 +20,7 @@ No Prisma package patches. This example's smoke test exercises the adapter contr
 
 ## Layout
 
-- `src/` — `SqlDriverAdapter` + factory over `createEngine`
+- `src/` — `SqlDriverAdapter` + factory over the public `new SQLite()` entry
 - `tests/adapter-roundtrip.ts` — adapter-level CRUD + transaction smoke
 
 ## Run

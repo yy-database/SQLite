@@ -4,7 +4,7 @@ Drizzle ORM over `@yydb/sqlite` through the public [`drizzle-orm/sqlite-proxy`](
 
 ## Hook
 
-`src/sqlite-proxy.ts` adapts `createEngine` / `executeWithParameters` to the async
+`src/sqlite-proxy.ts` adapts the public `new SQLite()` entry to the async
 `(sql, params, method) => { rows }` callback that `drizzle()` from `drizzle-orm/sqlite-proxy`
 accepts. No Drizzle package patches.
 
