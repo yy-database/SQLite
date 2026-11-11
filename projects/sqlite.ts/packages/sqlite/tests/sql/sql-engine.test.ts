@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,6 +8,7 @@ import test from "node:test";
 import { createEngine, createEngineFromSnapshot } from "../../src/index.ts";
 
 const require = createRequire(import.meta.url);
+const PYTHON = process.env.PYTHON ?? (process.platform === "win32" ? "python" : "python3");
 
 interface ExternalStatement {
   all(...args: unknown[]): unknown[];
@@ -392,6 +394,159 @@ test("table-level UNIQUE constraints own automatic indexes in written order", ()
     const reopened = createEngineFromSnapshot(engine.snapshot(), 4096);
     assert.throws(() => reopened.execute("insert into tu values (7, 'x', 1, 'c6')"), /UNIQUE constraint failed/);
     assert.deepEqual(reopened.execute("select id from tu order by id").rows, [[1], [2], [5], [6]]);
+  } finally {
+    workspaceHandle.dispose();
+  }
+});
+
+function betterOracleRows(steps: string[], queries: string[]): unknown[][] {
+  const db = new BetterSqlite(":memory:") as unknown as OracleDatabase;
+  try {
+    for (const step of steps) db.exec(step);
+    return queries.map((sql) => oracleRows(db, sql));
+  } finally {
+    db.close();
+  }
+}
+
+function pythonOracleRows(steps: string[], queries: string[]): unknown[][] {
+  const script = [
+    "import json, sqlite3, sys",
+    "payload = json.loads(sys.argv[1])",
+    "connection = sqlite3.connect(':memory:')",
+    "for step in payload['steps']:",
+    "    connection.execute(step)",
+    "print(json.dumps([[list(row) for row in connection.execute(query).fetchall()] for query in payload['queries']]))",
+    "connection.close()",
+  ].join("\n");
+  const output = spawnSync(PYTHON, ["-c", script, JSON.stringify({ steps, queries })], {
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+  assert.ifError(output.error);
+  assert.equal(output.status, 0, output.stderr);
+  return JSON.parse(output.stdout.trim()) as unknown[][];
+}
+
+function pythonOracleError(steps: string[], statement: string): string {
+  const script = [
+    "import json, sqlite3, sys",
+    "payload = json.loads(sys.argv[1])",
+    "connection = sqlite3.connect(':memory:')",
+    "for step in payload['steps']:",
+    "    connection.execute(step)",
+    "try:",
+    "    connection.execute(payload['statement'])",
+    "    message = ''",
+    "except Exception as error:",
+    "    message = str(error)",
+    "print(json.dumps(message))",
+    "connection.close()",
+  ].join("\n");
+  const output = spawnSync(PYTHON, ["-c", script, JSON.stringify({ steps, statement })], {
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+  assert.ifError(output.error);
+  assert.equal(output.status, 0, output.stderr);
+  return JSON.parse(output.stdout.trim()) as string;
+}
+
+// The expectation for every COLLATE case comes from the two live oracles, never
+// from this engine's own output. `better-sqlite3` supplies the rows and CPython
+// must agree with it before the engine is allowed to compare at all.
+function assertBothOracleRows(
+  engine: ReturnType<typeof createEngine>,
+  steps: string[],
+  queries: string[],
+): unknown[][] {
+  const better = betterOracleRows(steps, queries);
+  assert.deepEqual(better, pythonOracleRows(steps, queries), "better-sqlite3 and CPython sqlite3 disagree");
+  for (const step of steps) engine.execute(step);
+  queries.forEach((sql, index) => assert.deepEqual(engine.execute(sql).rows, better[index], sql));
+  return better;
+}
+
+test("column COLLATE NOCASE folds equality, grouping and DISTINCT like both oracles", () => {
+  const engine = createEngine(4096);
+  assertBothOracleRows(
+    engine,
+    ["create table n (s text collate nocase)", "insert into n values ('a'), ('A'), ('b'), ('B')"],
+    [
+      "select count(*) from n where s = 'b'",
+      "select s, count(*) from n group by s order by s",
+      "select distinct s from n order by s",
+      "select s from n order by s",
+      "select s from n order by s desc",
+    ],
+  );
+});
+
+test("column COLLATE NOCASE enforces UNIQUE across case like both oracles", () => {
+  const engine = createEngine(4096);
+  const steps = ["create table n (s text collate nocase unique)", "insert into n values ('a')"];
+  for (const step of steps) engine.execute(step);
+  const rejected = engine.tryExecute("insert into n values ('A')");
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.error?.message ?? "", /UNIQUE constraint failed/i);
+  assert.deepEqual(engine.execute("select s from n").rows, betterOracleRows(steps, ["select s from n"])[0]);
+
+  withOracle(steps, (db) => {
+    assert.throws(() => db.exec("insert into n values ('A')"), /UNIQUE constraint failed/i);
+  });
+  assert.match(pythonOracleError(steps, "insert into n values ('A')"), /UNIQUE constraint failed/i);
+});
+
+test("expression COLLATE NOCASE drives equality, WHERE and ORDER BY like both oracles", () => {
+  const engine = createEngine(4096);
+  assertBothOracleRows(
+    engine,
+    ["create table p (x text)", "insert into p values ('a'), ('A'), ('b')"],
+    [
+      "select 'a' = 'A' collate nocase",
+      "select count(*) from p where x = 'a' collate nocase",
+      "select x from p order by x collate nocase",
+      "select x from p order by x collate nocase desc",
+      "select distinct x collate nocase from p order by x collate nocase",
+    ],
+  );
+});
+
+test("index COLLATE NOCASE keeps an external-valid image and folds unique keys", () => {
+  const engine = createEngine(4096);
+  const steps = [
+    "create table t (s text)",
+    "insert into t values ('a'), ('B'), ('b'), ('A')",
+    "create index i on t (s collate nocase)",
+    "create table u (x text)",
+    "insert into u values ('a')",
+    "create unique index ui on u (x collate nocase)",
+  ];
+  const queries = [
+    "select s from t order by s collate nocase",
+    "select count(*) from t where s = 'b' collate nocase",
+  ];
+  const expected = assertBothOracleRows(engine, steps, queries);
+  const xinfo = betterOracleRows(steps, ["pragma index_xinfo(i)"])[0];
+  assert.deepEqual(xinfo, pythonOracleRows(steps, ["pragma index_xinfo(i)"])[0], "index xinfo differs between oracles");
+  assert.match(pythonOracleError(steps, "insert into u values ('A')"), /UNIQUE constraint failed/i);
+  const rejected = engine.tryExecute("insert into u values ('A')");
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.error?.message ?? "", /UNIQUE constraint failed/i);
+
+  const workspaceHandle = workspace();
+  try {
+    writeFileSync(workspaceHandle.path, engine.snapshot());
+    const external = new BetterSqlite(workspaceHandle.path) as unknown as OracleDatabase;
+    try {
+      assert.equal((external.prepare("pragma integrity_check").all()[0] as { integrity_check: string }).integrity_check, "ok");
+      assert.deepEqual(oracleRows(external, "pragma index_xinfo(i)"), xinfo);
+      assert.deepEqual(oracleRows(external, "select s from t indexed by i order by s collate nocase"), expected[0]);
+      assert.deepEqual(oracleRows(external, "select count(*) from t indexed by i where s = 'b' collate nocase"), expected[1]);
+      assert.throws(() => external.exec("insert into u values ('A')"), /UNIQUE constraint failed/i);
+    } finally {
+      external.close();
+    }
   } finally {
     workspaceHandle.dispose();
   }

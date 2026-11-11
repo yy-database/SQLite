@@ -18,7 +18,7 @@ Status legend:
 - `uncovered` — implemented and oracle-matching, but no gate executed it before this change.
 - `missing` — rejected with a structured error.
 
-Cluster totals (121 feature rows): **118 gated / 0 uncovered / 3 missing** at the pin.
+Cluster totals (121 feature rows): **120 gated / 0 uncovered / 1 missing** at the pin.
 
 ## DDL
 
@@ -35,7 +35,7 @@ Cluster totals (121 feature rows): **118 gated / 0 uncovered / 3 missing** at th
 | `CREATE TABLE ... AS SELECT` | `create table dst as select a from src where a > 1` | gated | the query runs before the table exists, output labels become declared names (duplicates numbered `:1`, `:2`), a bare source column copies its affinity as `INT` / `TEXT` / `REAL` / `NUM` while expressions get no type, `CREATE TABLE ... AS` stores the generated compact definition, and the statement reports `affected = 0`; `create table as select derives declared types and rows like better-sqlite3` |
 | Partial index (`... WHERE`) | `create index pix on pi (a) where a > 1` | gated | only rows satisfying the predicate enter the index b-tree, the membership is recomputed on every write so an update that fails the predicate removes the entry, a `UNIQUE ... WHERE` still rejects duplicates among covered rows, and better-sqlite3 opens the file with `integrity_check = ok`, answers a query through the partial index and keeps it consistent after its own insert; `expression and partial indexes maintain their own keys` |
 | Expression index | `create index eix on ei (a + 1)` or `lower(name)` | gated | the engine evaluates each key term per row and hands the exact key/rowid pairs to the writer, a plain index keeps its column-derived keys, updates change the stored key, and better-sqlite3 opens the file with `integrity_check = ok` and answers an expression-indexed query; `expression and partial indexes maintain their own keys` |
-| Index `COLLATE` | `create index cix on ci (s collate nocase)` | missing | `unsupported-clause` `COLLATE`: this engine compares keys with binary order, so a collated key would sort differently from better-sqlite3 and corrupt the tree; the gate pins this rejection |
+| Index `COLLATE` | `create index cix on ci (s collate nocase)` | gated | the key stores the declared `nocase` collation (`pragma index_xinfo` reports `coll = 'nocase'`), ordered and folded `WHERE` queries answer through the index, better-sqlite3 opens the written snapshot with `integrity_check = ok`, and `CREATE UNIQUE INDEX ... COLLATE NOCASE` rejects a case-folded duplicate on both sides; `index COLLATE NOCASE keeps an external-valid image and folds unique keys` |
 | `CREATE VIEW` | `create view vv as select a from vt where a > 1` | gated | re-runs the stored query on every read, keeps `CREATE VIEW <name>` plus the verbatim rest in `sqlite_master.sql`, rejects writes and indexes with `readonly-view`, and survives a reopen; `views re-run their query and keep catalog rows like better-sqlite3` |
 | View output naming | `create view e as select a + 1, a from t` | gated | unaliased expressions keep their exact source span (`a + 1`, `1.50`, `cast(a as text)`, `'x'`), a bare column reports the schema spelling (`select A` → `a`), and repeated names are suffixed `:1`, `:2` in views, derived tables and CTEs; `view output names follow better-sqlite3 for spans, aliases and duplicates` |
 | Declared view column list arity | `create view short(x) as select a, b from t` | gated | creation succeeds and any read reports `expected 1 columns for 'short' but got 2`, repeated declared names are de-duplicated, and matching lists rename the output; `declared view column lists report oracle arity diagnostics` |
@@ -102,7 +102,7 @@ Cluster totals (121 feature rows): **118 gated / 0 uncovered / 3 missing** at th
 | `GROUP BY` an expression | `select a + 1 as k, count(*) from gb group by a + 1 order by k` | gated | oracle-matching with both oracles |
 | Modulo `%` | `select 7 % 3, -7 % 3, 7.5 % 2, 7 % 2.5, 5 % 0` | gated | truncates both operands to integers, keeps the dividend's sign, returns a real when either operand was real, `NULL` for a zero divisor; `instr, round and modulo follow the oracle exactly` |
 | `GLOB` / `NOT GLOB` | `select 'abc' glob 'a*'` | gated | case sensitive, `*` matches any run, `?` exactly one character, `[a-c]` is a range, `^` negates a class, a leading `]` is a member, an unclosed `[` never matches, numbers are compared as text, a blob operand never matches and `NULL` propagates; `glob follows sqlite class and case rules` |
-| `COLLATE` (column, expression, `ORDER BY`) | `select 'a' = 'A' collate nocase` | missing | `unsupported-column-constraint` `COLLATE`; expression form is `syntax` |
+| `COLLATE` (column, expression, `ORDER BY`) | `select 'a' = 'A' collate nocase` | gated | column-level `NOCASE` folds `UNIQUE`, `WHERE`, `GROUP BY`, `SELECT DISTINCT` and `ORDER BY` in both directions, the expression form folds `=`, `WHERE` and `ORDER BY`, and `CREATE TABLE ... TEXT COLLATE NOCASE UNIQUE` rejects a case-folded duplicate; every row agrees with `better-sqlite3` and CPython `sqlite3`; `column COLLATE NOCASE folds equality, grouping and DISTINCT like both oracles`, `column COLLATE NOCASE enforces UNIQUE across case like both oracles`, `expression COLLATE NOCASE drives equality, WHERE and ORDER BY like both oracles` |
 | `IS DISTINCT FROM` / `IS NOT DISTINCT FROM` | `select 1 is distinct from 2` | gated | `NULL` is an ordinary value (`NULL` versus `NULL` is not distinct, `NULL` versus anything else is), non-null operands keep the storage-class ordering so `1` and `1.0` are equal while `1` and `'1'` are not, and `AND` binds looser; `is distinct from treats null as a value like better-sqlite3` |
 | `ORDER BY ... NULLS FIRST/LAST` | `select a from onf order by a asc nulls first` | gated | each key carries its own placement, the default keeps `NULL` below every value (first for `ASC`, last for `DESC`), the placement also drives the sort order a window frame reads; `order by nulls first and last override the default placement` |
 | `SELECT DISTINCT` | `select distinct a from sd order by a` | gated | collapses duplicates before `ORDER BY` and `LIMIT`; `select distinct collapses duplicates before order by and limit` |
@@ -191,22 +191,20 @@ Cluster totals (121 feature rows): **118 gated / 0 uncovered / 3 missing** at th
 | `DETACH DATABASE` | `detach database aux` | gated | flushes the attached image, removes the schema, refuses `main` / `temp` with `cannot detach database <name>` and an unknown name with `no such database: <name>`; same gates |
 | `VACUUM` / `VACUUM INTO` | `vacuum` | missing | `unsupported-statement` at `vacuum` |
 
-## Unimplemented: top 2 by impact
+## Unimplemented: top 1 by impact
 
-Ranked by how many ordinary SQLite clients would break on the first statement they send. Date/time and math
-functions, `trim`, `replace`, `ifnull`, `nullif`, `printf`, multi-argument `min` / `max`, foreign keys,
+`VACUUM` / `VACUUM INTO` is the only statement still outside the accepted surface at this pin. Date/time and
+math functions, `trim`, `replace`, `ifnull`, `nullif`, `printf`, multi-argument `min` / `max`, foreign keys,
 recursive CTEs, transaction control, `SELECT DISTINCT`, modulo, `instr`, `CREATE TABLE ... AS SELECT`,
 `INSERT ... SELECT`, `REPLACE`, `IS DISTINCT FROM`, `GLOB`, `NULLS FIRST|LAST`, aggregate `FILTER` / `DISTINCT` /
-argument `ORDER BY` and window `GROUPS` / `EXCLUDE` are no longer on this list: all landed at this pin and are
-asserted by the gate.
+argument `ORDER BY`, window `GROUPS` / `EXCLUDE`, JSON functions with `->` / `->>`, and `COLLATE` on columns,
+expressions, indexes and `ORDER BY` are all gated at this pin.
 
 | # | Gap | Impact | Upstream coordinates |
 |---|-----|--------|---------------------|
-| 1 | `COLLATE` (column, expression, `ORDER BY`) | Case-insensitive comparisons and sorted output | `sql.rs`, no collation hook in the key comparators |
-| 2 | JSON functions and `->` / `->>` | Structured payloads stored as text | `sql.rs:333-357` (`ScalarFunction`), `BinaryOp` |
+| 1 | `VACUUM` / `VACUUM INTO` | Compaction and copy-out tooling | `sql.rs`, statement dispatch rejects `vacuum` before planning |
 
-Next tier, lower blast radius but still visible: `VACUUM`,
-`INSERT OR IGNORE`, `UPDATE ... FROM`, row-value assignment and expression tuples inside `VALUES`.
+Next tier: none. Every other probe row in this file is gated.
 
 ## Landed at this pin
 
