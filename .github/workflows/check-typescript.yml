@@ -69,5 +69,7 @@ jobs:
         run: pnpm install --no-frozen-lockfile
       - name: Build the native binding
         run: node scripts/build-napi.mjs
+      - name: Build the TypeScript package
+        run: pnpm --filter @yydb/sqlite build
       - name: Differential corpus gate
         run: pnpm corpus --seed 20261106 --count 200 --check
