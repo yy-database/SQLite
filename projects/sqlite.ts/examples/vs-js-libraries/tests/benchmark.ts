@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
-import { createEngine, createWriter, openDatabase, openWriter } from "../../../packages/sqlite/src/index.ts";
+import { createWriter, openDatabase, openWriter, SQLite } from "../../../packages/sqlite/src/index.ts";
 import { workspace } from "../src/shared.ts";
 import { loadSqlJs, type SqlJsStatic } from "../src/sql-js.ts";
 import { elapsedMs, median, p95 } from "../src/timing.ts";
@@ -571,7 +571,8 @@ function nativeUpsert(factory: (path: string, readOnly?: boolean) => PeerHandle,
 }
 
 // ---------------------------------------------------------------------------
-// `@yydb/sqlite` (format-3 writer/reader + SQL engine)
+// `@yydb/sqlite` (public `new SQLite()` for SQL workloads + format-3
+// writer/reader for the workloads the public API does not expose)
 // ---------------------------------------------------------------------------
 
 function ourBatchLoad(path: string): number {
@@ -617,21 +618,19 @@ function ourPoint(path: string): number[] {
 }
 
 function ourPointSql(): number[] {
-  const engine = createEngine(PAGE_SIZE);
-  engine.execute("create table items (id integer primary key, label text, score real)");
-  for (let row = 1; row <= ROWS; row += 1) {
-    engine.execute(`insert into items (id, label, score) values (${row}, 'row-${row}', ${row / 4})`);
-  }
+  const database = buildDatabase();
   const ids = Array.from({ length: POINT_OPS }, (_, index) => (index % ROWS) + 1);
   const samples: number[] = [];
   for (let round = 0; round < ROUNDS; round += 1) {
     const start = process.hrtime.bigint();
     for (const id of ids) {
-      const result = engine.execute(`select id, label, score from items where id = ${id}`);
-      if (result.rows.length !== 1) throw new Error(`point miss id=${id}`);
+      if (database.get(`select id, label, score from items where id = ${id}`) === undefined) {
+        throw new Error(`point miss id=${id}`);
+      }
     }
     samples.push(elapsedMs(start));
   }
+  database.close();
   return samples;
 }
 
@@ -651,44 +650,44 @@ function ourRange(path: string): number[] {
 }
 
 function ourIndexed(): number[] {
-  const engine = createEngine(PAGE_SIZE);
-  engine.execute("create table items (id integer primary key, label text, score real)");
-  engine.execute("create index items_label on items (label)");
-  for (let row = 1; row <= ROWS; row += 1) {
-    engine.execute(`insert into items (id, label, score) values (${row}, 'row-${row}', ${row / 4})`);
-  }
+  const database = buildDatabase("label");
   const labels = Array.from({ length: POINT_OPS }, (_, index) => `row-${(index % ROWS) + 1}`);
   const samples: number[] = [];
   for (let round = 0; round < ROUNDS; round += 1) {
     const start = process.hrtime.bigint();
     for (const label of labels) {
-      const result = engine.execute(`select id, label, score from items where label = '${label}'`);
-      if (result.rows.length !== 1) throw new Error(`indexed miss label=${label}`);
+      if (database.get(`select id, label, score from items where label = '${label}'`) === undefined) {
+        throw new Error(`indexed miss label=${label}`);
+      }
     }
     samples.push(elapsedMs(start));
   }
+  database.close();
   return samples;
 }
 
-type Engine = ReturnType<typeof createEngine>;
+type IndexKind = "none" | "label" | "uk";
 
-function buildEngine(withUniqueIndex: boolean): Engine {
-  const engine = createEngine(PAGE_SIZE);
-  engine.execute("create table items (id integer primary key, label text, score real)");
-  if (withUniqueIndex) engine.execute(UK_INDEX_DDL);
-  for (let row = 1; row <= ROWS; row += 1) {
-    engine.execute(`insert into items (id, label, score) values (${row}, 'row-${row}', ${row / 4})`);
-  }
-  return engine;
+function buildDatabase(index: IndexKind = "none"): SQLite {
+  const database = new SQLite();
+  database.exec("create table items (id integer primary key, label text, score real)");
+  if (index === "label") database.exec("create index items_label on items (label)");
+  if (index === "uk") database.exec(UK_INDEX_DDL);
+  const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+  database.transaction(() => {
+    for (let row = 1; row <= ROWS; row += 1) insert.run([BigInt(row), `row-${row}`, row / 4]);
+  });
+  return database;
 }
 
 function ourPointUk(): number[] {
-  const engine = buildEngine(true);
+  const database = buildDatabase("uk");
   const labels = Array.from({ length: POINT_OPS }, (_, index) => `row-${(index % ROWS) + 1}`);
   const run = () => {
     for (const label of labels) {
-      const result = engine.execute(`select id, label, score from items where label = '${label}'`);
-      if (result.rows.length !== 1) throw new Error(`point_uk miss label=${label}`);
+      if (database.get(`select id, label, score from items where label = '${label}'`) === undefined) {
+        throw new Error(`point_uk miss label=${label}`);
+      }
     }
   };
   run();
@@ -698,17 +697,18 @@ function ourPointUk(): number[] {
     run();
     samples.push(elapsedMs(start));
   }
+  database.close();
   return samples;
 }
 
-function ourOrderLimit(engine: Engine): number[] {
+function ourOrderLimit(database: SQLite): number[] {
   const expected = Math.min(ORDER_LIMIT_ROWS, ROWS);
   const run = () => {
     for (let op = 0; op < LIMIT_OPS; op += 1) {
-      const rows = engine.execute(ORDER_LIMIT_SQL).rows as unknown[][];
+      const rows = database.all<{ id: bigint }>(ORDER_LIMIT_SQL);
       if (rows.length !== expected) throw new Error(`order_limit returned ${rows.length}, expected ${expected}`);
       for (let index = 0; index < rows.length; index += 1) {
-        if (Number(rows[index][0]) !== index + 1) throw new Error(`order_limit key order broken at ${index}`);
+        if (Number(rows[index].id) !== index + 1) throw new Error(`order_limit key order broken at ${index}`);
       }
     }
   };
@@ -722,13 +722,13 @@ function ourOrderLimit(engine: Engine): number[] {
   return samples;
 }
 
-function ourGroupBy(engine: Engine): number[] {
+function ourGroupBy(database: SQLite): number[] {
   const expected = expectedGroupBuckets();
   const run = () => {
     for (let op = 0; op < AGG_OPS; op += 1) {
-      const rows = engine.execute(GROUP_BY_SQL).rows as unknown[][];
+      const rows = database.all<{ bucket: bigint; total: bigint }>(GROUP_BY_SQL);
       if (rows.length !== expected) throw new Error(`group_by returned ${rows.length} groups, expected ${expected}`);
-      const total = rows.reduce((sum, row) => sum + Number(row[1]), 0);
+      const total = rows.reduce((sum, row) => sum + Number(row.total), 0);
       if (total !== ROWS) throw new Error(`group_by totals ${total}, expected ${ROWS}`);
     }
   };
@@ -742,12 +742,12 @@ function ourGroupBy(engine: Engine): number[] {
   return samples;
 }
 
-function ourJoin(engine: Engine): number[] {
+function ourJoin(database: SQLite): number[] {
   const expected = expectedJoinMatches();
   const run = () => {
     for (let op = 0; op < JOIN_OPS; op += 1) {
-      const rows = engine.execute(JOIN_SQL).rows as unknown[][];
-      const matched = Number(rows[0]?.[0]);
+      const rows = database.all<{ matched: bigint }>(JOIN_SQL);
+      const matched = Number(rows[0]?.matched);
       if (matched !== expected) throw new Error(`join matched ${matched}, expected ${expected}`);
     }
   };
@@ -817,10 +817,10 @@ function ourOpen(path: string): number[] {
   return samples;
 }
 
-function ourDistinct(engine: Engine): number[] {
+function ourDistinct(database: SQLite): number[] {
   const run = () => {
     for (let op = 0; op < DISTINCT_OPS; op += 1) {
-      const rows = engine.execute(DISTINCT_SQL).rows;
+      const rows = database.all<{ label: string }>(DISTINCT_SQL);
       if (rows.length !== ROWS) throw new Error(`distinct returned ${rows.length}, expected ${ROWS}`);
     }
   };
@@ -834,15 +834,15 @@ function ourDistinct(engine: Engine): number[] {
   return samples;
 }
 
-function ourAggregate(engine: Engine): number[] {
+function ourAggregate(database: SQLite): number[] {
   const expectedSum = (ROWS * (ROWS + 1)) / 8;
   const run = () => {
     for (let op = 0; op < AGG_OPS; op += 1) {
-      const row = engine.execute(AGGREGATE_SQL).rows[0];
+      const row = database.get<{ n: bigint; total: number; lo: number; hi: number }>(AGGREGATE_SQL);
       if (!row) throw new Error("aggregate returned no row");
-      if (Number(row[0]) !== ROWS) throw new Error(`aggregate rows ${row[0]}, expected ${ROWS}`);
-      if (Math.abs(Number(row[1]) - expectedSum) > 1e-6) throw new Error(`aggregate sum ${row[1]}, expected ${expectedSum}`);
-      if (Number(row[2]) !== 0.25 || Number(row[3]) !== ROWS / 4) throw new Error(`aggregate bounds ${JSON.stringify(row)}`);
+      if (Number(row.n) !== ROWS) throw new Error(`aggregate rows ${row.n}, expected ${ROWS}`);
+      if (Math.abs(Number(row.total) - expectedSum) > 1e-6) throw new Error(`aggregate sum ${row.total}, expected ${expectedSum}`);
+      if (Number(row.lo) !== 0.25 || Number(row.hi) !== ROWS / 4) throw new Error(`aggregate bounds ${JSON.stringify(row)}`);
     }
   };
   run();
@@ -855,12 +855,12 @@ function ourAggregate(engine: Engine): number[] {
   return samples;
 }
 
-function ourSubquery(engine: Engine): number[] {
+function ourSubquery(database: SQLite): number[] {
   const expected = expectedSubqueryRows();
   const run = () => {
     for (let op = 0; op < SUBQUERY_OPS; op += 1) {
-      const rows = engine.execute(SUBQUERY_SQL).rows;
-      if (rows.length !== 1 || Number(rows[0][0]) !== expected) {
+      const rows = database.all<{ n: bigint }>(SUBQUERY_SQL);
+      if (rows.length !== 1 || Number(rows[0].n) !== expected) {
         throw new Error(`subquery returned ${JSON.stringify(rows)}, expected ${expected}`);
       }
     }
@@ -876,11 +876,11 @@ function ourSubquery(engine: Engine): number[] {
 }
 
 function ourIndexRange(): number[] {
-  const engine = buildEngine(true);
+  const database = buildDatabase("uk");
   const expected = expectedIndexRangeRows();
   const run = () => {
     for (let op = 0; op < RANGE_OPS; op += 1) {
-      const rows = engine.execute(INDEX_RANGE_SQL).rows;
+      const rows = database.all<{ id: bigint }>(INDEX_RANGE_SQL);
       if (rows.length !== expected) throw new Error(`index_range returned ${rows.length}, expected ${expected}`);
     }
   };
@@ -891,49 +891,52 @@ function ourIndexRange(): number[] {
     run();
     samples.push(elapsedMs(start));
   }
+  database.close();
   return samples;
 }
 
 function ourInsertMulti(): number[] {
   const samples: number[] = [];
   for (let round = 0; round < ROUNDS; round += 1) {
-    const engine = createEngine(PAGE_SIZE);
-    engine.execute("create table items (id integer primary key, label text, score real)");
+    const database = new SQLite();
+    database.exec("create table items (id integer primary key, label text, score real)");
     const start = process.hrtime.bigint();
-    engine.execute("begin");
+    database.exec("begin");
     for (let statement = 0; statement < MULTI_STATEMENTS; statement += 1) {
       const values: string[] = [];
       for (let row = 0; row < MULTI_ROWS_PER_STATEMENT; row += 1) {
         const id = statement * MULTI_ROWS_PER_STATEMENT + row + 1;
         values.push(`(${id}, 'multi-${id}', ${id / 4})`);
       }
-      engine.execute(`insert into items (id, label, score) values ${values.join(", ")}`);
+      database.run(`insert into items (id, label, score) values ${values.join(", ")}`);
     }
-    engine.execute("commit");
+    database.exec("commit");
     samples.push(elapsedMs(start));
-    const count = engine.execute("select count(*) as n from items").rows[0];
-    if (!count || Number(count[0]) !== MULTI_STATEMENTS * MULTI_ROWS_PER_STATEMENT) {
+    const count = database.get<{ n: bigint }>("select count(*) as n from items");
+    if (!count || Number(count.n) !== MULTI_STATEMENTS * MULTI_ROWS_PER_STATEMENT) {
       throw new Error(`insert_multi rows ${JSON.stringify(count)}`);
     }
+    database.close();
   }
   return samples;
 }
 
 function ourUpsert(): number[] {
-  const engine = buildEngine(false);
+  const database = buildDatabase();
   const samples: number[] = [];
   for (let round = 0; round < ROUNDS; round += 1) {
     const start = process.hrtime.bigint();
-    engine.execute("begin");
+    database.exec("begin");
     for (let op = 0; op < UPSERT_OPS; op += 1) {
       const id = (op % ROWS) + 1;
-      engine.execute(`insert into items (id, label, score) values (${id}, 'row-${id}', 7.25) on conflict(id) do update set score = excluded.score`);
+      database.run(`insert into items (id, label, score) values (${id}, 'row-${id}', 7.25) on conflict(id) do update set score = excluded.score`);
     }
-    engine.execute("commit");
+    database.exec("commit");
     samples.push(elapsedMs(start));
   }
-  const row = engine.execute("select score from items where id = 1").rows[0];
-  if (!row || Number(row[0]) !== 7.25) throw new Error(`upsert did not update: ${JSON.stringify(row)}`);
+  const row = database.get<{ score: number }>("select score from items where id = 1");
+  if (!row || Number(row.score) !== 7.25) throw new Error(`upsert did not update: ${JSON.stringify(row)}`);
+  database.close();
   return samples;
 }
 
@@ -1558,13 +1561,14 @@ try {
     rollback: ourRollback(oursSpace.path),
     open: ourOpen(oursSpace.path),
   };
-  const analyticEngine = buildEngine(false);
-  oursSamples.order_limit = ourOrderLimit(analyticEngine);
-  oursSamples.group_by = ourGroupBy(analyticEngine);
-  oursSamples.join = ourJoin(analyticEngine);
-  oursSamples.distinct = ourDistinct(analyticEngine);
-  oursSamples.aggregate = ourAggregate(analyticEngine);
-  oursSamples.subquery = ourSubquery(analyticEngine);
+  const analyticDatabase = buildDatabase();
+  oursSamples.order_limit = ourOrderLimit(analyticDatabase);
+  oursSamples.group_by = ourGroupBy(analyticDatabase);
+  oursSamples.join = ourJoin(analyticDatabase);
+  oursSamples.distinct = ourDistinct(analyticDatabase);
+  oursSamples.aggregate = ourAggregate(analyticDatabase);
+  oursSamples.subquery = ourSubquery(analyticDatabase);
+  analyticDatabase.close();
   oursSamples.index_range = ourIndexRange();
   oursSamples.insert_multi = ourInsertMulti();
   oursSamples.upsert = ourUpsert();
@@ -1684,10 +1688,10 @@ ${markdownAbsoluteTable([
 - \`batch\`: create table, ${ROWS} rows in transactions of ${ROWS_PER_TXN}, save file. \`BENCH_SYNCHRONOUS=on\` moves every library to \`synchronous=FULL\`.
 - \`scan\`: open + full table scan per round.
 - \`point\`: reader \`rowByRowid\` vs each peer's prepared \`get\`.
-- \`point_sql\`: our SQL engine \`select ... where id = N\` vs the same peer prepared \`get\` (peer cells reuse \`point\`).
-- \`point_uk\`: point lookup through a **unique** index on \`label\`; our side runs \`select ... where label = '...'\` on an engine carrying \`create unique index\`, peers through their unique index (one untimed warmup round first).
+- \`point_sql\`: our public \`new SQLite()\` \`select ... where id = N\` vs the same peer prepared \`get\` (peer cells reuse \`point\`).
+- \`point_uk\`: point lookup through a **unique** index on \`label\`; our side runs \`select ... where label = '...'\` on \`new SQLite()\` carrying \`create unique index\`, peers through their unique index (one untimed warmup round first).
 - \`range\`: ${RANGE_WIDTH}-row \`between\` windows, reader \`range\` vs peers' prepared range.
-- \`indexed\`: equality on an indexed \`label\` column; our side runs through the SQL engine, peers through their index.
+- \`indexed\`: equality on an indexed \`label\` column; our side runs through \`new SQLite()\`, peers through their index.
 - \`order_limit\`: \`select ... order by id limit ${ORDER_LIMIT_ROWS}\` — repeated ${LIMIT_OPS}x per round; separates the key-order scan constant from the per-statement fixed cost.
 - \`group_by\`: \`select cast(score as integer), count(*) ... group by cast(score as integer)\` (${AGG_OPS} queries per round, ${expectedGroupBuckets()} groups over ${ROWS} rows).
 - \`join\`: \`select count(*) from items join items as b on b.id = items.id % ${JOIN_MODULO}\` (${JOIN_OPS} queries per round, ${expectedJoinMatches()} matched pairs) — exposes a nested full scan of the inner side.
@@ -1709,15 +1713,24 @@ ${markdownAbsoluteTable([
 - \`point_sql\` has no separate peer path — peers' prepared \`get\` is the reference.
 - The wasm column reads the same in-memory image every round (\`SELECT\` re-scans the image; the binding has no seek), and its \`batch\` includes \`snapshot()\` + the file write.
 - sql.js and the wasm binding do not run the six SQL-feature workloads (\`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`), so those cells stay \`n/a\`; they are compared only on \`node:sqlite\` and \`better-sqlite3\`.
-- \`insert_multi\` and \`upsert\` on our side run on the in-memory SQL engine, while the two peer columns write through their file pager; the row set is validated on both sides.
+- \`insert_multi\` and \`upsert\` on our side run on an in-memory \`new SQLite()\`, while the two peer columns write through their file pager; the row set is validated on both sides.
 - The ten SQL-engine workloads (\`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`, \`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
+- \`batch\`, \`scan\`, \`point\`, \`range\`, \`update\`, \`delete\`, \`rollback\` and \`open\` still use the format-3 writer/reader primitives. The public \`SQLite\` entry does not expose raw record decoding, \`rowByRowid\`/\`range\` rowid windows, or the full-image \`save()\` that these timings are defined on.
+
+## Capabilities still missing from the public API
+
+- Direct rowid point read (\`rowByRowid\`) and inclusive rowid range read (\`range\`) without SQL parsing.
+- Raw record decoding via a table cursor (\`openDatabase(...).table(...)\`) for \`scan\`.
+- Writer-side \`update\`/\`delete\` slots and the explicit full-image \`save()\` that \`update\`/\`delete\`/\`batch\` include in their timings.
+- Writer \`begin\`/\`rollback\` without SQL transaction control, used by \`rollback\`.
+- A pure open/close handle over the main file with no statement preparation, used by \`open\`.
 
 Regenerate: \`pnpm --dir projects/sqlite.ts/examples/vs-js-libraries benchmark\`
 `;
   writeFileSync(join(exampleRoot, "reports", "benchmark.md"), report, "utf8");
 
   console.log(
-    "Notes: baseline is node:sqlite (DatabaseSync). Batch/scan/open use the format-3 writer/reader for @yydb/sqlite vs peer file I/O. point uses the reader rowByRowid API; point_sql keeps the engine SQL path. BENCH_SYNCHRONOUS=on puts every library on synchronous=FULL. update/delete on our side include save(); sql.js includes export().",
+    "Notes: baseline is node:sqlite (DatabaseSync). Batch/scan/open use the format-3 writer/reader for @yydb/sqlite vs peer file I/O. point uses the reader rowByRowid API; the SQL workloads use the public new SQLite() entry. BENCH_SYNCHRONOUS=on puts every library on synchronous=FULL. update/delete on our side include save(); sql.js includes export().",
   );
 } finally {
   oursSpace.dispose();
