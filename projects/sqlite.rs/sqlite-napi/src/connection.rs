@@ -46,7 +46,8 @@ pub struct SqliteConnectionOptions {
 /// 字符串到 facade `JournalMode` 的映射：合法值交给 facade 解析，
 /// `wal` 保持明确的 `unsupported`，其余未知值以 `option-invalid` 拒绝。
 fn parse_journal_mode(name: Option<String>) -> Result<JournalMode, SqlError> {
-    let Some(name) = name else {
+    let Some(name) = name
+    else {
         return Ok(JournalMode::Preserve);
     };
     match JournalMode::parse(&name) {
