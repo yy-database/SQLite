@@ -397,3 +397,19 @@ test("UDF entries throw the documented unsupported contract", () => {
   expectCode("unsupported", () => (db as unknown as { aggregate(...args: unknown[]): unknown }).aggregate("a", {}));
   expectCode("unsupported", () => (db as unknown as { window(...args: unknown[]): unknown }).window("w", {}));
 });
+
+test("shorthand statements reuse one prepared handle and still see later writes", () => {
+  const db = new SQLite();
+  db.exec("create table c (id integer primary key, v text)");
+  // 同一段 SQL 文本在 `run`/`all` 简写里命中预编译缓存；重复执行必须按当时的行集
+  // 重新求值，而不是回放第一次的结果。
+  db.run("insert into c (id, v) values (?, ?)", [1n, "a"]);
+  assert.deepEqual(db.all<{ v: string }>("select v from c order by id"), [{ v: "a" }]);
+  db.run("insert into c (id, v) values (?, ?)", [2n, "b"]);
+  assert.deepEqual(db.all<{ v: string }>("select v from c order by id"), [{ v: "a" }, { v: "b" }]);
+  db.run("update c set v = ? where id = ?", ["z", 1n]);
+  assert.deepEqual(db.get<{ v: string }>("select v from c where id = ?", [1n]), { v: "z" });
+  db.close();
+  // 关闭后缓存的句柄随连接一起失效，不再有可用入口。
+  expectCode("db-closed", () => db.all("select v from c"));
+});

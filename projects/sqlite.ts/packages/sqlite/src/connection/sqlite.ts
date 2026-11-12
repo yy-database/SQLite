@@ -20,6 +20,17 @@ export type { SQLiteOptions };
 
 const TRANSACTION_CONTROL_NAMES = new Set(["begin", "commit", "rollback", "savepoint", "release", "rollback-to"]);
 
+/**
+ * `run`/`get`/`all` 简写方法的预编译语句缓存上限。
+ *
+ * 反复执行同一条 SQL 文本是真实工作负载的常态（ORM 生成的参数化语句、报表里
+ * 循环跑的同一查询），每次重新 `prepare` 都要重新词法、解析并定格结果表头。
+ * 缓存按 SQL 文本复用已解析句柄：执行期仍由 Rust 引擎按当时的目录重新解析
+ * schema，结果与逐次 `prepare` 完全一致，仅省去重复的解析开销。上限内用
+ * 插入序 LRU 淘汰，避免把逐条插值字面量的 SQL 无限堆进内存。
+ */
+const STATEMENT_CACHE_LIMIT = 128;
+
 let savepointCounter = 0;
 
 /**
@@ -50,6 +61,7 @@ function pragmaLiteral(value: SQLiteValue | boolean): string {
 export class SQLite {
   readonly #connection: NativeConnection;
   readonly #readOnly: boolean;
+  readonly #statements = new Map<string, Statement<SQLiteRow, SQLiteParams>>();
   #managedScopes = 0;
   #closed = false;
 
@@ -112,15 +124,39 @@ export class SQLite {
   }
 
   run(sql: string, params?: SQLiteParams): SQLiteRunResult {
-    return this.prepare(sql).run(params);
+    return this.#cached(sql).run(params);
   }
 
   get<Row = SQLiteRow>(sql: string, params?: SQLiteParams): Row | undefined {
-    return this.prepare<Row>(sql).get(params) as Row | undefined;
+    return this.#cached(sql).get(params) as Row | undefined;
   }
 
   all<Row = SQLiteRow>(sql: string, params?: SQLiteParams): Row[] {
-    return this.prepare<Row>(sql).all(params) as Row[];
+    return this.#cached(sql).all(params) as Row[];
+  }
+
+  /**
+   * 简写方法用的预编译语句缓存：同一段 SQL 文本复用同一个已解析句柄。
+   *
+   * 缓存的句柄只承载解析一次的 AST 与权威槽位；执行期由 Rust 引擎按当时的
+   * 目录重新解析 schema，故 schema 变化后结果仍与重新 `prepare` 一致。命中时
+   * 把条目移到插入序末尾，超过上限淘汰最久未用的一条。公开的 `prepare()` 不走
+   * 缓存——调用方拿到的是可独立 `close()` 的句柄，不能被内部复用牵连。
+   */
+  #cached(sql: string): Statement<SQLiteRow, SQLiteParams> {
+    const hit = this.#statements.get(sql);
+    if (hit !== undefined) {
+      this.#statements.delete(sql);
+      this.#statements.set(sql, hit);
+      return hit;
+    }
+    const statement = this.prepare<SQLiteRow, SQLiteParams>(sql);
+    this.#statements.set(sql, statement);
+    if (this.#statements.size > STATEMENT_CACHE_LIMIT) {
+      const oldest = this.#statements.keys().next();
+      if (!oldest.done) this.#statements.delete(oldest.value);
+    }
+    return statement;
   }
 
   iterate<Row = SQLiteRow>(sql: string, params?: SQLiteParams): Generator<Row, void, unknown> {
@@ -216,6 +252,8 @@ export class SQLite {
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
+    for (const statement of this.#statements.values()) statement.close();
+    this.#statements.clear();
     pendingConnections.unregister(this);
     try {
       this.#connection.close();
