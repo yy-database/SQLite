@@ -1,6 +1,6 @@
 {
   "name": "@yydb/sqlite-example-with-prisma",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Prisma driver adapter over @yydb/sqlite via SqlDriverAdapter",

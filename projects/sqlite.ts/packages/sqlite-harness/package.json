@@ -1,6 +1,6 @@
 {
     "name": "@yydb/sqlite-harness",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "private": true,
     "description": "Self-improvement toolbox for SQLite: test, bench, conformance, fixtures and oracle",
     "license": "MPL-2.0",

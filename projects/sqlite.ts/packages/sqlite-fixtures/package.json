@@ -1,6 +1,6 @@
 {
     "name": "@yydb/sqlite-fixtures",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "private": true,
     "description": "SQLite format-3 byte fixtures produced by external engines",
     "license": "MPL-2.0",

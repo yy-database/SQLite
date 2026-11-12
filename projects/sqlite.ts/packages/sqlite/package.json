@@ -1,6 +1,6 @@
 {
     "name": "@yydb/sqlite",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "TypeScript surface over the SQLite format-3 native binding",
     "license": "MPL-2.0",
     "type": "module",

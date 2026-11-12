@@ -1,6 +1,6 @@
 {
   "name": "@yydb/sqlite-example-with-drizzle-orm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Drizzle ORM over @yydb/sqlite via the public sqlite-proxy hook",
