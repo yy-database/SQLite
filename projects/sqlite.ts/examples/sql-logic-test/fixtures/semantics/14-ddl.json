@@ -356,7 +356,7 @@
       "sql": "INSERT INTO t(c) VALUES (-1)",
       "expect": {
         "kind": "error",
-        "code": "constraint-failed",
+        "code": "check-constraint",
         "oracle": "CHECK constraint failed: c > 0"
       }
     },
@@ -471,7 +471,7 @@
       "sql": "INSERT INTO t(g) VALUES (-1)",
       "expect": {
         "kind": "error",
-        "code": "constraint-failed",
+        "code": "check-constraint",
         "oracle": "CHECK constraint failed: g > 0"
       }
     },

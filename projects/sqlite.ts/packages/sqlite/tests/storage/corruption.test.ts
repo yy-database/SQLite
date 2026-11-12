@@ -77,9 +77,8 @@ const table = readObjects(BASE).find((object) => object.type === "table");
 const index = readObjects(INDEXED).find((object) => object.type === "index");
 assert.ok(table, "the external base must contain a table");
 assert.ok(index, "the external indexed base must contain an index");
-// 表与索引分开取基准镜像：pinned facade 在“表根损坏 + 同库存在索引”时会在打开
-// 阶段 panic（database.storage writer.rs 越界切片），该已知缺口不在本套件里
-// 复发，改由报告记录。
+// 表与索引分开取基准镜像；「表根损坏 + 同库存在索引」的组合由套件末尾的
+// 回归门禁单独覆盖，确保越界 cell 指针以 `corrupt` 拒绝而不是 panic。
 const TABLE_ROOT = table.rootpage;
 const INDEX_ROOT = index.rootpage;
 assert.equal(readFileSync(BASE)[(TABLE_ROOT - 1) * PAGE_SIZE], 0x05, "the table root must be an interior page");
@@ -131,6 +130,24 @@ function readError(path: string, sql: string): SQLiteError {
     db.close();
   }
   assert.fail(`expected a structured rejection executing ${sql} against ${path}`);
+}
+
+/** 打开与读取任一侧的拒绝都要校验：索引页在打开阶段校验，表页在扫描阶段校验。 */
+function openOrReadError(path: string, sql: string): SQLiteError {
+  let db: SQLite;
+  try {
+    db = new SQLite({ filename: path, readOnly: true });
+  } catch (error) {
+    return structured(error, "open");
+  }
+  try {
+    db.all(sql);
+  } catch (error) {
+    return structured(error, sql);
+  } finally {
+    db.close();
+  }
+  assert.fail(`expected a structured rejection opening or reading ${path}`);
 }
 
 function externalOutcome(path: string, sql: string): string {
@@ -214,7 +231,7 @@ test("a truncated header is rejected as corruption", (t) => {
   const path = writeBytes("truncated-header", readFileSync(BASE).subarray(0, 50));
   const bytes = readFileSync(path);
   const error = openError(path);
-  assert.equal(error.code, "storage");
+  assert.equal(error.code, "corrupt");
   assert.match(error.message, /corrupt database file: sqlite header too short/);
   assert.deepEqual(readFileSync(path), bytes, "a read-only open must not rewrite the corrupt file");
   t.diagnostic(`truncated header reference: ${reference(path, "select count(*) from records")}`);
@@ -224,7 +241,7 @@ test("a wrong magic string is rejected as corruption", (t) => {
   const path = mutateBase("wrong-magic", (bytes) => bytes.fill(0, 0, 16));
   const bytes = readFileSync(path);
   const error = openError(path);
-  assert.equal(error.code, "storage");
+  assert.equal(error.code, "corrupt");
   assert.match(error.message, /corrupt database file: sqlite magic mismatch/);
   assert.deepEqual(readFileSync(path), bytes, "a read-only open must not rewrite the corrupt file");
   t.diagnostic(`wrong magic reference: ${reference(path, "select count(*) from records")}`);
@@ -234,7 +251,7 @@ test("an illegal page size is rejected as corruption", (t) => {
   const path = mutateBase("page-size-513", (bytes) => bytes.writeUInt16BE(513, 16));
   const bytes = readFileSync(path);
   const error = openError(path);
-  assert.equal(error.code, "storage");
+  assert.equal(error.code, "corrupt");
   assert.match(error.message, /corrupt database file: sqlite page size invalid/);
   assert.deepEqual(readFileSync(path), bytes, "a read-only open must not rewrite the corrupt file");
   t.diagnostic(`illegal page size reference: ${reference(path, "select count(*) from records")}`);
@@ -244,7 +261,7 @@ test("a declared page count beyond the file is rejected as corruption", (t) => {
   const path = mutateBase("page-count-out-of-range", (bytes) => bytes.writeUInt32BE(999_999, 28));
   const bytes = readFileSync(path);
   const error = openError(path);
-  assert.equal(error.code, "storage");
+  assert.equal(error.code, "corrupt");
   assert.match(error.message, /corrupt database file: sqlite declared page count exceeds file size/);
   assert.deepEqual(readFileSync(path), bytes, "a read-only open must not rewrite the corrupt file");
   t.diagnostic(`page count reference: ${reference(path, "select count(*) from records")}`);
@@ -256,7 +273,7 @@ test("a table b-tree page with an illegal type is rejected on read", (t) => {
   });
   const bytes = readFileSync(path);
   const error = readError(path, "select id from records");
-  assert.equal(error.code, "storage");
+  assert.equal(error.code, "corrupt");
   assert.match(error.message, /corrupt database file: sqlite table b-tree page type invalid/);
   assert.deepEqual(readFileSync(path), bytes, "a read-only scan must not rewrite the corrupt file");
   t.diagnostic(`table page type reference: ${reference(path, "select count(*) from records")}`);
@@ -268,7 +285,7 @@ test("an index b-tree page with an illegal type is rejected on open", (t) => {
   }, INDEXED);
   const bytes = readFileSync(path);
   const error = openError(path);
-  assert.equal(error.code, "storage");
+  assert.equal(error.code, "corrupt");
   assert.match(error.message, /corrupt database file: sqlite index b-tree page type invalid/);
   assert.deepEqual(readFileSync(path), bytes, "a read-only open must not rewrite the corrupt file");
   // 外部引擎只在真正读取索引时才失败，本实现打开即校验，因此这里记录严格性差异。
@@ -281,7 +298,7 @@ test("a table b-tree cell pointer outside the page is rejected on read", (t) => 
   });
   const bytes = readFileSync(path);
   const error = readError(path, "select id from records");
-  assert.equal(error.code, "storage");
+  assert.equal(error.code, "corrupt");
   assert.match(error.message, /corrupt database file: sqlite cell pointer out of bounds/);
   assert.deepEqual(readFileSync(path), bytes, "a read-only scan must not rewrite the corrupt file");
   t.diagnostic(`cell pointer reference: ${reference(path, "select count(*) from records")}`);
@@ -293,10 +310,27 @@ test("a b-tree child page number outside the file is rejected on read", (t) => {
   });
   const bytes = readFileSync(path);
   const error = readError(path, "select id from records");
-  assert.equal(error.code, "storage");
+  assert.equal(error.code, "corrupt");
   assert.match(error.message, /corrupt database file: sqlite page reference out of bounds/);
   assert.deepEqual(readFileSync(path), bytes, "a read-only scan must not rewrite the corrupt file");
   t.diagnostic(`page number reference: ${reference(path, "select count(*) from records")}`);
+});
+
+test("a corrupt table root beside an out-of-bounds index cell is rejected instead of crashing", (t) => {
+  // 旧 facade 在「表根损坏 + 同库存在索引」时打开阶段会越界切片 panic。
+  // 新 facade 先校验索引 cell 指针，再在扫描表根时校验页类型，两处都必须以
+  // 结构化 `corrupt` 拒绝，进程不能崩溃。
+  const indexHeader = readFileSync(INDEXED)[(INDEX_ROOT - 1) * PAGE_SIZE] === 0x02 ? 12 : 8;
+  const path = mutateBase("table-root-with-index", (bytes) => {
+    bytes[(TABLE_ROOT - 1) * PAGE_SIZE] = 0xff;
+    bytes.writeUInt16BE(600, (INDEX_ROOT - 1) * PAGE_SIZE + indexHeader);
+  }, INDEXED);
+  const bytes = readFileSync(path);
+  const error = openOrReadError(path, "select id from records");
+  assert.equal(error.code, "corrupt");
+  assert.match(error.message, /corrupt database file: sqlite /);
+  assert.deepEqual(readFileSync(path), bytes, "a read-only open must not rewrite the corrupt file");
+  t.diagnostic(`indexed table root reference: ${reference(path, "select count(*) from records")}`);
 });
 
 test("a read-only connection replays a hot journal in memory and never writes it back", (t) => {

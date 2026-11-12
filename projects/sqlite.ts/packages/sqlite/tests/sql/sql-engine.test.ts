@@ -988,12 +988,12 @@ test("text and composite primary keys are automatic unique indexes", () => {
   engine.execute("insert into tp values ('a', 1), ('b', 2)");
   assert.deepEqual(engine.execute("select k, v from tp").rows, [["a", 1], ["b", 2]]);
   assert.deepEqual(engine.execute("select rowid from tp").rows, [[1], [2]]);
-  assert.equal(engine.tryExecute("insert into tp values ('a', 3)").error?.code, "storage");
+  assert.equal(engine.tryExecute("insert into tp values ('a', 3)").error?.code, "unique-constraint");
 
   engine.execute("create table pkab(a integer, b integer, primary key (a, b))");
   engine.execute("insert into pkab values (1, 1), (2, 2)");
   assert.deepEqual(engine.execute("select a, b from pkab").rows, [[1, 1], [2, 2]]);
-  assert.equal(engine.tryExecute("insert into pkab values (1, 1)").error?.code, "storage");
+  assert.equal(engine.tryExecute("insert into pkab values (1, 1)").error?.code, "unique-constraint");
 
   // A lone declared INTEGER key stays the rowid alias.
   engine.execute("create table ta(a integer, primary key (a))");
@@ -1341,7 +1341,7 @@ test("insert default values fills every column default", () => {
   engine.execute("insert into dvpk default values");
   assert.deepEqual(engine.execute("select rowid, a, b from dvpk").rows, [[1, 1, 3]]);
   engine.execute("create table nn(a text not null)");
-  assert.equal(engine.tryExecute("insert into nn default values").error?.code, "storage");
+  assert.equal(engine.tryExecute("insert into nn default values").error?.code, "not-null-constraint");
 });
 
 // `USING` exposes the shared column once, and an outer join coalesces it so
@@ -1541,14 +1541,14 @@ test("update rolls back every row when a constraint fails", () => {
   engine.execute("insert into t values (1, 5, 10), (2, 6, 20), (3, 7, 30)");
   const before = engine.execute("select id, v, u from t").rows;
   const check = engine.tryExecute("update t set v = v - 10");
-  assert.equal(check.error?.code, "constraint-failed");
+  assert.equal(check.error?.code, "check-constraint");
   assert.equal(check.error?.clause, "CHECK");
   assert.deepEqual(engine.execute("select id, v, u from t").rows, before);
   const unique = engine.tryExecute("update t set u = 7");
   assert.equal(unique.error?.code, "unique-constraint");
   assert.deepEqual(engine.execute("select id, v, u from t").rows, before);
   const notNull = engine.tryExecute("update t set v = null");
-  assert.equal(notNull.error?.code, "constraint-failed");
+  assert.equal(notNull.error?.code, "not-null-constraint");
   assert.deepEqual(engine.execute("select id, v, u from t").rows, before);
 });
 

@@ -4,11 +4,9 @@
 //
 // 约束覆盖走引擎会给出具体分类的路径：UNIQUE / NOT NULL / CHECK 通过
 // `UPDATE` 触达，FOREIGN KEY 通过 `INSERT` 触达。`INSERT` 触达 UNIQUE /
-// NOT NULL / CHECK 时当前 facade 仍以 `storage` + `unsupported: ...` 呈现，
-// 这是已记录的上游分类缺口，本文件不把该降级行为固化成期望值。
+// NOT NULL / CHECK 时 facade 同样保留各自的约束码，不再折叠成 `storage`。
 //
-// `corrupt` 目前由 facade 折叠为 `storage`，用 `corrupt database file:` 消息前缀
-// 区分。字面量 `corrupt` 码需要上游 facade 改动，本仓测试不越界修改包源码。
+// `corrupt` 由 facade 直接给出，消息前缀 `corrupt database file:` 保持不变。
 
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -137,8 +135,8 @@ test("not-found: opening a missing file without create is a stable rejection", (
 });
 
 test("corrupt: a damaged fixture surfaces through a structured code with a corruption message", (t) => {
-  // 夹具由外部引擎写出后定点清零文件头；本实现以 `storage` + 明确消息拒绝。
-  const error = expectCode("storage", () => new SQLite({ filename: fixturePath("corrupt-header.sqlite"), readOnly: true }));
+  // 夹具由外部引擎写出后定点清零文件头；本实现以 `corrupt` + 明确消息拒绝。
+  const error = expectCode("corrupt", () => new SQLite({ filename: fixturePath("corrupt-header.sqlite"), readOnly: true }));
   assert.match(error.message, /corrupt database file: sqlite magic mismatch/);
   assert.notEqual(error.code, "engine");
   t.diagnostic(`corrupt classification is carried by code "${error.code}" and message "${error.message}"`);
@@ -167,24 +165,24 @@ test("constraint: a UNIQUE violation keeps the unique-constraint code", () => {
   }
 });
 
-test("constraint: a NOT NULL violation keeps the constraint-failed code", () => {
+test("constraint: a NOT NULL violation keeps the not-null-constraint code", () => {
   const db = new SQLite();
   try {
     db.exec("create table t (id integer primary key, v integer not null)");
     db.exec("insert into t (id, v) values (1, 5), (2, 6)");
-    const error = expectCode("constraint-failed", () => db.run("update t set v = null where id = 1"));
+    const error = expectCode("not-null-constraint", () => db.run("update t set v = null where id = 1"));
     assert.match(error.message, /NOT NULL constraint failed: t.v/);
   } finally {
     db.close();
   }
 });
 
-test("constraint: a CHECK violation keeps the constraint-failed code and clause", () => {
+test("constraint: a CHECK violation keeps the check-constraint code and clause", () => {
   const db = new SQLite();
   try {
     db.exec("create table t (id integer primary key, v integer check (v > 0))");
     db.exec("insert into t (id, v) values (1, 5), (2, 6)");
-    const error = expectCode("constraint-failed", () => db.run("update t set v = -1 where id = 1"));
+    const error = expectCode("check-constraint", () => db.run("update t set v = -1 where id = 1"));
     assert.match(error.message, /CHECK constraint failed: v > 0/);
   } finally {
     db.close();

@@ -133,7 +133,7 @@
       "sql": "UPDATE t SET a = -1",
       "expect": {
         "kind": "error",
-        "code": "constraint-failed",
+        "code": "check-constraint",
         "oracle": "CHECK constraint failed: a > 0"
       }
     },
@@ -162,7 +162,7 @@
       "sql": "UPDATE t SET a = NULL",
       "expect": {
         "kind": "error",
-        "code": "constraint-failed",
+        "code": "not-null-constraint",
         "oracle": "NOT NULL constraint failed: t.a"
       }
     },
