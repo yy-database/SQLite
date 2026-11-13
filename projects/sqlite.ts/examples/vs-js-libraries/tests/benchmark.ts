@@ -114,15 +114,15 @@ function formatRatio(timeRatio: number): string {
 }
 
 type WorkloadKey =
-  | "batch" | "scan" | "point" | "point_sql" | "point_uk" | "range" | "indexed"
+  | "batch" | "scan" | "point" | "point_sql" | "point_param" | "point_uk" | "range" | "indexed"
   | "order_limit" | "group_by" | "join"
-  | "distinct" | "aggregate" | "subquery" | "index_range" | "insert_multi" | "upsert"
-  | "update" | "delete" | "rollback" | "open";
+  | "distinct" | "aggregate" | "subquery" | "index_range" | "insert_multi" | "upsert" | "upsert_param"
+  | "update" | "update_sql" | "delete" | "delete_sql" | "rollback" | "open";
 const WORKLOADS: WorkloadKey[] = [
-  "batch", "scan", "point", "point_sql", "point_uk", "range", "indexed",
+  "batch", "scan", "point", "point_sql", "point_param", "point_uk", "range", "indexed",
   "order_limit", "group_by", "join",
-  "distinct", "aggregate", "subquery", "index_range", "insert_multi", "upsert",
-  "update", "delete", "rollback", "open",
+  "distinct", "aggregate", "subquery", "index_range", "insert_multi", "upsert", "upsert_param",
+  "update", "update_sql", "delete", "delete_sql", "rollback", "open",
 ];
 
 // Ops per workload for throughput normalization (batch/scan count rows; the rest count queries/mutations/opens).
@@ -135,8 +135,10 @@ function workloadOps(workload: WorkloadKey): number {
   if (workload === "distinct") return DISTINCT_OPS;
   if (workload === "subquery") return SUBQUERY_OPS;
   if (workload === "insert_multi") return MULTI_STATEMENTS * MULTI_ROWS_PER_STATEMENT;
-  if (workload === "upsert") return UPSERT_OPS;
-  if (workload === "update" || workload === "delete" || workload === "rollback") return MUTATE_OPS;
+  if (workload === "upsert" || workload === "upsert_param") return UPSERT_OPS;
+  if (workload === "update" || workload === "update_sql" || workload === "delete" || workload === "delete_sql" || workload === "rollback") {
+    return MUTATE_OPS;
+  }
   if (workload === "open") return ROUNDS;
   return POINT_OPS;
 }
@@ -680,6 +682,23 @@ function buildDatabase(index: IndexKind = "none"): SQLite {
   return database;
 }
 
+function ourPointParam(): number[] {
+  const database = buildDatabase();
+  const select = database.prepare("select id, label, score from items where id = ?");
+  const ids = Array.from({ length: POINT_OPS }, (_, index) => (index % ROWS) + 1);
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    for (const id of ids) {
+      if (select.get([id]) === undefined) throw new Error(`point_param miss id=${id}`);
+    }
+    samples.push(elapsedMs(start));
+  }
+  select.close();
+  database.close();
+  return samples;
+}
+
 function ourPointUk(): number[] {
   const database = buildDatabase("uk");
   const labels = Array.from({ length: POINT_OPS }, (_, index) => `row-${(index % ROWS) + 1}`);
@@ -788,6 +807,38 @@ function ourDelete(path: string): number[] {
     writer.commit();
     writer.save(path);
     samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function ourUpdateSql(): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = buildDatabase();
+    const update = database.prepare("update items set score = ? where id = ?");
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    for (let op = 0; op < MUTATE_OPS; op += 1) update.run([7.25, BigInt((op % ROWS) + 1)]);
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+    update.close();
+    database.close();
+  }
+  return samples;
+}
+
+function ourDeleteSql(): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = buildDatabase();
+    const remove = database.prepare("delete from items where id = ?");
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    for (let op = 0; op < MUTATE_OPS; op += 1) remove.run([BigInt(op + 1)]);
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+    remove.close();
+    database.close();
   }
   return samples;
 }
@@ -936,6 +987,27 @@ function ourUpsert(): number[] {
   }
   const row = database.get<{ score: number }>("select score from items where id = 1");
   if (!row || Number(row.score) !== 7.25) throw new Error(`upsert did not update: ${JSON.stringify(row)}`);
+  database.close();
+  return samples;
+}
+
+function ourUpsertParam(): number[] {
+  const database = buildDatabase();
+  const upsert = database.prepare(UPSERT_SQL);
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    for (let op = 0; op < UPSERT_OPS; op += 1) {
+      const id = (op % ROWS) + 1;
+      upsert.run([BigInt(id), `row-${id}`, 7.25]);
+    }
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+  }
+  const row = database.get<{ score: number }>("select score from items where id = 1");
+  if (!row || Number(row.score) !== 7.25) throw new Error(`upsert_param did not update: ${JSON.stringify(row)}`);
+  upsert.close();
   database.close();
   return samples;
 }
@@ -1547,6 +1619,10 @@ try {
     delete: nativeDelete(openNode, nodeDeleteSpace.path),
   };
   nodeSamples.point_sql = nodeSamples.point;
+  nodeSamples.point_param = nodeSamples.point;
+  nodeSamples.update_sql = nodeSamples.update;
+  nodeSamples.delete_sql = nodeSamples.delete;
+  nodeSamples.upsert_param = nodeSamples.upsert;
   const baselineRates = ratesFromSamples(nodeSamples);
 
   // @yydb/sqlite.
@@ -1555,6 +1631,7 @@ try {
     scan: ourScan(oursSpace.path),
     point: ourPoint(oursSpace.path),
     point_sql: ourPointSql(),
+    point_param: ourPointParam(),
     point_uk: ourPointUk(),
     range: ourRange(oursSpace.path),
     indexed: ourIndexed(),
@@ -1572,9 +1649,12 @@ try {
   oursSamples.index_range = ourIndexRange();
   oursSamples.insert_multi = ourInsertMulti();
   oursSamples.upsert = ourUpsert();
+  oursSamples.upsert_param = ourUpsertParam();
   ourBatchLoad(oursMutateSpace.path);
   oursSamples.update = ourUpdate(oursMutateSpace.path);
+  oursSamples.update_sql = ourUpdateSql();
   oursSamples.delete = ourDelete(oursDeleteSpace.path);
+  oursSamples.delete_sql = ourDeleteSql();
   const oursRates = ratesFromSamples(oursSamples);
 
   // better-sqlite3.
@@ -1604,6 +1684,10 @@ try {
     delete: nativeDelete(openBetter, betterDeleteSpace.path),
   };
   betterSamples.point_sql = betterSamples.point;
+  betterSamples.point_param = betterSamples.point;
+  betterSamples.update_sql = betterSamples.update;
+  betterSamples.delete_sql = betterSamples.delete;
+  betterSamples.upsert_param = betterSamples.upsert;
   const betterRates = ratesFromSamples(betterSamples);
 
   // sql.js.
@@ -1627,6 +1711,9 @@ try {
     delete: sqlJsDelete(SQL, sqlJsDeleteSpace.path),
   };
   sqlJsSamples.point_sql = sqlJsSamples.point;
+  sqlJsSamples.point_param = sqlJsSamples.point;
+  sqlJsSamples.update_sql = sqlJsSamples.update;
+  sqlJsSamples.delete_sql = sqlJsSamples.delete;
   const sqlJsRates = ratesFromSamples(sqlJsSamples);
 
   // @yydb/sqlite-unknown-wasm32 (skipped with `n/a` when the glue is not built).
@@ -1689,6 +1776,7 @@ ${markdownAbsoluteTable([
 - \`scan\`: open + full table scan per round.
 - \`point\`: reader \`rowByRowid\` vs each peer's prepared \`get\`.
 - \`point_sql\`: our public \`new SQLite()\` \`select ... where id = N\` vs the same peer prepared \`get\` (peer cells reuse \`point\`).
+- \`point_param\`: the same point lookup through a prepared statement with a **bound** key (\`where id = ?\`); peer cells reuse \`point\`. This separates the literal pushdown in \`point_sql\` from the bound-parameter pushdown.
 - \`point_uk\`: point lookup through a **unique** index on \`label\`; our side runs \`select ... where label = '...'\` on \`new SQLite()\` carrying \`create unique index\`, peers through their unique index (one untimed warmup round first).
 - \`range\`: ${RANGE_WIDTH}-row \`between\` windows, reader \`range\` vs peers' prepared range.
 - \`indexed\`: equality on an indexed \`label\` column; our side runs through \`new SQLite()\`, peers through their index.
@@ -1701,7 +1789,9 @@ ${markdownAbsoluteTable([
 - \`index_range\`: \`select id from items where label between '${INDEX_RANGE_LOWER}' and '${INDEX_RANGE_UPPER}' order by label\` (${RANGE_OPS} queries per round, ${expectedIndexRangeRows()} rows) — range predicate on an indexed column.
 - \`insert_multi\`: ${MULTI_STATEMENTS} statements of ${MULTI_ROWS_PER_STATEMENT} literal rows in one transaction (${MULTI_STATEMENTS * MULTI_ROWS_PER_STATEMENT} rows total).
 - \`upsert\`: ${UPSERT_OPS} \`insert ... on conflict(id) do update\` statements in one transaction.
+- \`upsert_param\`: the same upsert through a prepared statement with bound values; peer cells reuse \`upsert\`. \`upsert\` re-parses interpolated SQL text, so the pair shows the parse cost separately from execution.
 - \`update\` / \`delete\`: ${MUTATE_OPS} mutations in one transaction + save (our writer) vs peers' prepared mutation in a transaction.
+- \`update_sql\` / \`delete_sql\`: ${MUTATE_OPS} prepared SQL mutations by bound rowid in one transaction on \`new SQLite()\`; peer cells reuse \`update\` / \`delete\`. These exercise the SQL write path (rowid narrowing) rather than the writer primitives.
 - \`rollback\`: begin + ${MUTATE_OPS} inserts + rollback (nothing persisted).
 - \`open\`: open + close of the main file, no reads.
 - \`@yydb/sqlite-unknown-wasm32\` is the in-memory SQL binding: it runs \`batch\` (inserts + snapshot export + file write), \`scan\`, \`point_sql\`, \`range\`, \`order_limit\`, \`group_by\` and \`join\` through \`exec\`; it has no reader point API, no UPDATE/DELETE/indexes and no file open, so the remaining cells are \`n/a\`.
@@ -1714,7 +1804,7 @@ ${markdownAbsoluteTable([
 - The wasm column reads the same in-memory image every round (\`SELECT\` re-scans the image; the binding has no seek), and its \`batch\` includes \`snapshot()\` + the file write.
 - sql.js and the wasm binding do not run the six SQL-feature workloads (\`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`), so those cells stay \`n/a\`; they are compared only on \`node:sqlite\` and \`better-sqlite3\`.
 - \`insert_multi\` and \`upsert\` on our side run on an in-memory \`new SQLite()\`, while the two peer columns write through their file pager; the row set is validated on both sides.
-- The ten SQL-engine workloads (\`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`, \`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
+- The SQL-engine workloads (\`point_param\`, \`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`, \`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`upsert_param\`, \`update_sql\`, \`delete_sql\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
 - \`batch\`, \`scan\`, \`point\`, \`range\`, \`update\`, \`delete\`, \`rollback\` and \`open\` still use the format-3 writer/reader primitives. The public \`SQLite\` entry does not expose raw record decoding, \`rowByRowid\`/\`range\` rowid windows, or the full-image \`save()\` that these timings are defined on.
 
 ## Capabilities still missing from the public API
