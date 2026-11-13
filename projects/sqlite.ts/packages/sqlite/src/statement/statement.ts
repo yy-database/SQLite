@@ -32,6 +32,12 @@ export interface StatementHandle {
     described: string[] | null;
     /** 语句是否确属行集，prepare 时刻一次判定，不再触碰原生句柄。 */
     rowSet: boolean;
+    /** prepare 期定格的权威槽位；占位符集合随句柄不变，执行期不再回问原生。 */
+    slots: NativeSlot[];
+    /** prepare 期定格的参数个数；与 `slots` 同源，避免每次执行多一次原生调用。 */
+    parameterCount: number;
+    /** prepare 期定格的语句种类；供执行前守卫分类读写，跨调用不变。 */
+    name: string;
   };
 }
 
@@ -160,8 +166,8 @@ export class Statement<Row = SQLiteRow, Params extends SQLiteParams = SQLitePara
     const state = this.#shared.state;
     if (state.closed) throw new SQLiteError("statement-closed", "statement is closed");
     if (state.activeCursor) throw new SQLiteError("cursor-active", "statement has an active cursor; finish or close it before re-executing");
-    this.#shared.guard(this.#shared.native.statementName());
-    const cells = bindCells(this.#shared.native.slots(), this.#shared.native.parameterCount(), params);
+    this.#shared.guard(this.#shared.state.name);
+    const cells = bindCells(this.#shared.state.slots, this.#shared.state.parameterCount, params);
     let opened;
     try {
       opened = this.#shared.native.openCursor(cells);
@@ -184,8 +190,8 @@ export class Statement<Row = SQLiteRow, Params extends SQLiteParams = SQLitePara
     const state = this.#shared.state;
     if (state.closed) throw new SQLiteError("statement-closed", "statement is closed");
     if (state.activeCursor) throw new SQLiteError("cursor-active", "statement has an active cursor; finish or close it before re-executing");
-    this.#shared.guard(this.#shared.native.statementName());
-    const cells = bindCells(this.#shared.native.slots(), this.#shared.native.parameterCount(), params);
+    this.#shared.guard(this.#shared.state.name);
+    const cells = bindCells(this.#shared.state.slots, this.#shared.state.parameterCount, params);
     let result: NativeRunResult;
     try {
       result = this.#shared.native.run(cells);

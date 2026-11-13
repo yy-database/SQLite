@@ -118,8 +118,15 @@ export class SQLite {
     }
     const guard: ExecutionGuard = (statementName) => this.#assertUsable(statementName);
     const described = native.columns();
-    const rowSet = described !== null || ROW_SET_STATEMENTS.has(native.statementName());
-    const shared: StatementHandle = { native, guard, state: { activeCursor: false, closed: false, columns: null, described, rowSet } };
+    const name = native.statementName();
+    const slots = native.slots();
+    const parameterCount = native.parameterCount();
+    const rowSet = described !== null || ROW_SET_STATEMENTS.has(name);
+    const shared: StatementHandle = {
+      native,
+      guard,
+      state: { activeCursor: false, closed: false, columns: null, described, rowSet, slots, parameterCount, name },
+    };
     return new Statement<Row, Params>(shared);
   }
 
