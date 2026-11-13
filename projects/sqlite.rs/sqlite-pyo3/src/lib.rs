@@ -479,8 +479,9 @@ impl SqliteEngine {
     }
 
     /// Raw main-file image, ready to be written as a `.sqlite3` file.
-    fn snapshot<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        PyBytes::new(py, self.inner.snapshot())
+    fn snapshot<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let image = self.inner.snapshot().map_err(runtime_error)?;
+        Ok(PyBytes::new(py, image))
     }
 
     /// Configured page size.
@@ -494,8 +495,9 @@ impl SqliteEngine {
     }
 
     /// Health probe that re-validates the current image header.
-    fn ping(&self) -> PyResult<i32> {
-        validate_database(self.inner.snapshot()).map_err(runtime_error)?;
+    fn ping(&mut self) -> PyResult<i32> {
+        let image = self.inner.snapshot().map_err(runtime_error)?;
+        validate_database(image).map_err(runtime_error)?;
         Ok(1)
     }
 }

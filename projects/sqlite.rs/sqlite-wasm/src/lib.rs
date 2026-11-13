@@ -67,8 +67,8 @@ impl MemoryDatabase {
     }
 
     /// Raw main-file image, ready to be written as a `.sqlite3` file.
-    pub fn snapshot(&self) -> Vec<u8> {
-        self.engine.snapshot().to_vec()
+    pub fn snapshot(&mut self) -> Result<Vec<u8>, JsError> {
+        Ok(self.engine.snapshot().map_err(js_error)?.to_vec())
     }
 
     /// Configured page size.
@@ -84,7 +84,8 @@ impl MemoryDatabase {
     }
 
     /// Re-validates the header of the current image.
-    pub fn ping(&self) -> Result<(), JsError> {
-        sqlite::validate_database(self.engine.snapshot()).map(|_| ()).map_err(|error| JsError::new(&error.to_string()))
+    pub fn ping(&mut self) -> Result<(), JsError> {
+        let image = self.engine.snapshot().map_err(js_error)?;
+        sqlite::validate_database(image).map(|_| ()).map_err(|error| JsError::new(&error.to_string()))
     }
 }

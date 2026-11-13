@@ -165,8 +165,9 @@ impl SqliteEngine {
 
     /// Raw main-file image, ready to be written as a `.sqlite3` file.
     #[napi]
-    pub fn snapshot(&self) -> Buffer {
-        self.engine.snapshot().to_vec().into()
+    pub fn snapshot(&mut self) -> napi::Result<Buffer> {
+        let image = self.engine.snapshot().map_err(engine_error)?;
+        Ok(image.to_vec().into())
     }
 
     /// Configured page size.
@@ -183,8 +184,9 @@ impl SqliteEngine {
 
     /// Health probe that re-validates the current image header.
     #[napi]
-    pub fn ping(&self) -> napi::Result<i32> {
-        sqlite::validate_database(self.engine.snapshot()).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    pub fn ping(&mut self) -> napi::Result<i32> {
+        let image = self.engine.snapshot().map_err(engine_error)?;
+        sqlite::validate_database(image).map_err(|e| napi::Error::from_reason(e.to_string()))?;
         Ok(1)
     }
 }

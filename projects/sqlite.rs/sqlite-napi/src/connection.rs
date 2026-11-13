@@ -134,8 +134,9 @@ impl SqliteConnection {
     /// 当前数据库镜像。
     #[napi]
     pub fn snapshot(&self) -> napi::Result<Buffer> {
-        let guard = self.locked()?;
-        Ok(guard.connection.snapshot().to_vec().into())
+        let mut guard = self.locked()?;
+        let image = guard.connection.snapshot().map_err(sql_error)?;
+        Ok(image.to_vec().into())
     }
 
     /// 真正的备份：把当前镜像完整写入目标文件。
