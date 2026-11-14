@@ -6,6 +6,7 @@ export type SqlJsDatabase = {
   run(sql: string, params?: unknown[]): void;
   exec(sql: string): Array<{ columns: string[]; values: unknown[][] }>;
   prepare(sql: string): {
+    run(params?: unknown[]): void;
     bind(params?: unknown[]): void;
     step(): boolean;
     getAsObject(): Record<string, unknown>;

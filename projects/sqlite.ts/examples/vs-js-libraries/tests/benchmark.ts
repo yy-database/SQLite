@@ -6,7 +6,7 @@
 // Env: BENCH_ROWS (default 5000), BENCH_TXN (1000), BENCH_PAGE (4096), BENCH_ROUNDS (3),
 //      BENCH_POINT (1000), BENCH_RANGE (200), BENCH_MUTATE (1000), BENCH_SYNCHRONOUS (off|on),
 //      BENCH_LIMIT (200), BENCH_AGG (20), BENCH_JOIN (10), BENCH_DISTINCT (5), BENCH_SUBQUERY (20),
-//      BENCH_MULTI (10), BENCH_UPSERT (500)
+//      BENCH_MULTI (10), BENCH_UPSERT (500), BENCH_PROJECTION (10), BENCH_JOIN_INDEXED (10)
 
 import Database from "better-sqlite3";
 import { spawnSync } from "node:child_process";
@@ -39,6 +39,8 @@ const SUBQUERY_OPS = Number(process.env.BENCH_SUBQUERY ?? 20);
 const MULTI_STATEMENTS = Number(process.env.BENCH_MULTI ?? 10);
 const MULTI_ROWS_PER_STATEMENT = 100;
 const UPSERT_OPS = Number(process.env.BENCH_UPSERT ?? 500);
+const PROJECTION_OPS = Number(process.env.BENCH_PROJECTION ?? 10);
+const JOIN_INDEXED_OPS = Number(process.env.BENCH_JOIN_INDEXED ?? 10);
 const SYNC = process.env.BENCH_SYNCHRONOUS ?? "off";
 
 // Fixed shapes for the analytic workloads (same statement text on every engine).
@@ -75,6 +77,20 @@ const RANGE_DELETE_ROWS = Math.max(0, RANGE_DELETE_UPPER - RANGE_DELETE_LOWER + 
 const UPDATE_EXPR_SQL = "update items set score = score + 1";
 // 每条 round 更新一次全表；写类 workload 与既有变速箱一致，不做额外预热。
 const UPDATE_EXPR_RUNS = ROUNDS;
+// 列投影：同一条全表扫描只取一列，与 `select *` 共用同一份数据。
+const PROJECTION_NARROW_SQL = "select id from items";
+const PROJECTION_WIDE_SQL = "select * from items";
+// 索引列上的等值连接：`ON b.label = a.label`，外层只取前 20 行把内层扫描次数固定下来。
+const JOIN_INDEXED_OUTER = 20;
+const JOIN_INDEXED_SQL = `select count(*) as matched from items as a join items as b on b.label = a.label where a.id <= ${JOIN_INDEXED_OUTER}`;
+// 索引列区间删除：与 delete_range 同形，但键落在有索引的 label 上。
+const INDEX_DELETE_LOWER = "row-1000";
+const INDEX_DELETE_UPPER = "row-1099";
+// 被删掉的连续 rowid，计时窗口外按这个区间补回。
+const INDEX_DELETE_ID_LOWER = 1_000;
+const INDEX_DELETE_ID_UPPER = 1_099;
+// 跨列 OR：一半行由整数列决定，一半由文本列决定，两侧都不能被单列下推吃掉。
+const OR_FILTER_SQL = "select count(*) as n from items where id < 1000 or label > 'row-4500'";
 
 function expectedLikePrefixRows(): number {
   let count = 0;
@@ -112,6 +128,25 @@ function expectedIndexRangeRows(): number {
   return count;
 }
 
+/** `label between INDEX_DELETE_LOWER and INDEX_DELETE_UPPER` under BINARY collation. */
+function expectedIndexDeleteRows(): number {
+  let count = 0;
+  for (let id = 1; id <= ROWS; id += 1) {
+    const label = `row-${id}`;
+    if (label >= INDEX_DELETE_LOWER && label <= INDEX_DELETE_UPPER) count += 1;
+  }
+  return count;
+}
+
+/** `where id < 1000 or label > 'row-4500'` under BINARY collation. */
+function expectedOrFilterRows(): number {
+  let count = 0;
+  for (let id = 1; id <= ROWS; id += 1) {
+    if (id < 1_000 || `row-${id}` > "row-4500") count += 1;
+  }
+  return count;
+}
+
 const columns = JSON.stringify([
   { name: "id", declaredType: "INTEGER", primaryKey: true },
   { name: "label", declaredType: "TEXT" },
@@ -142,13 +177,15 @@ type WorkloadKey =
   | "order_limit" | "group_by" | "join"
   | "distinct" | "aggregate" | "subquery" | "index_range" | "insert_multi" | "upsert" | "upsert_param"
   | "update" | "update_sql" | "update_idx" | "delete" | "delete_sql" | "delete_idx" | "txn" | "rollback" | "open"
-  | "in_list" | "sort_mixed" | "like_prefix" | "delete_range" | "update_expr";
+  | "in_list" | "sort_mixed" | "like_prefix" | "delete_range" | "update_expr"
+  | "projection_narrow" | "projection_wide" | "join_indexed" | "delete_index_range" | "or_filter";
 const WORKLOADS: WorkloadKey[] = [
   "batch", "batch_sql", "scan", "point", "point_sql", "point_param", "point_uk", "range", "indexed",
   "order_limit", "group_by", "join",
   "distinct", "aggregate", "subquery", "index_range", "insert_multi", "upsert", "upsert_param",
   "update", "update_sql", "update_idx", "delete", "delete_sql", "delete_idx", "txn", "rollback", "open",
   "in_list", "sort_mixed", "like_prefix", "delete_range", "update_expr",
+  "projection_narrow", "projection_wide", "join_indexed", "delete_index_range", "or_filter",
 ];
 
 // Ops per workload for throughput normalization (batch/scan count rows; the rest count queries/mutations/opens).
@@ -156,9 +193,12 @@ function workloadOps(workload: WorkloadKey): number {
   if (workload === "batch" || workload === "batch_sql" || workload === "scan") return ROWS;
   if (workload === "range" || workload === "index_range") return RANGE_OPS;
   if (workload === "order_limit") return LIMIT_OPS;
-  if (workload === "group_by" || workload === "aggregate" || workload === "in_list" || workload === "sort_mixed" || workload === "like_prefix") {
+  if (workload === "group_by" || workload === "aggregate" || workload === "in_list" || workload === "sort_mixed" || workload === "like_prefix" || workload === "or_filter") {
     return AGG_OPS;
   }
+  if (workload === "projection_narrow" || workload === "projection_wide") return PROJECTION_OPS;
+  if (workload === "join_indexed") return JOIN_INDEXED_OPS;
+  if (workload === "delete_index_range") return Math.max(1, expectedIndexDeleteRows());
   if (workload === "update_expr") return ROWS;
   if (workload === "delete_range") return Math.max(1, RANGE_DELETE_ROWS);
   if (workload === "join") return JOIN_OPS;
@@ -587,6 +627,108 @@ function nativeLikePrefix(factory: (path: string, readOnly?: boolean) => PeerHan
     const start = process.hrtime.bigint();
     run();
     samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function nativeProjection(
+  factory: (path: string, readOnly?: boolean) => PeerHandle,
+  path: string,
+  sql: string,
+  width: number,
+): number[] {
+  const database = factory(path, true);
+  const select = database.prepare(sql);
+  const run = () => {
+    for (let op = 0; op < PROJECTION_OPS; op += 1) {
+      const rows = select.all() as Record<string, unknown>[];
+      if (rows.length !== ROWS) throw new Error(`projection returned ${rows.length}, expected ${ROWS}`);
+      const columns = Object.keys(rows[0] ?? {}).length;
+      if (columns !== width) throw new Error(`projection width ${columns}, expected ${width}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function nativeJoinIndexed(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  const writable = factory(path);
+  writable.exec("create index if not exists items_label on items(label)");
+  writable.close();
+  const database = factory(path, true);
+  const select = database.prepare(JOIN_INDEXED_SQL);
+  const run = () => {
+    for (let op = 0; op < JOIN_INDEXED_OPS; op += 1) {
+      const row = select.get() as { matched: number } | undefined;
+      if (!row || Number(row.matched) !== JOIN_INDEXED_OUTER) {
+        throw new Error(`join_indexed matched ${JSON.stringify(row)}, expected ${JOIN_INDEXED_OUTER}`);
+      }
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function nativeOrFilter(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  const database = factory(path, true);
+  const select = database.prepare(OR_FILTER_SQL);
+  const expected = expectedOrFilterRows();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const row = select.get() as { n: number } | undefined;
+      if (!row || Number(row.n) !== expected) throw new Error(`or_filter returned ${JSON.stringify(row)}, expected ${expected}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function peerDeleteIndexRange(factory: () => PeerHandle): number[] {
+  const database = factory();
+  database.exec("create table items (id integer primary key, label text, score real)");
+  database.exec("create index items_label on items(label)");
+  const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+  const remove = database.prepare("delete from items where label between ? and ?");
+  database.exec("begin");
+  for (let row = 1; row <= ROWS; row += 1) insert.run(row, `row-${row}`, row / 4);
+  database.exec("commit");
+  const expected = expectedIndexDeleteRows();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    remove.run(INDEX_DELETE_LOWER, INDEX_DELETE_UPPER);
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+    const count = database.prepare("select count(*) as n from items").get() as { n: number } | undefined;
+    if (!count || Number(count.n) !== ROWS - expected) {
+      throw new Error(`delete_index_range rows ${JSON.stringify(count)}, expected ${ROWS - expected}`);
+    }
+    database.exec("begin");
+    for (let id = INDEX_DELETE_ID_LOWER; id <= INDEX_DELETE_ID_UPPER; id += 1) insert.run(id, `row-${id}`, id / 4);
+    database.exec("commit");
   }
   database.close();
   return samples;
@@ -1206,6 +1348,93 @@ function ourLikePrefix(database: SQLite): number[] {
   return samples;
 }
 
+function ourProjection(database: SQLite, sql: string, width: number): number[] {
+  const run = () => {
+    for (let op = 0; op < PROJECTION_OPS; op += 1) {
+      const rows = database.all<Record<string, unknown>>(sql);
+      if (rows.length !== ROWS) throw new Error(`projection returned ${rows.length}, expected ${ROWS}`);
+      const columns = Object.keys(rows[0] ?? {}).length;
+      if (columns !== width) throw new Error(`projection width ${columns}, expected ${width}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function ourJoinIndexed(): number[] {
+  const database = buildDatabase("label");
+  const run = () => {
+    for (let op = 0; op < JOIN_INDEXED_OPS; op += 1) {
+      const rows = database.all<{ matched: bigint }>(JOIN_INDEXED_SQL);
+      const matched = Number(rows[0]?.matched);
+      if (matched !== JOIN_INDEXED_OUTER) {
+        throw new Error(`join_indexed matched ${matched}, expected ${JOIN_INDEXED_OUTER}`);
+      }
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function ourOrFilter(database: SQLite): number[] {
+  const expected = expectedOrFilterRows();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const row = database.get<{ n: bigint }>(OR_FILTER_SQL);
+      if (!row || Number(row.n) !== expected) throw new Error(`or_filter returned ${JSON.stringify(row)}, expected ${expected}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function ourDeleteIndexRange(): number[] {
+  const database = buildDatabase("label");
+  const remove = database.prepare("delete from items where label between ? and ?");
+  const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+  const expected = expectedIndexDeleteRows();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    remove.run([INDEX_DELETE_LOWER, INDEX_DELETE_UPPER]);
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+    const count = database.get<{ n: bigint }>("select count(*) as n from items");
+    if (!count || Number(count.n) !== ROWS - expected) {
+      throw new Error(`delete_index_range rows ${JSON.stringify(count)}, expected ${ROWS - expected}`);
+    }
+    database.transaction(() => {
+      for (let id = INDEX_DELETE_ID_LOWER; id <= INDEX_DELETE_ID_UPPER; id += 1) {
+        insert.run([BigInt(id), `row-${id}`, id / 4]);
+      }
+    });
+  }
+  remove.close();
+  insert.close();
+  database.close();
+  return samples;
+}
+
 function ourUpdateExpr(): number[] {
   const database = buildDatabase();
   const samples: number[] = [];
@@ -1779,6 +2008,122 @@ function sqlJsIndexedWrite(SQL: SqlJsStatic, kind: "update" | "delete"): number[
   return samples;
 }
 
+function sqlJsProjection(SQL: SqlJsStatic, path: string, sql: string, width: number): number[] {
+  const database = new SQL.Database(readFileSync(path));
+  const statement = database.prepare(sql);
+  const run = () => {
+    for (let op = 0; op < PROJECTION_OPS; op += 1) {
+      let count = 0;
+      let columns = 0;
+      while (statement.step()) {
+        const row = statement.getAsObject();
+        if (count === 0) columns = Object.keys(row).length;
+        count += 1;
+      }
+      statement.reset();
+      if (count !== ROWS) throw new Error(`projection returned ${count}, expected ${ROWS}`);
+      if (columns !== width) throw new Error(`projection width ${columns}, expected ${width}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  statement.free();
+  database.close();
+  return samples;
+}
+
+function sqlJsJoinIndexed(SQL: SqlJsStatic): number[] {
+  const database = new SQL.Database();
+  database.run("create table items (id integer primary key, label text, score real)");
+  database.run("create index items_label on items(label)");
+  const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+  database.run("begin");
+  for (let row = 1; row <= ROWS; row += 1) insert.run([row, `row-${row}`, row / 4]);
+  database.run("commit");
+  insert.free();
+  const statement = database.prepare(JOIN_INDEXED_SQL);
+  const run = () => {
+    for (let op = 0; op < JOIN_INDEXED_OPS; op += 1) {
+      if (!statement.step()) throw new Error("join_indexed returned no row");
+      const row = statement.getAsObject() as { matched?: number };
+      if (Number(row.matched) !== JOIN_INDEXED_OUTER) {
+        throw new Error(`join_indexed matched ${JSON.stringify(row)}, expected ${JOIN_INDEXED_OUTER}`);
+      }
+      statement.reset();
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  statement.free();
+  database.close();
+  return samples;
+}
+
+function sqlJsOrFilter(SQL: SqlJsStatic, path: string): number[] {
+  const database = new SQL.Database(readFileSync(path));
+  const statement = database.prepare(OR_FILTER_SQL);
+  const expected = expectedOrFilterRows();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      if (!statement.step()) throw new Error("or_filter returned no row");
+      const row = statement.getAsObject() as { n?: number };
+      if (Number(row.n) !== expected) throw new Error(`or_filter returned ${JSON.stringify(row)}, expected ${expected}`);
+      statement.reset();
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  statement.free();
+  database.close();
+  return samples;
+}
+
+function sqlJsDeleteIndexRange(SQL: SqlJsStatic): number[] {
+  const database = new SQL.Database();
+  database.run("create table items (id integer primary key, label text, score real)");
+  database.run("create index items_label on items(label)");
+  const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+  database.run("begin");
+  for (let row = 1; row <= ROWS; row += 1) insert.run([row, `row-${row}`, row / 4]);
+  database.run("commit");
+  insert.free();
+  const remove = database.prepare("delete from items where label between ? and ?");
+  const expected = expectedIndexDeleteRows();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.run("begin");
+    remove.run([INDEX_DELETE_LOWER, INDEX_DELETE_UPPER]);
+    database.run("commit");
+    samples.push(elapsedMs(start));
+    const count = database.exec("select count(*) as n from items")[0]?.values[0]?.[0];
+    if (Number(count) !== ROWS - expected) throw new Error(`delete_index_range rows ${count}, expected ${ROWS - expected}`);
+    const restore = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+    database.run("begin");
+    for (let id = INDEX_DELETE_ID_LOWER; id <= INDEX_DELETE_ID_UPPER; id += 1) restore.run([id, `row-${id}`, id / 4]);
+    database.run("commit");
+    restore.free();
+  }
+  remove.free();
+  database.close();
+  return samples;
+}
+
 // ---------------------------------------------------------------------------
 // `@yydb/sqlite-unknown-wasm32` (in-memory SQL binding; no reader point API,
 // no UPDATE/DELETE/indexes/file open — unsupported workloads report `n/a`)
@@ -1982,6 +2327,43 @@ function wasmLikePrefix(database: WasmDatabase): number[] {
   return samples;
 }
 
+function wasmProjection(database: WasmDatabase, sql: string, width: number): number[] {
+  const run = () => {
+    for (let op = 0; op < PROJECTION_OPS; op += 1) {
+      const rows = wasmExecRows(database, sql);
+      if (rows.length !== ROWS) throw new Error(`projection returned ${rows.length}, expected ${ROWS}`);
+      const columns = rows[0]?.length ?? 0;
+      if (columns !== width) throw new Error(`projection width ${columns}, expected ${width}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function wasmOrFilter(database: WasmDatabase): number[] {
+  const expected = expectedOrFilterRows();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const rows = wasmExecRows(database, OR_FILTER_SQL);
+      if (Number(rows[0]?.[0]) !== expected) throw new Error(`or_filter returned ${JSON.stringify(rows)}, expected ${expected}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
 // ---------------------------------------------------------------------------
 // rates + report
 // ---------------------------------------------------------------------------
@@ -2099,7 +2481,7 @@ function provenanceLines(): string {
     `- rustc: \`${commandOutput("rustc", ["-V"])}\``,
     `- repo rev: \`${commandOutput("git", ["rev-parse", "--short", "HEAD"], repoRoot)}\``,
     `- binding rev (\`database.rs\` pin in \`projects/sqlite.rs/Cargo.toml\`): \`${bindingPinnedRev()}\``,
-    `- data: \`${ROWS}\` rows (page \`${PAGE_SIZE}\`), \`BENCH_ROUNDS=${ROUNDS}\`, point/indexed \`${POINT_OPS}\`, range \`${RANGE_OPS}\`, order_limit \`${LIMIT_OPS}\`, group_by \`${AGG_OPS}\`, join \`${JOIN_OPS}\`, distinct \`${DISTINCT_OPS}\`, subquery \`${SUBQUERY_OPS}\`, multi \`${MULTI_STATEMENTS}x${MULTI_ROWS_PER_STATEMENT}\`, upsert \`${UPSERT_OPS}\`, mutate \`${MUTATE_OPS}\``,
+    `- data: \`${ROWS}\` rows (page \`${PAGE_SIZE}\`), \`BENCH_ROUNDS=${ROUNDS}\`, point/indexed \`${POINT_OPS}\`, range \`${RANGE_OPS}\`, order_limit \`${LIMIT_OPS}\`, group_by \`${AGG_OPS}\`, join \`${JOIN_OPS}\`, distinct \`${DISTINCT_OPS}\`, subquery \`${SUBQUERY_OPS}\`, multi \`${MULTI_STATEMENTS}x${MULTI_ROWS_PER_STATEMENT}\`, upsert \`${UPSERT_OPS}\`, mutate \`${MUTATE_OPS}\`, projection \`${PROJECTION_OPS}\`, join_indexed \`${JOIN_INDEXED_OPS}\``,
   ].join("\n");
 }
 
@@ -2157,6 +2539,11 @@ try {
     like_prefix: nativeLikePrefix(openNode, nodeSpace.path),
     update_expr: nativeUpdateExpr(() => openNode(":memory:")),
     delete_range: nativeDeleteRange(() => openNode(":memory:")),
+    projection_narrow: nativeProjection(openNode, nodeSpace.path, PROJECTION_NARROW_SQL, 1),
+    projection_wide: nativeProjection(openNode, nodeSpace.path, PROJECTION_WIDE_SQL, 3),
+    join_indexed: nativeJoinIndexed(openNode, nodeSpace.path),
+    or_filter: nativeOrFilter(openNode, nodeSpace.path),
+    delete_index_range: peerDeleteIndexRange(() => openNode(":memory:")),
   };
   nodeSamples.point_sql = nodeSamples.point;
   nodeSamples.point_param = nodeSamples.point;
@@ -2189,9 +2576,14 @@ try {
   oursSamples.in_list = ourInList(analyticDatabase);
   oursSamples.sort_mixed = ourSortMixed(analyticDatabase);
   oursSamples.like_prefix = ourLikePrefix(analyticDatabase);
+  oursSamples.projection_narrow = ourProjection(analyticDatabase, PROJECTION_NARROW_SQL, 1);
+  oursSamples.projection_wide = ourProjection(analyticDatabase, PROJECTION_WIDE_SQL, 3);
+  oursSamples.or_filter = ourOrFilter(analyticDatabase);
   analyticDatabase.close();
   oursSamples.update_expr = ourUpdateExpr();
   oursSamples.delete_range = ourDeleteRange();
+  oursSamples.join_indexed = ourJoinIndexed();
+  oursSamples.delete_index_range = ourDeleteIndexRange();
   oursSamples.index_range = ourIndexRange();
   oursSamples.insert_multi = ourInsertMulti();
   oursSamples.upsert = ourUpsert();
@@ -2240,6 +2632,11 @@ try {
     like_prefix: nativeLikePrefix(openBetter, betterSpace.path),
     update_expr: nativeUpdateExpr(() => openBetter(":memory:")),
     delete_range: nativeDeleteRange(() => openBetter(":memory:")),
+    projection_narrow: nativeProjection(openBetter, betterSpace.path, PROJECTION_NARROW_SQL, 1),
+    projection_wide: nativeProjection(openBetter, betterSpace.path, PROJECTION_WIDE_SQL, 3),
+    join_indexed: nativeJoinIndexed(openBetter, betterSpace.path),
+    or_filter: nativeOrFilter(openBetter, betterSpace.path),
+    delete_index_range: peerDeleteIndexRange(() => openBetter(":memory:")),
   };
   betterSamples.point_sql = betterSamples.point;
   betterSamples.point_param = betterSamples.point;
@@ -2271,6 +2668,11 @@ try {
     txn: sqlJsTxn(SQL),
     update_idx: sqlJsIndexedWrite(SQL, "update"),
     delete_idx: sqlJsIndexedWrite(SQL, "delete"),
+    projection_narrow: sqlJsProjection(SQL, sqlJsSpace.path, PROJECTION_NARROW_SQL, 1),
+    projection_wide: sqlJsProjection(SQL, sqlJsSpace.path, PROJECTION_WIDE_SQL, 3),
+    join_indexed: sqlJsJoinIndexed(SQL),
+    or_filter: sqlJsOrFilter(SQL, sqlJsSpace.path),
+    delete_index_range: sqlJsDeleteIndexRange(SQL),
   };
   sqlJsSamples.point_sql = sqlJsSamples.point;
   sqlJsSamples.point_param = sqlJsSamples.point;
@@ -2295,6 +2697,9 @@ try {
     wasmSamples.in_list = wasmInList(readDatabase);
     wasmSamples.sort_mixed = wasmSortMixed(readDatabase);
     wasmSamples.like_prefix = wasmLikePrefix(readDatabase);
+    wasmSamples.projection_narrow = wasmProjection(readDatabase, PROJECTION_NARROW_SQL, 1);
+    wasmSamples.projection_wide = wasmProjection(readDatabase, PROJECTION_WIDE_SQL, 3);
+    wasmSamples.or_filter = wasmOrFilter(readDatabase);
     readDatabase.free();
     wasmRates = ratesFromSamples(wasmSamples);
   } else {
@@ -2355,6 +2760,10 @@ ${markdownAbsoluteTable([
 - \`in_list\`: \`select count(*) ... where id in (<${IN_LIST_SIZE} scattered rowids>)\` (${AGG_OPS} queries per round, ${IN_LIST_ROWS} matches) — literal \`IN\` list planning and predicate dispatch.
 - \`sort_mixed\`: \`select ... order by score desc, id desc limit ${SORT_MIXED_ROWS}\` (${AGG_OPS} queries per round) — unindexed sort plus truncation.
 - \`like_prefix\`: \`select count(*) ... where label like 'row-1%'\` (${AGG_OPS} queries per round, ${expectedLikePrefixRows()} matches) — prefix pattern over an unindexed full scan, with the row count asserted on every engine.
+- \`projection_narrow\` / \`projection_wide\`: the same ${ROWS}-row scan projected to one column (\`select id\`) vs every column (\`select *\`), ${PROJECTION_OPS}x per round. The pair isolates per-column decoding and row-copy cost from the scan itself.
+- \`join_indexed\`: \`select count(*) ... where a.id <= ${JOIN_INDEXED_OUTER} join ... on b.label = a.label\` (${JOIN_INDEXED_OPS} queries per round, ${JOIN_INDEXED_OUTER} matches) — the equality join runs on an indexed \`label\` column on every engine, so it measures the index probe instead of the nested scan in \`join\`.
+- \`delete_index_range\`: one \`delete ... where label between '${INDEX_DELETE_LOWER}' and '${INDEX_DELETE_UPPER}'\` in a transaction on an in-memory database carrying the \`label\` index (${expectedIndexDeleteRows()} rows removed, the surviving count asserted), then the interval is re-inserted outside the timed window. This is the index-driven bulk delete path, against the rowid path in \`delete_range\`.
+- \`or_filter\`: \`select count(*) ... where id < 1000 or label > 'row-4500'\` (${AGG_OPS} queries per round, ${expectedOrFilterRows()} matches) — a cross-column \`OR\` where neither side can be answered by a single-column pushdown.
 - \`delete_range\`: one \`delete from items where id between ${RANGE_DELETE_LOWER} and ${RANGE_DELETE_UPPER}\` in a transaction on an in-memory database (${RANGE_DELETE_ROWS} rows removed, the surviving count asserted), then the deleted interval is re-inserted outside the timed window. This is the bulk range-delete path rather than the per-rowid loop in \`delete\`/\`delete_sql\`.
 - \`update_expr\`: one \`update items set score = score + 1\` over every row in a transaction (${ROWS} rows updated, \`score\` of row 1 asserted to include every run), then the next round updates again. This pins the whole-table write path and its per-row conflict detection instead of a single-rowid update.
 - \`index_range\`: \`select id from items where label between '${INDEX_RANGE_LOWER}' and '${INDEX_RANGE_UPPER}' order by label\` (${RANGE_OPS} queries per round, ${expectedIndexRangeRows()} rows) — range predicate on an indexed column.
@@ -2367,7 +2776,7 @@ ${markdownAbsoluteTable([
 - \`txn\`: ${MUTATE_OPS} prepared INSERTs split into transactions of 10 (100 commits), on an in-memory database, so transaction boundaries rather than row count dominate.
 - \`rollback\`: begin + ${MUTATE_OPS} inserts + rollback (nothing persisted).
 - \`open\`: open + close of the main file, no reads.
-- \`@yydb/sqlite-unknown-wasm32\` is the in-memory SQL binding: it runs \`batch\` (inserts + snapshot export + file write), \`scan\`, \`point_sql\`, \`range\`, \`order_limit\`, \`group_by\`, \`join\`, \`in_list\`, \`sort_mixed\` and \`like_prefix\` through \`exec\`; it has no reader point API, no UPDATE/DELETE/indexes and no file open, so the remaining cells are \`n/a\`.
+- \`@yydb/sqlite-unknown-wasm32\` is the in-memory SQL binding: it runs \`batch\` (inserts + snapshot export + file write), \`scan\`, \`point_sql\`, \`range\`, \`order_limit\`, \`group_by\`, \`join\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`projection_narrow\`, \`projection_wide\` and \`or_filter\` through \`exec\`; it has no reader point API, no UPDATE/DELETE/indexes and no file open, so the remaining cells are \`n/a\`.
 
 ## Intentional deltas
 
@@ -2375,10 +2784,10 @@ ${markdownAbsoluteTable([
 - sql.js peer scan rebuilds the WASM DB from the serialized image each round; peer batch/update/delete timings include \`export()\`.
 - \`point_sql\` has no separate peer path — peers' prepared \`get\` is the reference.
 - The wasm column reads the same in-memory image every round (\`SELECT\` re-scans the image; the binding has no seek), and its \`batch\` includes \`snapshot()\` + the file write.
-- sql.js does not run the SQL-feature workloads (\`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`delete_range\`, \`update_expr\`), so those cells stay \`n/a\`; the wasm binding runs \`in_list\`, \`sort_mixed\` and \`like_prefix\` but not the mutation/index ones.
+- sql.js does not run the SQL-feature workloads (\`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`delete_range\`, \`update_expr\`), so those cells stay \`n/a\`; the wasm binding runs \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`projection_narrow\`, \`projection_wide\` and \`or_filter\` but not the mutation/index ones.
 - \`insert_multi\`, \`upsert\`, \`update_expr\` and \`delete_range\` on our side run on an in-memory \`new SQLite()\`, while the two peer columns write through their pager; the row set is validated on both sides.
 - \`batch_sql\`, \`update_idx\`, \`delete_idx\`, \`txn\`, \`update_expr\` and \`delete_range\` run on an in-memory database on every engine, so no pager publication or file I/O is included. sql.js runs the SQL ones through its prepared-statement API; the wasm binding has no UPDATE/DELETE/index support and stays \`n/a\`.
-- The SQL-engine workloads (\`point_param\`, \`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`, \`distinct\`, \`aggregate\`, \`subquery\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`upsert_param\`, \`update_sql\`, \`delete_sql\`, \`update_expr\`, \`delete_range\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
+- The SQL-engine workloads (\`point_param\`, \`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`, \`distinct\`, \`aggregate\`, \`subquery\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`or_filter\`, \`projection_narrow\`, \`projection_wide\`, \`join_indexed\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`upsert_param\`, \`update_sql\`, \`delete_sql\`, \`update_expr\`, \`delete_range\`, \`delete_index_range\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
 - \`batch\`, \`scan\`, \`point\`, \`range\`, \`update\`, \`delete\`, \`rollback\` and \`open\` still use the format-3 writer/reader primitives. The public \`SQLite\` entry does not expose raw record decoding, \`rowByRowid\`/\`range\` rowid windows, or the full-image \`save()\` that these timings are defined on.
 
 ## Capabilities still missing from the public API
