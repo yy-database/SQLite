@@ -57,6 +57,14 @@ const INDEX_RANGE_LOWER = "row-1000";
 const INDEX_RANGE_UPPER = "row-1499";
 const INDEX_RANGE_SQL = `select id from items where label between '${INDEX_RANGE_LOWER}' and '${INDEX_RANGE_UPPER}' order by label`;
 const UPSERT_SQL = "insert into items (id, label, score) values (?, ?, ?) on conflict(id) do update set score = excluded.score";
+// 100 个散射 rowid：测 IN 列表的规划与谓词派发，而不是顺序游标。
+const IN_LIST_SIZE = 100;
+const IN_LIST_IDS: number[] = Array.from({ length: IN_LIST_SIZE }, (_, index) => ((index * 37) % ROWS) + 1);
+const IN_LIST_ROWS = new Set(IN_LIST_IDS).size;
+const IN_LIST_SQL = `select count(*) as n from items where id in (${IN_LIST_IDS.join(", ")})`;
+// 无索引排序列：测排序 + 截断的真实代价。
+const SORT_MIXED_SQL = `select id, label, score from items order by score desc, id desc limit ${ORDER_LIMIT_ROWS}`;
+const SORT_MIXED_ROWS = Math.min(ORDER_LIMIT_ROWS, ROWS);
 
 function expectedJoinMatches(): number {
   let matches = 0;
@@ -114,29 +122,35 @@ function formatRatio(timeRatio: number): string {
 }
 
 type WorkloadKey =
-  | "batch" | "scan" | "point" | "point_sql" | "point_param" | "point_uk" | "range" | "indexed"
+  | "batch" | "batch_sql" | "scan" | "point" | "point_sql" | "point_param" | "point_uk" | "range" | "indexed"
   | "order_limit" | "group_by" | "join"
   | "distinct" | "aggregate" | "subquery" | "index_range" | "insert_multi" | "upsert" | "upsert_param"
-  | "update" | "update_sql" | "delete" | "delete_sql" | "rollback" | "open";
+  | "update" | "update_sql" | "update_idx" | "delete" | "delete_sql" | "delete_idx" | "txn" | "rollback" | "open"
+  | "in_list" | "sort_mixed";
 const WORKLOADS: WorkloadKey[] = [
-  "batch", "scan", "point", "point_sql", "point_param", "point_uk", "range", "indexed",
+  "batch", "batch_sql", "scan", "point", "point_sql", "point_param", "point_uk", "range", "indexed",
   "order_limit", "group_by", "join",
   "distinct", "aggregate", "subquery", "index_range", "insert_multi", "upsert", "upsert_param",
-  "update", "update_sql", "delete", "delete_sql", "rollback", "open",
+  "update", "update_sql", "update_idx", "delete", "delete_sql", "delete_idx", "txn", "rollback", "open",
+  "in_list", "sort_mixed",
 ];
 
 // Ops per workload for throughput normalization (batch/scan count rows; the rest count queries/mutations/opens).
 function workloadOps(workload: WorkloadKey): number {
-  if (workload === "batch" || workload === "scan") return ROWS;
+  if (workload === "batch" || workload === "batch_sql" || workload === "scan") return ROWS;
   if (workload === "range" || workload === "index_range") return RANGE_OPS;
   if (workload === "order_limit") return LIMIT_OPS;
-  if (workload === "group_by" || workload === "aggregate") return AGG_OPS;
+  if (workload === "group_by" || workload === "aggregate" || workload === "in_list" || workload === "sort_mixed") return AGG_OPS;
   if (workload === "join") return JOIN_OPS;
   if (workload === "distinct") return DISTINCT_OPS;
   if (workload === "subquery") return SUBQUERY_OPS;
   if (workload === "insert_multi") return MULTI_STATEMENTS * MULTI_ROWS_PER_STATEMENT;
   if (workload === "upsert" || workload === "upsert_param") return UPSERT_OPS;
-  if (workload === "update" || workload === "update_sql" || workload === "delete" || workload === "delete_sql" || workload === "rollback") {
+  if (
+    workload === "update" || workload === "update_sql" || workload === "update_idx"
+    || workload === "delete" || workload === "delete_sql" || workload === "delete_idx"
+    || workload === "txn" || workload === "rollback"
+  ) {
     return MUTATE_OPS;
   }
   if (workload === "open") return ROUNDS;
@@ -497,6 +511,46 @@ function nativeSubquery(factory: (path: string, readOnly?: boolean) => PeerHandl
   return samples;
 }
 
+function nativeInList(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  const database = factory(path, true);
+  const select = database.prepare(IN_LIST_SQL);
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const row = select.get() as { n: number } | undefined;
+      if (!row || Number(row.n) !== IN_LIST_ROWS) throw new Error(`in_list returned ${JSON.stringify(row)}, expected ${IN_LIST_ROWS}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function nativeSortMixed(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  const database = factory(path, true);
+  const select = database.prepare(SORT_MIXED_SQL);
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const rows = select.all();
+      if (rows.length !== SORT_MIXED_ROWS) throw new Error(`sort_mixed returned ${rows.length}, expected ${SORT_MIXED_ROWS}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
 function nativeIndexRange(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
   const writable = factory(path);
   writable.exec("create index if not exists items_label on items(label)");
@@ -569,6 +623,85 @@ function nativeUpsert(factory: (path: string, readOnly?: boolean) => PeerHandle,
   const row = database.prepare("select score from items where id = 1").get() as { score: number } | undefined;
   if (!row || Number(row.score) !== 7.25) throw new Error(`upsert did not update: ${JSON.stringify(row)}`);
   database.close();
+  return samples;
+}
+
+// ---------------------------------------------------------------------------
+// Additional public-API peer scenarios: bulk insert through SQL, transaction
+// batching, and indexed-column writes. All run on an in-memory database so the
+// pager's file publication does not decide the comparison.
+// ---------------------------------------------------------------------------
+
+function peerBatchSql(factory: () => PeerHandle): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = factory();
+    database.exec("create table items (id integer primary key, label text, score real)");
+    const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    for (let row = 1; row <= ROWS; row += 1) insert.run(row, `row-${row}`, row / 4);
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+    const count = database.prepare("select count(*) as n from items").get() as { n: number } | undefined;
+    if (!count || Number(count.n) !== ROWS) throw new Error(`batch_sql rows ${JSON.stringify(count)}`);
+    database.close();
+  }
+  return samples;
+}
+
+function peerTxn(factory: () => PeerHandle): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = factory();
+    database.exec("create table items (id integer primary key, label text, score real)");
+    const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+    const start = process.hrtime.bigint();
+    for (let row = 1; row <= MUTATE_OPS; row += 1) {
+      if ((row - 1) % 10 === 0) database.exec("begin");
+      insert.run(row, `txn-${row}`, row / 4);
+      if (row % 10 === 0) database.exec("commit");
+    }
+    samples.push(elapsedMs(start));
+    const count = database.prepare("select count(*) as n from items").get() as { n: number } | undefined;
+    if (!count || Number(count.n) !== MUTATE_OPS) throw new Error(`txn rows ${JSON.stringify(count)}`);
+    database.close();
+  }
+  return samples;
+}
+
+function peerIndexedWrite(factory: () => PeerHandle, kind: "update" | "delete"): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = factory();
+    database.exec("create table items (id integer primary key, label text, score real)");
+    database.exec("create index items_label on items(label)");
+    const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+    database.exec("begin");
+    for (let row = 1; row <= ROWS; row += 1) insert.run(row, `row-${row}`, row / 4);
+    database.exec("commit");
+    const statement = kind === "update"
+      ? database.prepare("update items set score = ? where label = ?")
+      : database.prepare("delete from items where label = ?");
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    for (let op = 0; op < MUTATE_OPS; op += 1) {
+      const label = `row-${(op % ROWS) + 1}`;
+      if (kind === "update") statement.run(7.25, label);
+      else statement.run(label);
+    }
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+    if (kind === "update") {
+      const row = database.prepare("select score from items where label = 'row-1'").get() as { score: number } | undefined;
+      if (!row || Number(row.score) !== 7.25) throw new Error(`update_idx missed: ${JSON.stringify(row)}`);
+    }
+    else {
+      const count = database.prepare("select count(*) as n from items").get() as { n: number } | undefined;
+      if (!count || Number(count.n) !== ROWS - MUTATE_OPS) throw new Error(`delete_idx rows ${JSON.stringify(count)}`);
+    }
+    database.close();
+  }
   return samples;
 }
 
@@ -926,6 +1059,40 @@ function ourSubquery(database: SQLite): number[] {
   return samples;
 }
 
+function ourInList(database: SQLite): number[] {
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const row = database.get<{ n: bigint }>(IN_LIST_SQL);
+      if (!row || Number(row.n) !== IN_LIST_ROWS) throw new Error(`in_list returned ${JSON.stringify(row)}, expected ${IN_LIST_ROWS}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function ourSortMixed(database: SQLite): number[] {
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const rows = database.all<{ id: bigint }>(SORT_MIXED_SQL);
+      if (rows.length !== SORT_MIXED_ROWS) throw new Error(`sort_mixed returned ${rows.length}, expected ${SORT_MIXED_ROWS}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
 function ourIndexRange(): number[] {
   const database = buildDatabase("uk");
   const expected = expectedIndexRangeRows();
@@ -1009,6 +1176,80 @@ function ourUpsertParam(): number[] {
   if (!row || Number(row.score) !== 7.25) throw new Error(`upsert_param did not update: ${JSON.stringify(row)}`);
   upsert.close();
   database.close();
+  return samples;
+}
+
+// ---------------------------------------------------------------------------
+// `@yydb/sqlite` public-API counterparts of the peer scenarios above.
+// ---------------------------------------------------------------------------
+
+function ourBatchSql(): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = new SQLite();
+    database.exec("create table items (id integer primary key, label text not null, score real)");
+    const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+    const start = process.hrtime.bigint();
+    database.transaction(() => {
+      for (let row = 1; row <= ROWS; row += 1) insert.run([BigInt(row), `row-${row}`, row / 4]);
+    });
+    samples.push(elapsedMs(start));
+    const count = database.get<{ n: bigint }>("select count(*) as n from items");
+    if (!count || Number(count.n) !== ROWS) throw new Error(`batch_sql rows ${JSON.stringify(count)}`);
+    insert.close();
+    database.close();
+  }
+  return samples;
+}
+
+function ourTxn(): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = new SQLite();
+    database.exec("create table items (id integer primary key, label text not null, score real)");
+    const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+    const start = process.hrtime.bigint();
+    for (let row = 1; row <= MUTATE_OPS; row += 1) {
+      if ((row - 1) % 10 === 0) database.exec("begin");
+      insert.run([BigInt(row), `txn-${row}`, row / 4]);
+      if (row % 10 === 0) database.exec("commit");
+    }
+    samples.push(elapsedMs(start));
+    const count = database.get<{ n: bigint }>("select count(*) as n from items");
+    if (!count || Number(count.n) !== MUTATE_OPS) throw new Error(`txn rows ${JSON.stringify(count)}`);
+    insert.close();
+    database.close();
+  }
+  return samples;
+}
+
+function ourIndexedWrite(kind: "update" | "delete"): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = buildDatabase("label");
+    const statement = kind === "update"
+      ? database.prepare("update items set score = ? where label = ?")
+      : database.prepare("delete from items where label = ?");
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    for (let op = 0; op < MUTATE_OPS; op += 1) {
+      const label = `row-${(op % ROWS) + 1}`;
+      if (kind === "update") statement.run([7.25, label]);
+      else statement.run([label]);
+    }
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+    if (kind === "update") {
+      const row = database.get<{ score: number }>("select score from items where label = 'row-1'");
+      if (!row || Number(row.score) !== 7.25) throw new Error(`update_idx missed: ${JSON.stringify(row)}`);
+    }
+    else {
+      const count = database.get<{ n: bigint }>("select count(*) as n from items");
+      if (!count || Number(count.n) !== ROWS - MUTATE_OPS) throw new Error(`delete_idx rows ${JSON.stringify(count)}`);
+    }
+    statement.close();
+    database.close();
+  }
   return samples;
 }
 
@@ -1300,6 +1541,86 @@ function sqlJsOpen(SQL: SqlJsStatic, path: string): number[] {
   return samples;
 }
 
+// sql.js counterparts of the in-memory peer scenarios: same DDL, same prepared
+// statements, no serialization inside the timed window.
+
+function sqlJsBatchSql(SQL: SqlJsStatic): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = new SQL.Database();
+    database.run("create table items (id integer primary key, label text, score real)");
+    const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+    const start = process.hrtime.bigint();
+    database.run("begin");
+    for (let row = 1; row <= ROWS; row += 1) insert.run([row, `row-${row}`, row / 4]);
+    database.run("commit");
+    samples.push(elapsedMs(start));
+    const count = database.exec("select count(*) as n from items")[0]?.values[0]?.[0];
+    if (Number(count) !== ROWS) throw new Error(`batch_sql rows ${count}`);
+    insert.free();
+    database.close();
+  }
+  return samples;
+}
+
+function sqlJsTxn(SQL: SqlJsStatic): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = new SQL.Database();
+    database.run("create table items (id integer primary key, label text, score real)");
+    const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+    const start = process.hrtime.bigint();
+    for (let row = 1; row <= MUTATE_OPS; row += 1) {
+      if ((row - 1) % 10 === 0) database.run("begin");
+      insert.run([row, `txn-${row}`, row / 4]);
+      if (row % 10 === 0) database.run("commit");
+    }
+    samples.push(elapsedMs(start));
+    const count = database.exec("select count(*) as n from items")[0]?.values[0]?.[0];
+    if (Number(count) !== MUTATE_OPS) throw new Error(`txn rows ${count}`);
+    insert.free();
+    database.close();
+  }
+  return samples;
+}
+
+function sqlJsIndexedWrite(SQL: SqlJsStatic, kind: "update" | "delete"): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = new SQL.Database();
+    database.run("create table items (id integer primary key, label text, score real)");
+    database.run("create index items_label on items(label)");
+    const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+    database.run("begin");
+    for (let row = 1; row <= ROWS; row += 1) insert.run([row, `row-${row}`, row / 4]);
+    database.run("commit");
+    insert.free();
+    const statement = database.prepare(
+      kind === "update" ? "update items set score = ? where label = ?" : "delete from items where label = ?",
+    );
+    const start = process.hrtime.bigint();
+    database.run("begin");
+    for (let op = 0; op < MUTATE_OPS; op += 1) {
+      const label = `row-${(op % ROWS) + 1}`;
+      if (kind === "update") statement.run([7.25, label]);
+      else statement.run([label]);
+    }
+    database.run("commit");
+    samples.push(elapsedMs(start));
+    if (kind === "update") {
+      const score = database.exec("select score from items where label = 'row-1'")[0]?.values[0]?.[0];
+      if (Number(score) !== 7.25) throw new Error(`update_idx missed: ${score}`);
+    }
+    else {
+      const count = database.exec("select count(*) as n from items")[0]?.values[0]?.[0];
+      if (Number(count) !== ROWS - MUTATE_OPS) throw new Error(`delete_idx rows ${count}`);
+    }
+    statement.free();
+    database.close();
+  }
+  return samples;
+}
+
 // ---------------------------------------------------------------------------
 // `@yydb/sqlite-unknown-wasm32` (in-memory SQL binding; no reader point API,
 // no UPDATE/DELETE/indexes/file open — unsupported workloads report `n/a`)
@@ -1439,6 +1760,40 @@ function wasmJoin(database: WasmDatabase): number[] {
       const rows = wasmExecRows(database, JOIN_SQL);
       const matched = Number(rows[0]?.[0]);
       if (matched !== expected) throw new Error(`join matched ${matched}, expected ${expected}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function wasmInList(database: WasmDatabase): number[] {
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const rows = wasmExecRows(database, IN_LIST_SQL);
+      if (Number(rows[0]?.[0]) !== IN_LIST_ROWS) throw new Error(`in_list returned ${JSON.stringify(rows)}, expected ${IN_LIST_ROWS}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function wasmSortMixed(database: WasmDatabase): number[] {
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const rows = wasmExecRows(database, SORT_MIXED_SQL);
+      if (rows.length !== SORT_MIXED_ROWS) throw new Error(`sort_mixed returned ${rows.length}, expected ${SORT_MIXED_ROWS}`);
     }
   };
   run();
@@ -1599,6 +1954,7 @@ try {
   ];
   const nodeSamples: Partial<Record<WorkloadKey, number[]>> = {
     batch: nodeBatch,
+    batch_sql: peerBatchSql(() => openNode(":memory:")),
     scan: nativeScan(openNode, nodeSpace.path),
     point: nativePoint(openNode, nodeSpace.path),
     point_uk: nativePointUk(openNode, nodeSpace.path),
@@ -1617,6 +1973,11 @@ try {
     open: nativeOpen(openNode, nodeSpace.path),
     update: nativeUpdate(openNode, nodeMutateSpace.path),
     delete: nativeDelete(openNode, nodeDeleteSpace.path),
+    txn: peerTxn(() => openNode(":memory:")),
+    update_idx: peerIndexedWrite(() => openNode(":memory:"), "update"),
+    delete_idx: peerIndexedWrite(() => openNode(":memory:"), "delete"),
+    in_list: nativeInList(openNode, nodeSpace.path),
+    sort_mixed: nativeSortMixed(openNode, nodeSpace.path),
   };
   nodeSamples.point_sql = nodeSamples.point;
   nodeSamples.point_param = nodeSamples.point;
@@ -1628,6 +1989,7 @@ try {
   // @yydb/sqlite.
   const oursSamples: Partial<Record<WorkloadKey, number[]>> = {
     batch: [ourBatchLoad(oursSpace.path), ourBatchLoad(oursSpace.path), ourBatchLoad(oursSpace.path)],
+    batch_sql: ourBatchSql(),
     scan: ourScan(oursSpace.path),
     point: ourPoint(oursSpace.path),
     point_sql: ourPointSql(),
@@ -1645,6 +2007,8 @@ try {
   oursSamples.distinct = ourDistinct(analyticDatabase);
   oursSamples.aggregate = ourAggregate(analyticDatabase);
   oursSamples.subquery = ourSubquery(analyticDatabase);
+  oursSamples.in_list = ourInList(analyticDatabase);
+  oursSamples.sort_mixed = ourSortMixed(analyticDatabase);
   analyticDatabase.close();
   oursSamples.index_range = ourIndexRange();
   oursSamples.insert_multi = ourInsertMulti();
@@ -1653,8 +2017,11 @@ try {
   ourBatchLoad(oursMutateSpace.path);
   oursSamples.update = ourUpdate(oursMutateSpace.path);
   oursSamples.update_sql = ourUpdateSql();
+  oursSamples.update_idx = ourIndexedWrite("update");
   oursSamples.delete = ourDelete(oursDeleteSpace.path);
   oursSamples.delete_sql = ourDeleteSql();
+  oursSamples.delete_idx = ourIndexedWrite("delete");
+  oursSamples.txn = ourTxn();
   const oursRates = ratesFromSamples(oursSamples);
 
   // better-sqlite3.
@@ -1664,6 +2031,7 @@ try {
       nativeBatchLoad(openBetter, betterSpace.path),
       nativeBatchLoad(openBetter, betterSpace.path),
     ],
+    batch_sql: peerBatchSql(() => openBetter(":memory:")),
     scan: nativeScan(openBetter, betterSpace.path),
     point: nativePoint(openBetter, betterSpace.path),
     point_uk: nativePointUk(openBetter, betterSpace.path),
@@ -1682,6 +2050,11 @@ try {
     open: nativeOpen(openBetter, betterSpace.path),
     update: nativeUpdate(openBetter, betterMutateSpace.path),
     delete: nativeDelete(openBetter, betterDeleteSpace.path),
+    txn: peerTxn(() => openBetter(":memory:")),
+    update_idx: peerIndexedWrite(() => openBetter(":memory:"), "update"),
+    delete_idx: peerIndexedWrite(() => openBetter(":memory:"), "delete"),
+    in_list: nativeInList(openBetter, betterSpace.path),
+    sort_mixed: nativeSortMixed(openBetter, betterSpace.path),
   };
   betterSamples.point_sql = betterSamples.point;
   betterSamples.point_param = betterSamples.point;
@@ -1709,6 +2082,10 @@ try {
     open: sqlJsOpen(SQL, sqlJsSpace.path),
     update: sqlJsUpdate(SQL, sqlJsMutateSpace.path),
     delete: sqlJsDelete(SQL, sqlJsDeleteSpace.path),
+    batch_sql: sqlJsBatchSql(SQL),
+    txn: sqlJsTxn(SQL),
+    update_idx: sqlJsIndexedWrite(SQL, "update"),
+    delete_idx: sqlJsIndexedWrite(SQL, "delete"),
   };
   sqlJsSamples.point_sql = sqlJsSamples.point;
   sqlJsSamples.point_param = sqlJsSamples.point;
@@ -1730,6 +2107,8 @@ try {
     wasmSamples.order_limit = wasmOrderLimit(readDatabase);
     wasmSamples.group_by = wasmGroupBy(readDatabase);
     wasmSamples.join = wasmJoin(readDatabase);
+    wasmSamples.in_list = wasmInList(readDatabase);
+    wasmSamples.sort_mixed = wasmSortMixed(readDatabase);
     readDatabase.free();
     wasmRates = ratesFromSamples(wasmSamples);
   } else {
@@ -1773,6 +2152,7 @@ ${markdownAbsoluteTable([
 ## Workloads
 
 - \`batch\`: create table, ${ROWS} rows in transactions of ${ROWS_PER_TXN}, save file. \`BENCH_SYNCHRONOUS=on\` moves every library to \`synchronous=FULL\`.
+- \`batch_sql\`: the same row set through the public \`new SQLite()\` entry — one prepared INSERT inside one transaction on an in-memory database, against the peers' equivalent. This is the bulk-insert path users actually call, separate from the writer primitive in \`batch\`.
 - \`scan\`: open + full table scan per round.
 - \`point\`: reader \`rowByRowid\` vs each peer's prepared \`get\`.
 - \`point_sql\`: our public \`new SQLite()\` \`select ... where id = N\` vs the same peer prepared \`get\` (peer cells reuse \`point\`).
@@ -1786,12 +2166,16 @@ ${markdownAbsoluteTable([
 - \`distinct\`: \`select distinct label from items\` (${DISTINCT_OPS} queries per round, ${ROWS} distinct labels) — worst case for the dedup structure because nothing collapses.
 - \`aggregate\`: \`select count(*), sum(score), min(score), max(score) from items\` (${AGG_OPS} queries per round) — single-pass aggregate without grouping.
 - \`subquery\`: \`select count(*) ... where id in (select id from items where score > ${SUBQUERY_THRESHOLD})\` (${SUBQUERY_OPS} queries per round, ${expectedSubqueryRows()} matches) — uncorrelated \`IN\` subquery.
+- \`in_list\`: \`select count(*) ... where id in (<${IN_LIST_SIZE} scattered rowids>)\` (${AGG_OPS} queries per round, ${IN_LIST_ROWS} matches) — literal \`IN\` list planning and predicate dispatch.
+- \`sort_mixed\`: \`select ... order by score desc, id desc limit ${SORT_MIXED_ROWS}\` (${AGG_OPS} queries per round) — unindexed sort plus truncation.
 - \`index_range\`: \`select id from items where label between '${INDEX_RANGE_LOWER}' and '${INDEX_RANGE_UPPER}' order by label\` (${RANGE_OPS} queries per round, ${expectedIndexRangeRows()} rows) — range predicate on an indexed column.
 - \`insert_multi\`: ${MULTI_STATEMENTS} statements of ${MULTI_ROWS_PER_STATEMENT} literal rows in one transaction (${MULTI_STATEMENTS * MULTI_ROWS_PER_STATEMENT} rows total).
 - \`upsert\`: ${UPSERT_OPS} \`insert ... on conflict(id) do update\` statements in one transaction.
 - \`upsert_param\`: the same upsert through a prepared statement with bound values; peer cells reuse \`upsert\`. \`upsert\` re-parses interpolated SQL text, so the pair shows the parse cost separately from execution.
 - \`update\` / \`delete\`: ${MUTATE_OPS} mutations in one transaction + save (our writer) vs peers' prepared mutation in a transaction.
 - \`update_sql\` / \`delete_sql\`: ${MUTATE_OPS} prepared SQL mutations by bound rowid in one transaction on \`new SQLite()\`; peer cells reuse \`update\` / \`delete\`. These exercise the SQL write path (rowid narrowing) rather than the writer primitives.
+- \`update_idx\` / \`delete_idx\`: ${MUTATE_OPS} prepared mutations by an **indexed** \`label\` column in one transaction, on an in-memory database with the same index on every engine. This covers the indexed write path (probe candidates instead of a full decode) and has no peer-cell reuse.
+- \`txn\`: ${MUTATE_OPS} prepared INSERTs split into transactions of 10 (100 commits), on an in-memory database, so transaction boundaries rather than row count dominate.
 - \`rollback\`: begin + ${MUTATE_OPS} inserts + rollback (nothing persisted).
 - \`open\`: open + close of the main file, no reads.
 - \`@yydb/sqlite-unknown-wasm32\` is the in-memory SQL binding: it runs \`batch\` (inserts + snapshot export + file write), \`scan\`, \`point_sql\`, \`range\`, \`order_limit\`, \`group_by\` and \`join\` through \`exec\`; it has no reader point API, no UPDATE/DELETE/indexes and no file open, so the remaining cells are \`n/a\`.
@@ -1802,9 +2186,10 @@ ${markdownAbsoluteTable([
 - sql.js peer scan rebuilds the WASM DB from the serialized image each round; peer batch/update/delete timings include \`export()\`.
 - \`point_sql\` has no separate peer path — peers' prepared \`get\` is the reference.
 - The wasm column reads the same in-memory image every round (\`SELECT\` re-scans the image; the binding has no seek), and its \`batch\` includes \`snapshot()\` + the file write.
-- sql.js and the wasm binding do not run the six SQL-feature workloads (\`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`), so those cells stay \`n/a\`; they are compared only on \`node:sqlite\` and \`better-sqlite3\`.
+- sql.js does not run the SQL-feature workloads (\`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`in_list\`, \`sort_mixed\`), so those cells stay \`n/a\`; the wasm binding runs \`in_list\` and \`sort_mixed\` but not the mutation/index ones.
 - \`insert_multi\` and \`upsert\` on our side run on an in-memory \`new SQLite()\`, while the two peer columns write through their file pager; the row set is validated on both sides.
-- The SQL-engine workloads (\`point_param\`, \`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`, \`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`upsert_param\`, \`update_sql\`, \`delete_sql\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
+- \`batch_sql\`, \`update_idx\`, \`delete_idx\` and \`txn\` run on an in-memory database on every engine, so no pager publication or file I/O is included. sql.js runs the same four through its prepared-statement API; the wasm binding has no UPDATE/DELETE/index support and stays \`n/a\`.
+- The SQL-engine workloads (\`point_param\`, \`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`, \`distinct\`, \`aggregate\`, \`subquery\`, \`in_list\`, \`sort_mixed\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`upsert_param\`, \`update_sql\`, \`delete_sql\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
 - \`batch\`, \`scan\`, \`point\`, \`range\`, \`update\`, \`delete\`, \`rollback\` and \`open\` still use the format-3 writer/reader primitives. The public \`SQLite\` entry does not expose raw record decoding, \`rowByRowid\`/\`range\` rowid windows, or the full-image \`save()\` that these timings are defined on.
 
 ## Capabilities still missing from the public API
