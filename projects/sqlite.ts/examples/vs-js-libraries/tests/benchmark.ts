@@ -65,6 +65,22 @@ const IN_LIST_SQL = `select count(*) as n from items where id in (${IN_LIST_IDS.
 // 无索引排序列：测排序 + 截断的真实代价。
 const SORT_MIXED_SQL = `select id, label, score from items order by score desc, id desc limit ${ORDER_LIMIT_ROWS}`;
 const SORT_MIXED_ROWS = Math.min(ORDER_LIMIT_ROWS, ROWS);
+// 前缀 LIKE：无索引全表扫描上的模式匹配，只保留一个固定前缀字面量。
+const LIKE_PREFIX_SQL = "select count(*) as n from items where label like 'row-1%'";
+// 批量区间删除：一条语句删掉一段连续 rowid，随后在计时窗口外补回。
+const RANGE_DELETE_LOWER = Math.max(1, Math.min(1_000, Math.floor(ROWS / 4)));
+const RANGE_DELETE_UPPER = Math.min(RANGE_DELETE_LOWER + 999, ROWS);
+const RANGE_DELETE_ROWS = Math.max(0, RANGE_DELETE_UPPER - RANGE_DELETE_LOWER + 1);
+// 全表表达式更新：一条语句改写每一行，用于固定“逐行写路径 + 冲突判定”的成本。
+const UPDATE_EXPR_SQL = "update items set score = score + 1";
+// 每条 round 更新一次全表；写类 workload 与既有变速箱一致，不做额外预热。
+const UPDATE_EXPR_RUNS = ROUNDS;
+
+function expectedLikePrefixRows(): number {
+  let count = 0;
+  for (let id = 1; id <= ROWS; id += 1) if (`row-${id}`.startsWith("row-1")) count += 1;
+  return count;
+}
 
 function expectedJoinMatches(): number {
   let matches = 0;
@@ -126,13 +142,13 @@ type WorkloadKey =
   | "order_limit" | "group_by" | "join"
   | "distinct" | "aggregate" | "subquery" | "index_range" | "insert_multi" | "upsert" | "upsert_param"
   | "update" | "update_sql" | "update_idx" | "delete" | "delete_sql" | "delete_idx" | "txn" | "rollback" | "open"
-  | "in_list" | "sort_mixed";
+  | "in_list" | "sort_mixed" | "like_prefix" | "delete_range" | "update_expr";
 const WORKLOADS: WorkloadKey[] = [
   "batch", "batch_sql", "scan", "point", "point_sql", "point_param", "point_uk", "range", "indexed",
   "order_limit", "group_by", "join",
   "distinct", "aggregate", "subquery", "index_range", "insert_multi", "upsert", "upsert_param",
   "update", "update_sql", "update_idx", "delete", "delete_sql", "delete_idx", "txn", "rollback", "open",
-  "in_list", "sort_mixed",
+  "in_list", "sort_mixed", "like_prefix", "delete_range", "update_expr",
 ];
 
 // Ops per workload for throughput normalization (batch/scan count rows; the rest count queries/mutations/opens).
@@ -140,7 +156,11 @@ function workloadOps(workload: WorkloadKey): number {
   if (workload === "batch" || workload === "batch_sql" || workload === "scan") return ROWS;
   if (workload === "range" || workload === "index_range") return RANGE_OPS;
   if (workload === "order_limit") return LIMIT_OPS;
-  if (workload === "group_by" || workload === "aggregate" || workload === "in_list" || workload === "sort_mixed") return AGG_OPS;
+  if (workload === "group_by" || workload === "aggregate" || workload === "in_list" || workload === "sort_mixed" || workload === "like_prefix") {
+    return AGG_OPS;
+  }
+  if (workload === "update_expr") return ROWS;
+  if (workload === "delete_range") return Math.max(1, RANGE_DELETE_ROWS);
   if (workload === "join") return JOIN_OPS;
   if (workload === "distinct") return DISTINCT_OPS;
   if (workload === "subquery") return SUBQUERY_OPS;
@@ -546,6 +566,81 @@ function nativeSortMixed(factory: (path: string, readOnly?: boolean) => PeerHand
     const start = process.hrtime.bigint();
     run();
     samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function nativeLikePrefix(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  const database = factory(path, true);
+  const select = database.prepare(LIKE_PREFIX_SQL);
+  const expected = expectedLikePrefixRows();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const row = select.get() as { n: number } | undefined;
+      if (!row || Number(row.n) !== expected) throw new Error(`like_prefix returned ${JSON.stringify(row)}, expected ${expected}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function nativeUpdateExpr(factory: () => PeerHandle): number[] {
+  const database = factory();
+  database.exec("create table items (id integer primary key, label text, score real)");
+  const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+  database.exec("begin");
+  for (let row = 1; row <= ROWS; row += 1) insert.run(row, `row-${row}`, row / 4);
+  database.exec("commit");
+  const update = database.prepare(UPDATE_EXPR_SQL);
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    update.run();
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+  }
+  const row = database.prepare("select score from items where id = 1").get() as { score: number } | undefined;
+  if (!row || Math.abs(Number(row.score) - (1 / 4 + UPDATE_EXPR_RUNS)) > 1e-6) {
+    throw new Error(`update_expr did not increment every row: ${JSON.stringify(row)}`);
+  }
+  database.close();
+  return samples;
+}
+
+function nativeDeleteRange(factory: () => PeerHandle): number[] {
+  const database = factory();
+  database.exec("create table items (id integer primary key, label text, score real)");
+  const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+  const remove = database.prepare("delete from items where id between ? and ?");
+  const load = () => {
+    database.exec("begin");
+    for (let row = 1; row <= ROWS; row += 1) insert.run(row, `row-${row}`, row / 4);
+    database.exec("commit");
+  };
+  load();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    remove.run(RANGE_DELETE_LOWER, RANGE_DELETE_UPPER);
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+    const count = database.prepare("select count(*) as n from items").get() as { n: number } | undefined;
+    if (!count || Number(count.n) !== ROWS - RANGE_DELETE_ROWS) {
+      throw new Error(`delete_range rows ${JSON.stringify(count)}, expected ${ROWS - RANGE_DELETE_ROWS}`);
+    }
+    database.exec("begin");
+    for (let id = RANGE_DELETE_LOWER; id <= RANGE_DELETE_UPPER; id += 1) insert.run(id, `row-${id}`, id / 4);
+    database.exec("commit");
   }
   database.close();
   return samples;
@@ -1090,6 +1185,69 @@ function ourSortMixed(database: SQLite): number[] {
     run();
     samples.push(elapsedMs(start));
   }
+  return samples;
+}
+
+function ourLikePrefix(database: SQLite): number[] {
+  const expected = expectedLikePrefixRows();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const row = database.get<{ n: bigint }>(LIKE_PREFIX_SQL);
+      if (!row || Number(row.n) !== expected) throw new Error(`like_prefix returned ${JSON.stringify(row)}, expected ${expected}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function ourUpdateExpr(): number[] {
+  const database = buildDatabase();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    database.run(UPDATE_EXPR_SQL);
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+  }
+  const row = database.get<{ score: number }>("select score from items where id = 1");
+  if (!row || Math.abs(Number(row.score) - (1 / 4 + UPDATE_EXPR_RUNS)) > 1e-6) {
+    throw new Error(`update_expr did not increment every row: ${JSON.stringify(row)}`);
+  }
+  database.close();
+  return samples;
+}
+
+function ourDeleteRange(): number[] {
+  const database = buildDatabase();
+  const remove = database.prepare("delete from items where id between ? and ?");
+  const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    remove.run([BigInt(RANGE_DELETE_LOWER), BigInt(RANGE_DELETE_UPPER)]);
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+    const count = database.get<{ n: bigint }>("select count(*) as n from items");
+    if (!count || Number(count.n) !== ROWS - RANGE_DELETE_ROWS) {
+      throw new Error(`delete_range rows ${JSON.stringify(count)}, expected ${ROWS - RANGE_DELETE_ROWS}`);
+    }
+    database.transaction(() => {
+      for (let id = RANGE_DELETE_LOWER; id <= RANGE_DELETE_UPPER; id += 1) {
+        insert.run([BigInt(id), `row-${id}`, id / 4]);
+      }
+    });
+  }
+  remove.close();
+  insert.close();
+  database.close();
   return samples;
 }
 
@@ -1806,6 +1964,24 @@ function wasmSortMixed(database: WasmDatabase): number[] {
   return samples;
 }
 
+function wasmLikePrefix(database: WasmDatabase): number[] {
+  const expected = expectedLikePrefixRows();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const rows = wasmExecRows(database, LIKE_PREFIX_SQL);
+      if (Number(rows[0]?.[0]) !== expected) throw new Error(`like_prefix returned ${JSON.stringify(rows)}, expected ${expected}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
 // ---------------------------------------------------------------------------
 // rates + report
 // ---------------------------------------------------------------------------
@@ -1978,6 +2154,9 @@ try {
     delete_idx: peerIndexedWrite(() => openNode(":memory:"), "delete"),
     in_list: nativeInList(openNode, nodeSpace.path),
     sort_mixed: nativeSortMixed(openNode, nodeSpace.path),
+    like_prefix: nativeLikePrefix(openNode, nodeSpace.path),
+    update_expr: nativeUpdateExpr(() => openNode(":memory:")),
+    delete_range: nativeDeleteRange(() => openNode(":memory:")),
   };
   nodeSamples.point_sql = nodeSamples.point;
   nodeSamples.point_param = nodeSamples.point;
@@ -2009,7 +2188,10 @@ try {
   oursSamples.subquery = ourSubquery(analyticDatabase);
   oursSamples.in_list = ourInList(analyticDatabase);
   oursSamples.sort_mixed = ourSortMixed(analyticDatabase);
+  oursSamples.like_prefix = ourLikePrefix(analyticDatabase);
   analyticDatabase.close();
+  oursSamples.update_expr = ourUpdateExpr();
+  oursSamples.delete_range = ourDeleteRange();
   oursSamples.index_range = ourIndexRange();
   oursSamples.insert_multi = ourInsertMulti();
   oursSamples.upsert = ourUpsert();
@@ -2055,6 +2237,9 @@ try {
     delete_idx: peerIndexedWrite(() => openBetter(":memory:"), "delete"),
     in_list: nativeInList(openBetter, betterSpace.path),
     sort_mixed: nativeSortMixed(openBetter, betterSpace.path),
+    like_prefix: nativeLikePrefix(openBetter, betterSpace.path),
+    update_expr: nativeUpdateExpr(() => openBetter(":memory:")),
+    delete_range: nativeDeleteRange(() => openBetter(":memory:")),
   };
   betterSamples.point_sql = betterSamples.point;
   betterSamples.point_param = betterSamples.point;
@@ -2109,6 +2294,7 @@ try {
     wasmSamples.join = wasmJoin(readDatabase);
     wasmSamples.in_list = wasmInList(readDatabase);
     wasmSamples.sort_mixed = wasmSortMixed(readDatabase);
+    wasmSamples.like_prefix = wasmLikePrefix(readDatabase);
     readDatabase.free();
     wasmRates = ratesFromSamples(wasmSamples);
   } else {
@@ -2168,6 +2354,9 @@ ${markdownAbsoluteTable([
 - \`subquery\`: \`select count(*) ... where id in (select id from items where score > ${SUBQUERY_THRESHOLD})\` (${SUBQUERY_OPS} queries per round, ${expectedSubqueryRows()} matches) — uncorrelated \`IN\` subquery.
 - \`in_list\`: \`select count(*) ... where id in (<${IN_LIST_SIZE} scattered rowids>)\` (${AGG_OPS} queries per round, ${IN_LIST_ROWS} matches) — literal \`IN\` list planning and predicate dispatch.
 - \`sort_mixed\`: \`select ... order by score desc, id desc limit ${SORT_MIXED_ROWS}\` (${AGG_OPS} queries per round) — unindexed sort plus truncation.
+- \`like_prefix\`: \`select count(*) ... where label like 'row-1%'\` (${AGG_OPS} queries per round, ${expectedLikePrefixRows()} matches) — prefix pattern over an unindexed full scan, with the row count asserted on every engine.
+- \`delete_range\`: one \`delete from items where id between ${RANGE_DELETE_LOWER} and ${RANGE_DELETE_UPPER}\` in a transaction on an in-memory database (${RANGE_DELETE_ROWS} rows removed, the surviving count asserted), then the deleted interval is re-inserted outside the timed window. This is the bulk range-delete path rather than the per-rowid loop in \`delete\`/\`delete_sql\`.
+- \`update_expr\`: one \`update items set score = score + 1\` over every row in a transaction (${ROWS} rows updated, \`score\` of row 1 asserted to include every run), then the next round updates again. This pins the whole-table write path and its per-row conflict detection instead of a single-rowid update.
 - \`index_range\`: \`select id from items where label between '${INDEX_RANGE_LOWER}' and '${INDEX_RANGE_UPPER}' order by label\` (${RANGE_OPS} queries per round, ${expectedIndexRangeRows()} rows) — range predicate on an indexed column.
 - \`insert_multi\`: ${MULTI_STATEMENTS} statements of ${MULTI_ROWS_PER_STATEMENT} literal rows in one transaction (${MULTI_STATEMENTS * MULTI_ROWS_PER_STATEMENT} rows total).
 - \`upsert\`: ${UPSERT_OPS} \`insert ... on conflict(id) do update\` statements in one transaction.
@@ -2178,7 +2367,7 @@ ${markdownAbsoluteTable([
 - \`txn\`: ${MUTATE_OPS} prepared INSERTs split into transactions of 10 (100 commits), on an in-memory database, so transaction boundaries rather than row count dominate.
 - \`rollback\`: begin + ${MUTATE_OPS} inserts + rollback (nothing persisted).
 - \`open\`: open + close of the main file, no reads.
-- \`@yydb/sqlite-unknown-wasm32\` is the in-memory SQL binding: it runs \`batch\` (inserts + snapshot export + file write), \`scan\`, \`point_sql\`, \`range\`, \`order_limit\`, \`group_by\` and \`join\` through \`exec\`; it has no reader point API, no UPDATE/DELETE/indexes and no file open, so the remaining cells are \`n/a\`.
+- \`@yydb/sqlite-unknown-wasm32\` is the in-memory SQL binding: it runs \`batch\` (inserts + snapshot export + file write), \`scan\`, \`point_sql\`, \`range\`, \`order_limit\`, \`group_by\`, \`join\`, \`in_list\`, \`sort_mixed\` and \`like_prefix\` through \`exec\`; it has no reader point API, no UPDATE/DELETE/indexes and no file open, so the remaining cells are \`n/a\`.
 
 ## Intentional deltas
 
@@ -2186,10 +2375,10 @@ ${markdownAbsoluteTable([
 - sql.js peer scan rebuilds the WASM DB from the serialized image each round; peer batch/update/delete timings include \`export()\`.
 - \`point_sql\` has no separate peer path — peers' prepared \`get\` is the reference.
 - The wasm column reads the same in-memory image every round (\`SELECT\` re-scans the image; the binding has no seek), and its \`batch\` includes \`snapshot()\` + the file write.
-- sql.js does not run the SQL-feature workloads (\`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`in_list\`, \`sort_mixed\`), so those cells stay \`n/a\`; the wasm binding runs \`in_list\` and \`sort_mixed\` but not the mutation/index ones.
-- \`insert_multi\` and \`upsert\` on our side run on an in-memory \`new SQLite()\`, while the two peer columns write through their file pager; the row set is validated on both sides.
-- \`batch_sql\`, \`update_idx\`, \`delete_idx\` and \`txn\` run on an in-memory database on every engine, so no pager publication or file I/O is included. sql.js runs the same four through its prepared-statement API; the wasm binding has no UPDATE/DELETE/index support and stays \`n/a\`.
-- The SQL-engine workloads (\`point_param\`, \`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`, \`distinct\`, \`aggregate\`, \`subquery\`, \`in_list\`, \`sort_mixed\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`upsert_param\`, \`update_sql\`, \`delete_sql\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
+- sql.js does not run the SQL-feature workloads (\`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`delete_range\`, \`update_expr\`), so those cells stay \`n/a\`; the wasm binding runs \`in_list\`, \`sort_mixed\` and \`like_prefix\` but not the mutation/index ones.
+- \`insert_multi\`, \`upsert\`, \`update_expr\` and \`delete_range\` on our side run on an in-memory \`new SQLite()\`, while the two peer columns write through their pager; the row set is validated on both sides.
+- \`batch_sql\`, \`update_idx\`, \`delete_idx\`, \`txn\`, \`update_expr\` and \`delete_range\` run on an in-memory database on every engine, so no pager publication or file I/O is included. sql.js runs the SQL ones through its prepared-statement API; the wasm binding has no UPDATE/DELETE/index support and stays \`n/a\`.
+- The SQL-engine workloads (\`point_param\`, \`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`, \`distinct\`, \`aggregate\`, \`subquery\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`upsert_param\`, \`update_sql\`, \`delete_sql\`, \`update_expr\`, \`delete_range\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
 - \`batch\`, \`scan\`, \`point\`, \`range\`, \`update\`, \`delete\`, \`rollback\` and \`open\` still use the format-3 writer/reader primitives. The public \`SQLite\` entry does not expose raw record decoding, \`rowByRowid\`/\`range\` rowid windows, or the full-image \`save()\` that these timings are defined on.
 
 ## Capabilities still missing from the public API
