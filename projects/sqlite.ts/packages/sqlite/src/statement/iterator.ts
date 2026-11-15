@@ -28,6 +28,9 @@ export function createIterator(
   state: CursorState,
 ): Generator<unknown, void, unknown> {
   const window: { columns: string[]; rows: NativeCell[][] } = { columns, rows: [] };
+  // 表头在打开游标时就固定:重名列校验只在首个投影行做一次,之后的窗口
+  // 不再重新建集合。没有行时不报错,与逐行投影的既有语义一致。
+  let labelsChecked = view !== "object";
   let index = 0;
   let done = false;
   let released = false;
@@ -47,7 +50,9 @@ export function createIterator(
     try {
       while (true) {
         if (index < window.rows.length) {
-          yield projectRow(window, view, index++);
+          const row = projectRow(window, view, index++, labelsChecked);
+          labelsChecked = true;
+          yield row;
           continue;
         }
         if (done) return;

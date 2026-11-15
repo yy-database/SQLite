@@ -8,7 +8,7 @@ import { SQLiteError, toSQLiteError } from "../errors.ts";
 import type { NativeRunResult, NativeSlot, NativeStatement } from "../native/binding.ts";
 import type { SQLiteBindValue, SQLiteParams, SQLiteRow, SQLiteRunResult, SQLiteValue } from "../values.ts";
 import { createIterator } from "./iterator.ts";
-import { projectRow, type ResultView } from "./rows.ts";
+import { assertUniqueLabels, projectRow, type ResultView } from "./rows.ts";
 
 /** 连接侧的执行前守卫：受管事务所有权等 JS 控制流检查。 */
 export type ExecutionGuard = (statementName: string) => void;
@@ -154,7 +154,8 @@ export class Statement<Row = SQLiteRow, Params extends SQLiteParams = SQLitePara
 
   all(params?: Params): Row[] {
     const result = this.#execute(params);
-    return result.rows.map((_row, index) => projectRow(result, this.#view, index) as Row);
+    if (result.rows.length > 0 && this.#view === "object") assertUniqueLabels(result.columns);
+    return result.rows.map((_row, index) => projectRow(result, this.#view, index, true) as Row);
   }
 
   /**
