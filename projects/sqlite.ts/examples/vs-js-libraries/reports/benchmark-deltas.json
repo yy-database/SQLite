@@ -1,9 +1,4 @@
 {
   "defaultMaxRatio": 100,
-  "deltas": {
-    "insert_replace": {
-      "maxRatio": 12000,
-      "reason": "INSERT OR REPLACE resolves the conflict with a table scan per statement, so 500 replacements over 5000 rows cost quadratic time versus the rowid lookup used by SQLite; the workload pins that engine cost instead of hiding it."
-    }
-  }
+  "deltas": {}
 }
