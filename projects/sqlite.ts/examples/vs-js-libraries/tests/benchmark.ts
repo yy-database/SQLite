@@ -55,6 +55,8 @@ const DISTINCT_SQL = "select distinct label from items";
 const AGGREGATE_SQL = "select count(*) as n, sum(score) as total, min(score) as lo, max(score) as hi from items";
 const SUBQUERY_THRESHOLD = 1_000;
 const SUBQUERY_SQL = `select count(*) as n from items where id in (select id from items where score > ${SUBQUERY_THRESHOLD})`;
+// 非递归 CTE：子查询体先物化一次，再由外层聚合，测临时关系而非 IN 探测。
+const CTE_SQL = `with c as (select id, label, score from items where score > ${SUBQUERY_THRESHOLD}) select count(*) as n from c`;
 const INDEX_RANGE_LOWER = "row-1000";
 const INDEX_RANGE_UPPER = "row-1499";
 const INDEX_RANGE_SQL = `select id from items where label between '${INDEX_RANGE_LOWER}' and '${INDEX_RANGE_UPPER}' order by label`;
@@ -189,7 +191,7 @@ type WorkloadKey =
   | "order_limit" | "group_by" | "join"
   | "distinct" | "aggregate" | "subquery" | "index_range" | "insert_multi" | "upsert" | "upsert_param"
   | "update" | "update_sql" | "update_idx" | "delete" | "delete_sql" | "delete_idx" | "txn" | "rollback" | "open"
-  | "in_list" | "sort_mixed" | "like_prefix" | "delete_range" | "update_expr"
+  | "in_list" | "sort_mixed" | "like_prefix" | "delete_range" | "update_expr" | "cte"
   | "projection_narrow" | "projection_wide" | "join_indexed" | "delete_index_range" | "or_filter"
   | "insert_indexed" | "update_expr_idx" | "window_rank" | "join_left" | "exists_filter";
 const WORKLOADS: WorkloadKey[] = [
@@ -197,7 +199,7 @@ const WORKLOADS: WorkloadKey[] = [
   "order_limit", "group_by", "join",
   "distinct", "aggregate", "subquery", "index_range", "insert_multi", "upsert", "upsert_param",
   "update", "update_sql", "update_idx", "delete", "delete_sql", "delete_idx", "txn", "rollback", "open",
-  "in_list", "sort_mixed", "like_prefix", "delete_range", "update_expr",
+  "in_list", "sort_mixed", "like_prefix", "delete_range", "update_expr", "cte",
   "projection_narrow", "projection_wide", "join_indexed", "delete_index_range", "or_filter",
   "insert_indexed", "update_expr_idx", "window_rank", "join_left", "exists_filter",
 ];
@@ -207,7 +209,7 @@ function workloadOps(workload: WorkloadKey): number {
   if (workload === "batch" || workload === "batch_sql" || workload === "scan") return ROWS;
   if (workload === "range" || workload === "index_range") return RANGE_OPS;
   if (workload === "order_limit") return LIMIT_OPS;
-  if (workload === "group_by" || workload === "aggregate" || workload === "in_list" || workload === "sort_mixed" || workload === "like_prefix" || workload === "or_filter" || workload === "exists_filter") {
+  if (workload === "group_by" || workload === "aggregate" || workload === "in_list" || workload === "sort_mixed" || workload === "like_prefix" || workload === "or_filter" || workload === "exists_filter" || workload === "cte") {
     return AGG_OPS;
   }
   if (workload === "projection_narrow" || workload === "projection_wide") return PROJECTION_OPS;
@@ -574,6 +576,27 @@ function nativeSubquery(factory: (path: string, readOnly?: boolean) => PeerHandl
     for (let op = 0; op < SUBQUERY_OPS; op += 1) {
       const row = select.get(SUBQUERY_THRESHOLD) as { n: number } | undefined;
       if (!row || Number(row.n) !== expected) throw new Error(`subquery returned ${JSON.stringify(row)}, expected ${expected}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function nativeCte(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  const database = factory(path, true);
+  const select = database.prepare(CTE_SQL);
+  const expected = expectedSubqueryRows();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const row = select.get() as { n: number } | undefined;
+      if (!row || Number(row.n) !== expected) throw new Error(`cte returned ${JSON.stringify(row)}, expected ${expected}`);
     }
   };
   run();
@@ -1414,6 +1437,26 @@ function ourSubquery(database: SQLite): number[] {
       const rows = database.all<{ n: bigint }>(SUBQUERY_SQL);
       if (rows.length !== 1 || Number(rows[0].n) !== expected) {
         throw new Error(`subquery returned ${JSON.stringify(rows)}, expected ${expected}`);
+      }
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function ourCte(database: SQLite): number[] {
+  const expected = expectedSubqueryRows();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const rows = database.all<{ n: bigint }>(CTE_SQL);
+      if (rows.length !== 1 || Number(rows[0].n) !== expected) {
+        throw new Error(`cte returned ${JSON.stringify(rows)}, expected ${expected}`);
       }
     }
   };
@@ -2939,6 +2982,7 @@ try {
     distinct: nativeDistinct(openNode, nodeSpace.path),
     aggregate: nativeAggregate(openNode, nodeSpace.path),
     subquery: nativeSubquery(openNode, nodeSpace.path),
+    cte: nativeCte(openNode, nodeSpace.path),
     index_range: nativeIndexRange(openNode, nodeSpace.path),
     insert_multi: nativeInsertMulti(openNode, nodeFeatureSpace.path),
     upsert: nativeUpsert(openNode, nodeFeatureSpace.path),
@@ -2993,6 +3037,7 @@ try {
   oursSamples.distinct = ourDistinct(analyticDatabase);
   oursSamples.aggregate = ourAggregate(analyticDatabase);
   oursSamples.subquery = ourSubquery(analyticDatabase);
+  oursSamples.cte = ourCte(analyticDatabase);
   oursSamples.in_list = ourInList(analyticDatabase);
   oursSamples.sort_mixed = ourSortMixed(analyticDatabase);
   oursSamples.like_prefix = ourLikePrefix(analyticDatabase);
@@ -3044,6 +3089,7 @@ try {
     distinct: nativeDistinct(openBetter, betterSpace.path),
     aggregate: nativeAggregate(openBetter, betterSpace.path),
     subquery: nativeSubquery(openBetter, betterSpace.path),
+    cte: nativeCte(openBetter, betterSpace.path),
     index_range: nativeIndexRange(openBetter, betterSpace.path),
     insert_multi: nativeInsertMulti(openBetter, betterFeatureSpace.path),
     upsert: nativeUpsert(openBetter, betterFeatureSpace.path),
@@ -3197,6 +3243,7 @@ ${markdownAbsoluteTable([
 - \`distinct\`: \`select distinct label from items\` (${DISTINCT_OPS} queries per round, ${ROWS} distinct labels) — worst case for the dedup structure because nothing collapses.
 - \`aggregate\`: \`select count(*), sum(score), min(score), max(score) from items\` (${AGG_OPS} queries per round) — single-pass aggregate without grouping.
 - \`subquery\`: \`select count(*) ... where id in (select id from items where score > ${SUBQUERY_THRESHOLD})\` (${SUBQUERY_OPS} queries per round, ${expectedSubqueryRows()} matches) — uncorrelated \`IN\` subquery.
+- \`cte\`: \`with c as (select id, label, score from items where score > ${SUBQUERY_THRESHOLD}) select count(*) from c\` (${AGG_OPS} queries per round, ${expectedSubqueryRows()} rows materialized) — non-recursive CTE materialization.
 - \`in_list\`: \`select count(*) ... where id in (<${IN_LIST_SIZE} scattered rowids>)\` (${AGG_OPS} queries per round, ${IN_LIST_ROWS} matches) — literal \`IN\` list planning and predicate dispatch.
 - \`sort_mixed\`: \`select ... order by score desc, id desc limit ${SORT_MIXED_ROWS}\` (${AGG_OPS} queries per round) — unindexed sort plus truncation.
 - \`like_prefix\`: \`select count(*) ... where label like 'row-1%'\` (${AGG_OPS} queries per round, ${expectedLikePrefixRows()} matches) — prefix pattern over an unindexed full scan, with the row count asserted on every engine.
@@ -3229,10 +3276,10 @@ ${markdownAbsoluteTable([
 - sql.js peer scan rebuilds the WASM DB from the serialized image each round; peer batch/update/delete timings include \`export()\`.
 - \`point_sql\` has no separate peer path — peers' prepared \`get\` is the reference.
 - The wasm column reads the same in-memory image every round (\`SELECT\` re-scans the image; the binding has no seek), and its \`batch\` includes \`snapshot()\` + the file write.
-- sql.js does not run the SQL-feature workloads (\`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`delete_range\`, \`update_expr\`), so those cells stay \`n/a\`; the wasm binding runs \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`projection_narrow\`, \`projection_wide\`, \`or_filter\`, \`window_rank\`, \`join_left\` and \`exists_filter\` but not the mutation/index ones.
+- sql.js does not run the SQL-feature workloads (\`distinct\`, \`aggregate\`, \`subquery\`, \`cte\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`delete_range\`, \`update_expr\`), so those cells stay \`n/a\`; the wasm binding runs \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`projection_narrow\`, \`projection_wide\`, \`or_filter\`, \`window_rank\`, \`join_left\` and \`exists_filter\` but not the mutation/index ones.
 - \`insert_indexed\`, \`upsert\`, \`update_expr\`, \`update_expr_idx\` and \`delete_range\` on our side run on an in-memory \`new SQLite()\`, while the two peer columns write through their pager; the row set is validated on both sides.
 - \`batch_sql\`, \`update_idx\`, \`delete_idx\`, \`txn\`, \`update_expr\` and \`delete_range\` run on an in-memory database on every engine, so no pager publication or file I/O is included. sql.js runs the SQL ones through its prepared-statement API; the wasm binding has no UPDATE/DELETE/index support and stays \`n/a\`.
-- The SQL-engine workloads (\`point_param\`, \`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`, \`distinct\`, \`aggregate\`, \`subquery\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`or_filter\`, \`projection_narrow\`, \`projection_wide\`, \`join_indexed\`, \`join_left\`, \`exists_filter\`, \`window_rank\`, \`insert_indexed\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`upsert_param\`, \`update_sql\`, \`delete_sql\`, \`update_expr\`, \`update_expr_idx\`, \`delete_range\`, \`delete_index_range\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
+- The SQL-engine workloads (\`point_param\`, \`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`, \`distinct\`, \`aggregate\`, \`subquery\`, \`cte\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`or_filter\`, \`projection_narrow\`, \`projection_wide\`, \`join_indexed\`, \`join_left\`, \`exists_filter\`, \`window_rank\`, \`insert_indexed\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`upsert_param\`, \`update_sql\`, \`delete_sql\`, \`update_expr\`, \`update_expr_idx\`, \`delete_range\`, \`delete_index_range\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
 - \`batch\`, \`scan\`, \`point\`, \`range\`, \`update\`, \`delete\`, \`rollback\` and \`open\` still use the format-3 writer/reader primitives. The public \`SQLite\` entry does not expose raw record decoding, \`rowByRowid\`/\`range\` rowid windows, or the full-image \`save()\` that these timings are defined on.
 
 ## Capabilities still missing from the public API
