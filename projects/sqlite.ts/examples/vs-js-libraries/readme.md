@@ -43,16 +43,29 @@ oracle suite uses).
 
 ## Benchmark (`benchmark`)
 
-One file measures `node:sqlite`, `@yydb/sqlite`, `better-sqlite3`, and `sql.js` on fourteen
-workloads — `batch`, `scan`, `point`, `point_sql`, `point_uk`, `range`, `indexed`,
-`order_limit`, `group_by`, `join`, `update`, `delete`, `rollback`, `open` — then prints a
-single relative table vs the `node:sqlite` baseline (`1.00x`, or `Nx` slower/faster), plus
-absolute median/p95 round timings (harness `benchSummary`) and a provenance block (node,
-rustc, repo rev, binding rev, data scale) in the report.
+One file measures `node:sqlite`, `@yydb/sqlite`, `better-sqlite3`, and `sql.js` on the
+workloads below, then prints a single relative table vs the `node:sqlite` baseline
+(`1.00x`, or `Nx` slower/faster), plus absolute median/p95 round timings (harness
+`benchSummary`) and a provenance block (node, rustc, repo rev, binding rev, data scale)
+in the report.
+
+Write and read primitives: `batch`, `batch_sql`, `scan`, `point`, `point_sql`,
+`point_param`, `point_uk`, `range`, `indexed`, `open`.
+
+Analytical and filter paths: `order_limit`, `group_by`, `join`, `distinct`, `aggregate`,
+`subquery`, `window_rank`, `in_list`, `sort_mixed`, `like_prefix`, `or_filter`,
+`exists_filter`, `projection_narrow`, `projection_wide`, `join_indexed`, `join_left`.
+
+Mutations and index maintenance: `update`, `update_sql`, `update_idx`, `update_expr`,
+`update_expr_idx`, `insert_multi`, `insert_indexed`, `upsert`, `upsert_param`, `delete`,
+`delete_sql`, `delete_idx`, `delete_range`, `delete_index_range`, `txn`, `rollback`.
+
 Defaults are lighter than the harness (`BENCH_ROWS=5000`);
 override with `BENCH_ROWS`, `BENCH_TXN`, `BENCH_PAGE`, `BENCH_ROUNDS`, `BENCH_POINT`,
 `BENCH_RANGE`, `BENCH_MUTATE`, `BENCH_LIMIT`, `BENCH_AGG`, `BENCH_JOIN`,
-`BENCH_SYNCHRONOUS` (`off|on` — `on` puts every library on `synchronous=FULL`).
+`BENCH_DISTINCT`, `BENCH_SUBQUERY`, `BENCH_MULTI`, `BENCH_UPSERT`, `BENCH_PROJECTION`,
+`BENCH_JOIN_INDEXED`, `BENCH_SYNCHRONOUS` (`off|on` — `on` puts every library on
+`synchronous=FULL`).
 
 - `point` uses the reader's `rowByRowid` against each peer's prepared `get`;
   `point_sql` keeps the engine SQL path (peer cells reuse `point`).

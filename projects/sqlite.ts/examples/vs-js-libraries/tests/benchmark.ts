@@ -91,6 +91,18 @@ const INDEX_DELETE_ID_LOWER = 1_000;
 const INDEX_DELETE_ID_UPPER = 1_099;
 // 跨列 OR：一半行由整数列决定，一半由文本列决定，两侧都不能被单列下推吃掉。
 const OR_FILTER_SQL = "select count(*) as n from items where id < 1000 or label > 'row-4500'";
+// 带索引的批量插入：每条 row 都要维护一份二级索引键。
+const INSERT_INDEXED_ROWS = Number(process.env.BENCH_INSERT_INDEXED ?? 2_000);
+// 整表改写被索引列：一条语句让每个索引键都变化。
+const UPDATE_INDEXED_SQL = "update items set label = 'u-' || id";
+// 窗口函数：按分数桶分区、按 id 排序取行号。
+const WINDOW_OPS = Number(process.env.BENCH_WINDOW ?? 5);
+const WINDOW_SQL = "select id, row_number() over (partition by cast(score as integer) order by id) as rn from items";
+// 左连接：与 join_indexed 同一个等值条件，但必须保留未匹配的左行。
+const JOIN_LEFT_SQL = `select count(*) as matched from items as a left join items as b on b.label = a.label where a.id <= ${JOIN_INDEXED_OUTER}`;
+// 相关 EXISTS：外层每行都要探一次内层，内层只保留前 100 个 rowid。
+const EXISTS_INNER = 100;
+const EXISTS_SQL = `select count(*) as n from items as a where exists (select 1 from items as b where b.label = a.label and b.id <= ${EXISTS_INNER})`;
 
 function expectedLikePrefixRows(): number {
   let count = 0;
@@ -178,7 +190,8 @@ type WorkloadKey =
   | "distinct" | "aggregate" | "subquery" | "index_range" | "insert_multi" | "upsert" | "upsert_param"
   | "update" | "update_sql" | "update_idx" | "delete" | "delete_sql" | "delete_idx" | "txn" | "rollback" | "open"
   | "in_list" | "sort_mixed" | "like_prefix" | "delete_range" | "update_expr"
-  | "projection_narrow" | "projection_wide" | "join_indexed" | "delete_index_range" | "or_filter";
+  | "projection_narrow" | "projection_wide" | "join_indexed" | "delete_index_range" | "or_filter"
+  | "insert_indexed" | "update_expr_idx" | "window_rank" | "join_left" | "exists_filter";
 const WORKLOADS: WorkloadKey[] = [
   "batch", "batch_sql", "scan", "point", "point_sql", "point_param", "point_uk", "range", "indexed",
   "order_limit", "group_by", "join",
@@ -186,6 +199,7 @@ const WORKLOADS: WorkloadKey[] = [
   "update", "update_sql", "update_idx", "delete", "delete_sql", "delete_idx", "txn", "rollback", "open",
   "in_list", "sort_mixed", "like_prefix", "delete_range", "update_expr",
   "projection_narrow", "projection_wide", "join_indexed", "delete_index_range", "or_filter",
+  "insert_indexed", "update_expr_idx", "window_rank", "join_left", "exists_filter",
 ];
 
 // Ops per workload for throughput normalization (batch/scan count rows; the rest count queries/mutations/opens).
@@ -193,13 +207,15 @@ function workloadOps(workload: WorkloadKey): number {
   if (workload === "batch" || workload === "batch_sql" || workload === "scan") return ROWS;
   if (workload === "range" || workload === "index_range") return RANGE_OPS;
   if (workload === "order_limit") return LIMIT_OPS;
-  if (workload === "group_by" || workload === "aggregate" || workload === "in_list" || workload === "sort_mixed" || workload === "like_prefix" || workload === "or_filter") {
+  if (workload === "group_by" || workload === "aggregate" || workload === "in_list" || workload === "sort_mixed" || workload === "like_prefix" || workload === "or_filter" || workload === "exists_filter") {
     return AGG_OPS;
   }
   if (workload === "projection_narrow" || workload === "projection_wide") return PROJECTION_OPS;
-  if (workload === "join_indexed") return JOIN_INDEXED_OPS;
+  if (workload === "join_indexed" || workload === "join_left") return JOIN_INDEXED_OPS;
+  if (workload === "window_rank") return WINDOW_OPS;
+  if (workload === "insert_indexed") return INSERT_INDEXED_ROWS;
   if (workload === "delete_index_range") return Math.max(1, expectedIndexDeleteRows());
-  if (workload === "update_expr") return ROWS;
+  if (workload === "update_expr" || workload === "update_expr_idx") return ROWS;
   if (workload === "delete_range") return Math.max(1, RANGE_DELETE_ROWS);
   if (workload === "join") return JOIN_OPS;
   if (workload === "distinct") return DISTINCT_OPS;
@@ -729,6 +745,121 @@ function peerDeleteIndexRange(factory: () => PeerHandle): number[] {
     database.exec("begin");
     for (let id = INDEX_DELETE_ID_LOWER; id <= INDEX_DELETE_ID_UPPER; id += 1) insert.run(id, `row-${id}`, id / 4);
     database.exec("commit");
+  }
+  database.close();
+  return samples;
+}
+
+function nativeInsertIndexed(factory: () => PeerHandle): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = factory();
+    database.exec("create table items (id integer primary key, label text, score real)");
+    database.exec("create index items_label on items(label)");
+    const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    for (let row = 1; row <= INSERT_INDEXED_ROWS; row += 1) insert.run(row, `row-${row}`, row / 4);
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+    const count = database.prepare("select count(*) as n from items").get() as { n: number } | undefined;
+    if (!count || Number(count.n) !== INSERT_INDEXED_ROWS) {
+      throw new Error(`insert_indexed rows ${JSON.stringify(count)}, expected ${INSERT_INDEXED_ROWS}`);
+    }
+    const probe = database.prepare("select id from items where label = 'row-7'").get() as { id: number } | undefined;
+    if (!probe || Number(probe.id) !== 7) throw new Error(`insert_indexed index miss: ${JSON.stringify(probe)}`);
+    database.close();
+  }
+  return samples;
+}
+
+function nativeUpdateExprIndexed(factory: () => PeerHandle): number[] {
+  const database = factory();
+  database.exec("create table items (id integer primary key, label text, score real)");
+  database.exec("create index items_label on items(label)");
+  const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+  database.exec("begin");
+  for (let row = 1; row <= ROWS; row += 1) insert.run(row, `row-${row}`, row / 4);
+  database.exec("commit");
+  const update = database.prepare(UPDATE_INDEXED_SQL);
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    update.run();
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+  }
+  const row = database.prepare("select label from items where id = 1").get() as { label: string } | undefined;
+  if (!row || row.label !== "u-1") throw new Error(`update_expr_idx did not rewrite the indexed column: ${JSON.stringify(row)}`);
+  database.close();
+  return samples;
+}
+
+function nativeWindow(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  const database = factory(path, true);
+  const select = database.prepare(WINDOW_SQL);
+  const run = () => {
+    for (let op = 0; op < WINDOW_OPS; op += 1) {
+      const rows = select.all() as { id: number; rn: number }[];
+      if (rows.length !== ROWS) throw new Error(`window_rank returned ${rows.length}, expected ${ROWS}`);
+      const first = rows[0];
+      if (!first || Number(first.id) !== 1 || Number(first.rn) !== 1) {
+        throw new Error(`window_rank first row ${JSON.stringify(first)}, expected id 1 rn 1`);
+      }
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function nativeJoinLeft(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  const writable = factory(path);
+  writable.exec("create index if not exists items_label on items(label)");
+  writable.close();
+  const database = factory(path, true);
+  const select = database.prepare(JOIN_LEFT_SQL);
+  const run = () => {
+    for (let op = 0; op < JOIN_INDEXED_OPS; op += 1) {
+      const row = select.get() as { matched: number } | undefined;
+      if (!row || Number(row.matched) !== JOIN_INDEXED_OUTER) {
+        throw new Error(`join_left matched ${JSON.stringify(row)}, expected ${JOIN_INDEXED_OUTER}`);
+      }
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function nativeExists(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  const database = factory(path, true);
+  const select = database.prepare(EXISTS_SQL);
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const row = select.get() as { n: number } | undefined;
+      if (!row || Number(row.n) !== EXISTS_INNER) throw new Error(`exists_filter returned ${JSON.stringify(row)}, expected ${EXISTS_INNER}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
   }
   database.close();
   return samples;
@@ -1435,6 +1566,105 @@ function ourDeleteIndexRange(): number[] {
   return samples;
 }
 
+function ourInsertIndexed(): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = new SQLite();
+    database.exec("create table items (id integer primary key, label text, score real)");
+    database.exec("create index items_label on items (label)");
+    const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+    const start = process.hrtime.bigint();
+    database.transaction(() => {
+      for (let row = 1; row <= INSERT_INDEXED_ROWS; row += 1) insert.run([BigInt(row), `row-${row}`, row / 4]);
+    });
+    samples.push(elapsedMs(start));
+    const count = database.get<{ n: bigint }>("select count(*) as n from items");
+    if (!count || Number(count.n) !== INSERT_INDEXED_ROWS) {
+      throw new Error(`insert_indexed rows ${JSON.stringify(count)}, expected ${INSERT_INDEXED_ROWS}`);
+    }
+    const probe = database.get<{ id: bigint }>("select id from items where label = 'row-7'");
+    if (!probe || Number(probe.id) !== 7) throw new Error(`insert_indexed index miss: ${JSON.stringify(probe)}`);
+    insert.close();
+    database.close();
+  }
+  return samples;
+}
+
+function ourUpdateExprIndexed(): number[] {
+  const database = buildDatabase("label");
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    database.run(UPDATE_INDEXED_SQL);
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+  }
+  const row = database.get<{ label: string }>("select label from items where id = 1");
+  if (!row || row.label !== "u-1") throw new Error(`update_expr_idx did not rewrite the indexed column: ${JSON.stringify(row)}`);
+  database.close();
+  return samples;
+}
+
+function ourWindow(database: SQLite): number[] {
+  const run = () => {
+    for (let op = 0; op < WINDOW_OPS; op += 1) {
+      const rows = database.all<{ id: bigint; rn: bigint }>(WINDOW_SQL);
+      if (rows.length !== ROWS) throw new Error(`window_rank returned ${rows.length}, expected ${ROWS}`);
+      if (Number(rows[0]?.id) !== 1 || Number(rows[0]?.rn) !== 1) {
+        throw new Error(`window_rank first row ${JSON.stringify(rows[0])}, expected id 1 rn 1`);
+      }
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function ourJoinLeft(): number[] {
+  const database = buildDatabase("label");
+  const run = () => {
+    for (let op = 0; op < JOIN_INDEXED_OPS; op += 1) {
+      const rows = database.all<{ matched: bigint }>(JOIN_LEFT_SQL);
+      const matched = Number(rows[0]?.matched);
+      if (matched !== JOIN_INDEXED_OUTER) {
+        throw new Error(`join_left matched ${matched}, expected ${JOIN_INDEXED_OUTER}`);
+      }
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function ourExists(database: SQLite): number[] {
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const row = database.get<{ n: bigint }>(EXISTS_SQL);
+      if (!row || Number(row.n) !== EXISTS_INNER) throw new Error(`exists_filter returned ${JSON.stringify(row)}, expected ${EXISTS_INNER}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
 function ourUpdateExpr(): number[] {
   const database = buildDatabase();
   const samples: number[] = [];
@@ -2124,6 +2354,136 @@ function sqlJsDeleteIndexRange(SQL: SqlJsStatic): number[] {
   return samples;
 }
 
+function sqlJsInsertIndexed(SQL: SqlJsStatic): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = new SQL.Database();
+    database.run("create table items (id integer primary key, label text, score real)");
+    database.run("create index items_label on items(label)");
+    const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+    const start = process.hrtime.bigint();
+    database.run("begin");
+    for (let row = 1; row <= INSERT_INDEXED_ROWS; row += 1) insert.run([row, `row-${row}`, row / 4]);
+    database.run("commit");
+    samples.push(elapsedMs(start));
+    insert.free();
+    const count = database.exec("select count(*) as n from items")[0]?.values[0]?.[0];
+    if (Number(count) !== INSERT_INDEXED_ROWS) throw new Error(`insert_indexed rows ${count}, expected ${INSERT_INDEXED_ROWS}`);
+    const probe = database.exec("select id from items where label = 'row-7'")[0]?.values[0]?.[0];
+    if (Number(probe) !== 7) throw new Error(`insert_indexed index miss: ${probe}`);
+    database.close();
+  }
+  return samples;
+}
+
+function sqlJsUpdateExprIndexed(SQL: SqlJsStatic): number[] {
+  const database = new SQL.Database();
+  database.run("create table items (id integer primary key, label text, score real)");
+  database.run("create index items_label on items(label)");
+  const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+  database.run("begin");
+  for (let row = 1; row <= ROWS; row += 1) insert.run([row, `row-${row}`, row / 4]);
+  database.run("commit");
+  insert.free();
+  const update = database.prepare(UPDATE_INDEXED_SQL);
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.run("begin");
+    update.step();
+    update.reset();
+    database.run("commit");
+    samples.push(elapsedMs(start));
+  }
+  update.free();
+  const label = database.exec("select label from items where id = 1")[0]?.values[0]?.[0];
+  if (label !== "u-1") throw new Error(`update_expr_idx did not rewrite the indexed column: ${label}`);
+  database.close();
+  return samples;
+}
+
+function sqlJsWindow(SQL: SqlJsStatic, path: string): number[] {
+  const database = new SQL.Database(readFileSync(path));
+  const statement = database.prepare(WINDOW_SQL);
+  const run = () => {
+    for (let op = 0; op < WINDOW_OPS; op += 1) {
+      let count = 0;
+      let first: { id?: number; rn?: number } | undefined;
+      while (statement.step()) {
+        const row = statement.getAsObject() as { id?: number; rn?: number };
+        if (count === 0) first = row;
+        count += 1;
+      }
+      statement.reset();
+      if (count !== ROWS) throw new Error(`window_rank returned ${count}, expected ${ROWS}`);
+      if (Number(first?.id) !== 1 || Number(first?.rn) !== 1) {
+        throw new Error(`window_rank first row ${JSON.stringify(first)}, expected id 1 rn 1`);
+      }
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  statement.free();
+  database.close();
+  return samples;
+}
+
+function sqlJsJoinLeft(SQL: SqlJsStatic): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = new SQL.Database();
+    database.run("create table items (id integer primary key, label text, score real)");
+    database.run("create index items_label on items(label)");
+    const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+    database.run("begin");
+    for (let row = 1; row <= ROWS; row += 1) insert.run([row, `row-${row}`, row / 4]);
+    database.run("commit");
+    insert.free();
+    const statement = database.prepare(JOIN_LEFT_SQL);
+    const start = process.hrtime.bigint();
+    for (let op = 0; op < JOIN_INDEXED_OPS; op += 1) {
+      if (!statement.step()) throw new Error("join_left returned no row");
+      const row = statement.getAsObject() as { matched?: number };
+      if (Number(row.matched) !== JOIN_INDEXED_OUTER) {
+        throw new Error(`join_left matched ${JSON.stringify(row)}, expected ${JOIN_INDEXED_OUTER}`);
+      }
+      statement.reset();
+    }
+    samples.push(elapsedMs(start));
+    statement.free();
+    database.close();
+  }
+  return samples;
+}
+
+function sqlJsExists(SQL: SqlJsStatic, path: string): number[] {
+  const database = new SQL.Database(readFileSync(path));
+  const statement = database.prepare(EXISTS_SQL);
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      if (!statement.step()) throw new Error("exists_filter returned no row");
+      const row = statement.getAsObject() as { n?: number };
+      if (Number(row.n) !== EXISTS_INNER) throw new Error(`exists_filter returned ${JSON.stringify(row)}, expected ${EXISTS_INNER}`);
+      statement.reset();
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  statement.free();
+  database.close();
+  return samples;
+}
+
 // ---------------------------------------------------------------------------
 // `@yydb/sqlite-unknown-wasm32` (in-memory SQL binding; no reader point API,
 // no UPDATE/DELETE/indexes/file open — unsupported workloads report `n/a`)
@@ -2364,6 +2724,61 @@ function wasmOrFilter(database: WasmDatabase): number[] {
   return samples;
 }
 
+function wasmWindow(database: WasmDatabase): number[] {
+  const run = () => {
+    for (let op = 0; op < WINDOW_OPS; op += 1) {
+      const rows = wasmExecRows(database, WINDOW_SQL);
+      if (rows.length !== ROWS) throw new Error(`window_rank returned ${rows.length}, expected ${ROWS}`);
+      if (Number(rows[0]?.[0]) !== 1 || Number(rows[0]?.[1]) !== 1) {
+        throw new Error(`window_rank first row ${JSON.stringify(rows[0])}, expected id 1 rn 1`);
+      }
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function wasmJoinLeft(database: WasmDatabase): number[] {
+  const run = () => {
+    for (let op = 0; op < JOIN_INDEXED_OPS; op += 1) {
+      const rows = wasmExecRows(database, JOIN_LEFT_SQL);
+      const matched = Number(rows[0]?.[0]);
+      if (matched !== JOIN_INDEXED_OUTER) throw new Error(`join_left matched ${matched}, expected ${JOIN_INDEXED_OUTER}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function wasmExists(database: WasmDatabase): number[] {
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const rows = wasmExecRows(database, EXISTS_SQL);
+      if (Number(rows[0]?.[0]) !== EXISTS_INNER) throw new Error(`exists_filter returned ${JSON.stringify(rows)}, expected ${EXISTS_INNER}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
 // ---------------------------------------------------------------------------
 // rates + report
 // ---------------------------------------------------------------------------
@@ -2544,6 +2959,11 @@ try {
     join_indexed: nativeJoinIndexed(openNode, nodeSpace.path),
     or_filter: nativeOrFilter(openNode, nodeSpace.path),
     delete_index_range: peerDeleteIndexRange(() => openNode(":memory:")),
+    insert_indexed: nativeInsertIndexed(() => openNode(":memory:")),
+    update_expr_idx: nativeUpdateExprIndexed(() => openNode(":memory:")),
+    window_rank: nativeWindow(openNode, nodeSpace.path),
+    join_left: nativeJoinLeft(openNode, nodeSpace.path),
+    exists_filter: nativeExists(openNode, nodeSpace.path),
   };
   nodeSamples.point_sql = nodeSamples.point;
   nodeSamples.point_param = nodeSamples.point;
@@ -2579,11 +2999,18 @@ try {
   oursSamples.projection_narrow = ourProjection(analyticDatabase, PROJECTION_NARROW_SQL, 1);
   oursSamples.projection_wide = ourProjection(analyticDatabase, PROJECTION_WIDE_SQL, 3);
   oursSamples.or_filter = ourOrFilter(analyticDatabase);
+  oursSamples.window_rank = ourWindow(analyticDatabase);
   analyticDatabase.close();
   oursSamples.update_expr = ourUpdateExpr();
   oursSamples.delete_range = ourDeleteRange();
   oursSamples.join_indexed = ourJoinIndexed();
+  oursSamples.join_left = ourJoinLeft();
   oursSamples.delete_index_range = ourDeleteIndexRange();
+  oursSamples.insert_indexed = ourInsertIndexed();
+  oursSamples.update_expr_idx = ourUpdateExprIndexed();
+  const existsDatabase = buildDatabase("label");
+  oursSamples.exists_filter = ourExists(existsDatabase);
+  existsDatabase.close();
   oursSamples.index_range = ourIndexRange();
   oursSamples.insert_multi = ourInsertMulti();
   oursSamples.upsert = ourUpsert();
@@ -2637,6 +3064,11 @@ try {
     join_indexed: nativeJoinIndexed(openBetter, betterSpace.path),
     or_filter: nativeOrFilter(openBetter, betterSpace.path),
     delete_index_range: peerDeleteIndexRange(() => openBetter(":memory:")),
+    insert_indexed: nativeInsertIndexed(() => openBetter(":memory:")),
+    update_expr_idx: nativeUpdateExprIndexed(() => openBetter(":memory:")),
+    window_rank: nativeWindow(openBetter, betterSpace.path),
+    join_left: nativeJoinLeft(openBetter, betterSpace.path),
+    exists_filter: nativeExists(openBetter, betterSpace.path),
   };
   betterSamples.point_sql = betterSamples.point;
   betterSamples.point_param = betterSamples.point;
@@ -2673,6 +3105,11 @@ try {
     join_indexed: sqlJsJoinIndexed(SQL),
     or_filter: sqlJsOrFilter(SQL, sqlJsSpace.path),
     delete_index_range: sqlJsDeleteIndexRange(SQL),
+    insert_indexed: sqlJsInsertIndexed(SQL),
+    update_expr_idx: sqlJsUpdateExprIndexed(SQL),
+    window_rank: sqlJsWindow(SQL, sqlJsSpace.path),
+    join_left: sqlJsJoinLeft(SQL),
+    exists_filter: sqlJsExists(SQL, sqlJsSpace.path),
   };
   sqlJsSamples.point_sql = sqlJsSamples.point;
   sqlJsSamples.point_param = sqlJsSamples.point;
@@ -2700,6 +3137,9 @@ try {
     wasmSamples.projection_narrow = wasmProjection(readDatabase, PROJECTION_NARROW_SQL, 1);
     wasmSamples.projection_wide = wasmProjection(readDatabase, PROJECTION_WIDE_SQL, 3);
     wasmSamples.or_filter = wasmOrFilter(readDatabase);
+    wasmSamples.window_rank = wasmWindow(readDatabase);
+    wasmSamples.join_left = wasmJoinLeft(readDatabase);
+    wasmSamples.exists_filter = wasmExists(readDatabase);
     readDatabase.free();
     wasmRates = ratesFromSamples(wasmSamples);
   } else {
@@ -2764,6 +3204,11 @@ ${markdownAbsoluteTable([
 - \`join_indexed\`: \`select count(*) ... where a.id <= ${JOIN_INDEXED_OUTER} join ... on b.label = a.label\` (${JOIN_INDEXED_OPS} queries per round, ${JOIN_INDEXED_OUTER} matches) — the equality join runs on an indexed \`label\` column on every engine, so it measures the index probe instead of the nested scan in \`join\`.
 - \`delete_index_range\`: one \`delete ... where label between '${INDEX_DELETE_LOWER}' and '${INDEX_DELETE_UPPER}'\` in a transaction on an in-memory database carrying the \`label\` index (${expectedIndexDeleteRows()} rows removed, the surviving count asserted), then the interval is re-inserted outside the timed window. This is the index-driven bulk delete path, against the rowid path in \`delete_range\`.
 - \`or_filter\`: \`select count(*) ... where id < 1000 or label > 'row-4500'\` (${AGG_OPS} queries per round, ${expectedOrFilterRows()} matches) — a cross-column \`OR\` where neither side can be answered by a single-column pushdown.
+- \`insert_indexed\`: ${INSERT_INDEXED_ROWS} prepared INSERTs into an in-memory table carrying a \`label\` index, one transaction (the secondary index has to be maintained per row), then the row count and one index lookup are asserted.
+- \`update_expr_idx\`: one \`update items set label = 'u-' || id\` over every row of an indexed table in a transaction — every secondary key changes, so it pins index maintenance rather than the plain table write in \`update_expr\`.
+- \`window_rank\`: \`select id, row_number() over (partition by cast(score as integer) order by id) from items\` (${WINDOW_OPS} queries per round, ${ROWS} rows in ${expectedGroupBuckets()} partitions) — window partitioning and ordering.
+- \`join_left\`: the \`join_indexed\` equality as a \`LEFT JOIN\` (${JOIN_INDEXED_OPS} queries per round, ${JOIN_INDEXED_OUTER} matched left rows) — the outer path has to keep unmatched left rows instead of dropping them.
+- \`exists_filter\`: \`select count(*) ... where exists (select 1 from items b where b.label = a.label and b.id <= ${EXISTS_INNER})\` (${AGG_OPS} queries per round, ${EXISTS_INNER} matches) — a correlated \`EXISTS\` probed once per outer row.
 - \`delete_range\`: one \`delete from items where id between ${RANGE_DELETE_LOWER} and ${RANGE_DELETE_UPPER}\` in a transaction on an in-memory database (${RANGE_DELETE_ROWS} rows removed, the surviving count asserted), then the deleted interval is re-inserted outside the timed window. This is the bulk range-delete path rather than the per-rowid loop in \`delete\`/\`delete_sql\`.
 - \`update_expr\`: one \`update items set score = score + 1\` over every row in a transaction (${ROWS} rows updated, \`score\` of row 1 asserted to include every run), then the next round updates again. This pins the whole-table write path and its per-row conflict detection instead of a single-rowid update.
 - \`index_range\`: \`select id from items where label between '${INDEX_RANGE_LOWER}' and '${INDEX_RANGE_UPPER}' order by label\` (${RANGE_OPS} queries per round, ${expectedIndexRangeRows()} rows) — range predicate on an indexed column.
@@ -2784,10 +3229,10 @@ ${markdownAbsoluteTable([
 - sql.js peer scan rebuilds the WASM DB from the serialized image each round; peer batch/update/delete timings include \`export()\`.
 - \`point_sql\` has no separate peer path — peers' prepared \`get\` is the reference.
 - The wasm column reads the same in-memory image every round (\`SELECT\` re-scans the image; the binding has no seek), and its \`batch\` includes \`snapshot()\` + the file write.
-- sql.js does not run the SQL-feature workloads (\`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`delete_range\`, \`update_expr\`), so those cells stay \`n/a\`; the wasm binding runs \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`projection_narrow\`, \`projection_wide\` and \`or_filter\` but not the mutation/index ones.
-- \`insert_multi\`, \`upsert\`, \`update_expr\` and \`delete_range\` on our side run on an in-memory \`new SQLite()\`, while the two peer columns write through their pager; the row set is validated on both sides.
+- sql.js does not run the SQL-feature workloads (\`distinct\`, \`aggregate\`, \`subquery\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`delete_range\`, \`update_expr\`), so those cells stay \`n/a\`; the wasm binding runs \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`projection_narrow\`, \`projection_wide\`, \`or_filter\`, \`window_rank\`, \`join_left\` and \`exists_filter\` but not the mutation/index ones.
+- \`insert_indexed\`, \`upsert\`, \`update_expr\`, \`update_expr_idx\` and \`delete_range\` on our side run on an in-memory \`new SQLite()\`, while the two peer columns write through their pager; the row set is validated on both sides.
 - \`batch_sql\`, \`update_idx\`, \`delete_idx\`, \`txn\`, \`update_expr\` and \`delete_range\` run on an in-memory database on every engine, so no pager publication or file I/O is included. sql.js runs the SQL ones through its prepared-statement API; the wasm binding has no UPDATE/DELETE/index support and stays \`n/a\`.
-- The SQL-engine workloads (\`point_param\`, \`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`, \`distinct\`, \`aggregate\`, \`subquery\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`or_filter\`, \`projection_narrow\`, \`projection_wide\`, \`join_indexed\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`upsert_param\`, \`update_sql\`, \`delete_sql\`, \`update_expr\`, \`delete_range\`, \`delete_index_range\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
+- The SQL-engine workloads (\`point_param\`, \`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`, \`distinct\`, \`aggregate\`, \`subquery\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`or_filter\`, \`projection_narrow\`, \`projection_wide\`, \`join_indexed\`, \`join_left\`, \`exists_filter\`, \`window_rank\`, \`insert_indexed\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`upsert_param\`, \`update_sql\`, \`delete_sql\`, \`update_expr\`, \`update_expr_idx\`, \`delete_range\`, \`delete_index_range\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
 - \`batch\`, \`scan\`, \`point\`, \`range\`, \`update\`, \`delete\`, \`rollback\` and \`open\` still use the format-3 writer/reader primitives. The public \`SQLite\` entry does not expose raw record decoding, \`rowByRowid\`/\`range\` rowid windows, or the full-image \`save()\` that these timings are defined on.
 
 ## Capabilities still missing from the public API
