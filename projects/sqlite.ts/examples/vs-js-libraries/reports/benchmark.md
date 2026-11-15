@@ -1,7 +1,7 @@
 # Benchmark report
 
 Command: `pnpm --dir projects/sqlite.ts/examples/vs-js-libraries benchmark`
-Defaults: `BENCH_ROWS=5000`, `BENCH_TXN=1000`, `BENCH_PAGE=4096`, `BENCH_ROUNDS=3`, `BENCH_POINT=1000`, `BENCH_RANGE=200`, `BENCH_MUTATE=1000`, `BENCH_LIMIT=200`, `BENCH_AGG=20`, `BENCH_JOIN=10`, `BENCH_DISTINCT=5`, `BENCH_SUBQUERY=20`, `BENCH_MULTI=10`, `BENCH_UPSERT=500`, `BENCH_SYNCHRONOUS=off`
+Defaults: `BENCH_ROWS=5000`, `BENCH_TXN=1000`, `BENCH_PAGE=4096`, `BENCH_ROUNDS=3`, `BENCH_POINT=1000`, `BENCH_RANGE=200`, `BENCH_MUTATE=1000`, `BENCH_LIMIT=200`, `BENCH_AGG=20`, `BENCH_JOIN=10`, `BENCH_DISTINCT=5`, `BENCH_SUBQUERY=20`, `BENCH_MULTI=10`, `BENCH_UPSERT=500`, `BENCH_SAVEPOINT=200`, `BENCH_REPLACE=500`, `BENCH_TRIGGER=500`, `BENCH_CASCADE=500`, `BENCH_SYNCHRONOUS=off`
 Baseline: `node:sqlite` (`DatabaseSync`) = `1.00x`
 Ratio: subject_time / baseline_time (smaller is faster). Fastest cell in each row is bold.
 
@@ -9,107 +9,119 @@ Ratio: subject_time / baseline_time (smaller is faster). Fastest cell in each ro
 
 - node: `v24.18.0`
 - rustc: `rustc 1.101.0-nightly (1c3a65069 2026-11-02)`
-- repo rev: `eb4f95c`
+- repo rev: `568f421`
 - binding rev (`database.rs` pin in `projects/sqlite.rs/Cargo.toml`): `70aee1e`
-- data: `5000` rows (page `4096`), `BENCH_ROUNDS=3`, point/indexed `1000`, range `200`, order_limit `200`, group_by `20`, join `10`, distinct `5`, subquery `20`, multi `10x100`, upsert `500`, mutate `1000`, projection `10`, join_indexed `10`
+- data: `5000` rows (page `4096`), `BENCH_ROUNDS=3`, point/indexed `1000`, range `200`, order_limit `200`, group_by `20`, join `10`, distinct `5`, subquery `20`, multi `10x100`, upsert `500`, mutate `1000`, projection `10`, join_indexed `10`, savepoint `200`, replace `500`, trigger `500`, cascade `500`
 
 ## Relative to `node:sqlite`
 
 | Workload | node:sqlite | @yydb/sqlite | better-sqlite3 | sql.js | @yydb/sqlite-unknown-wasm32 |
 |---------:|-------:|-------:|-------:|-------:|-------:|
-| batch | 1.00x | 1.73x | **0.92x** | 3.70x | 5.44x |
-| batch_sql | 1.00x | 9.04x | 1.19x | **0.94x** | n/a |
-| scan | 1.00x | 1.47x | **0.41x** | 1.07x | 1.06x |
-| point | 1.00x | **0.26x** | 0.96x | 0.53x | n/a |
-| point_sql | 1.00x | 0.82x | 0.96x | **0.53x** | 0.59x |
-| point_param | 1.00x | **0.37x** | 0.96x | 0.53x | n/a |
-| point_uk | 1.00x | 0.86x | 0.99x | **0.58x** | n/a |
-| range | 1.00x | 1.10x | **1.00x** | 2.82x | 1.34x |
-| indexed | 1.00x | 0.70x | 0.87x | **0.37x** | n/a |
-| order_limit | **1.00x** | 1.53x | 1.07x | 2.26x | 1.14x |
-| group_by | 1.00x | 2.17x | **0.97x** | 2.64x | 2.00x |
-| join | **1.00x** | 6.56x | 1.18x | 1.94x | 8.46x |
-| distinct | 1.00x | 2.97x | **0.82x** | n/a | n/a |
-| aggregate | **1.00x** | 3.47x | 1.18x | n/a | n/a |
-| subquery | **1.00x** | 8.92x | 1.15x | n/a | n/a |
-| index_range | **1.00x** | 5.37x | 1.17x | n/a | n/a |
-| insert_multi | **1.00x** | 4.43x | 1.40x | n/a | n/a |
-| upsert | 1.00x | 12.45x | **0.93x** | n/a | n/a |
-| upsert_param | 1.00x | 6.74x | **0.93x** | n/a | n/a |
-| update | **1.00x** | 8.53x | 1.31x | 3.94x | n/a |
-| update_sql | **1.00x** | 23.88x | 1.31x | 3.94x | n/a |
-| update_idx | **1.00x** | 15.25x | 1.28x | 1.35x | n/a |
-| delete | 1.00x | 0.38x | 1.04x | **0.24x** | n/a |
-| delete_sql | 1.00x | 1.16x | 1.04x | **0.24x** | n/a |
-| delete_idx | **1.00x** | 13.31x | 1.35x | 1.58x | n/a |
-| txn | **1.00x** | 15.79x | 1.55x | 10.33x | n/a |
-| rollback | **1.00x** | 1.09x | 1.75x | 1.51x | n/a |
-| open | 1.00x | 0.99x | 1.00x | **0.48x** | n/a |
-| in_list | **1.00x** | 2.74x | 1.23x | n/a | 4.50x |
-| sort_mixed | **1.00x** | 1.94x | 1.22x | n/a | 1.84x |
-| like_prefix | **1.00x** | 3.79x | 1.47x | n/a | 5.90x |
-| delete_range | 1.00x | 17.92x | **0.71x** | n/a | n/a |
-| update_expr | **1.00x** | 32.98x | 1.25x | n/a | n/a |
-| cte | **1.00x** | 9.06x | 1.12x | n/a | n/a |
-| projection_narrow | 1.00x | 2.50x | **0.79x** | 2.98x | 1.35x |
-| projection_wide | **1.00x** | 2.42x | 1.25x | 5.52x | 2.16x |
-| join_indexed | 1.00x | 2.57x | 1.35x | **0.41x** | n/a |
-| delete_index_range | 1.00x | 26.30x | **0.94x** | 5.03x | n/a |
-| or_filter | **1.00x** | 12.15x | 1.82x | 2.60x | 17.79x |
-| insert_indexed | **1.00x** | 10.72x | 1.37x | 1.40x | n/a |
-| update_expr_idx | **1.00x** | 8.20x | 1.57x | 2.16x | n/a |
-| window_rank | **1.00x** | 1.91x | 1.25x | 3.29x | 1.10x |
-| join_left | **1.00x** | 2.10x | 1.06x | 1.01x | 75.05x |
-| exists_filter | 1.00x | 36.82x | **0.98x** | 1.44x | 195.94x |
+| batch | **1.00x** | 2.47x | 1.61x | 7.69x | 11.76x |
+| batch_sql | **1.00x** | 14.25x | 2.63x | 2.84x | n/a |
+| scan | **1.00x** | 2.92x | 2.03x | 3.71x | 3.00x |
+| point | 1.00x | **0.29x** | 1.51x | 0.91x | n/a |
+| point_sql | 1.00x | **0.86x** | 1.51x | 0.91x | 0.93x |
+| point_param | 1.00x | **0.42x** | 1.51x | 0.91x | n/a |
+| point_uk | 1.00x | 0.96x | 1.63x | **0.94x** | n/a |
+| range | **1.00x** | 1.22x | 1.66x | 4.06x | 2.23x |
+| indexed | 1.00x | 0.95x | 1.52x | **0.76x** | n/a |
+| order_limit | **1.00x** | 1.50x | 1.46x | 3.29x | 1.72x |
+| group_by | **1.00x** | 2.22x | 1.49x | 3.63x | 2.65x |
+| join | **1.00x** | 6.62x | 1.75x | 3.20x | 10.84x |
+| distinct | **1.00x** | 3.28x | 1.56x | n/a | n/a |
+| aggregate | **1.00x** | 3.77x | 2.58x | n/a | n/a |
+| subquery | **1.00x** | 8.10x | 1.71x | n/a | n/a |
+| index_range | **1.00x** | 4.52x | 1.51x | n/a | n/a |
+| insert_multi | **1.00x** | 3.35x | 1.70x | n/a | n/a |
+| upsert | **1.00x** | 22.89x | 1.89x | n/a | n/a |
+| upsert_param | **1.00x** | 11.30x | 1.89x | n/a | n/a |
+| update | **1.00x** | 5.29x | 2.01x | 2.61x | n/a |
+| update_sql | **1.00x** | 20.04x | 2.01x | 2.61x | n/a |
+| update_idx | **1.00x** | 18.42x | 2.38x | 2.29x | n/a |
+| delete | 1.00x | 0.51x | 1.10x | **0.27x** | n/a |
+| delete_sql | 1.00x | 1.47x | 1.10x | **0.27x** | n/a |
+| delete_idx | **1.00x** | 17.29x | 2.24x | 2.64x | n/a |
+| txn | **1.00x** | 19.05x | 2.38x | 11.09x | n/a |
+| rollback | 1.00x | **0.97x** | 2.03x | 2.01x | n/a |
+| open | **1.00x** | 2.95x | 2.37x | 2.67x | n/a |
+| in_list | **1.00x** | 2.51x | 2.47x | n/a | 5.83x |
+| sort_mixed | **1.00x** | 1.75x | 1.73x | n/a | 2.31x |
+| like_prefix | **1.00x** | 4.45x | 1.83x | n/a | 9.60x |
+| delete_range | **1.00x** | 19.28x | 1.59x | n/a | n/a |
+| update_expr | **1.00x** | 29.58x | 1.26x | n/a | n/a |
+| cte | **1.00x** | 9.38x | 2.00x | n/a | n/a |
+| projection_narrow | **1.00x** | 2.53x | 1.30x | 4.88x | 2.93x |
+| projection_wide | **1.00x** | 2.10x | 1.43x | 7.09x | 2.65x |
+| join_indexed | 1.00x | 1.71x | 1.53x | **0.85x** | n/a |
+| delete_index_range | **1.00x** | 24.45x | 1.67x | 2.76x | n/a |
+| or_filter | **1.00x** | 10.76x | 3.04x | 3.30x | 26.48x |
+| insert_indexed | **1.00x** | 10.78x | 2.18x | 2.53x | n/a |
+| update_expr_idx | **1.00x** | 5.04x | 1.48x | 2.46x | n/a |
+| window_rank | **1.00x** | 1.89x | 1.96x | 4.46x | 1.75x |
+| join_left | 1.00x | 1.69x | 2.05x | **0.89x** | 88.40x |
+| exists_filter | **1.00x** | 8.61x | 1.76x | 2.22x | 279.39x |
+| savepoint | **1.00x** | 8.68x | 2.23x | 2.43x | 12.89x |
+| insert_replace | **1.00x** | 3204.22x | 3.95x | 3.23x | 5029.29x |
+| trigger_insert | **1.00x** | 16.41x | 2.57x | 2.00x | 12.82x |
+| fk_cascade | 1.00x | **0.53x** | 1.92x | 2.81x | 0.76x |
+| view_select | **1.00x** | 16.13x | 1.99x | 2.71x | 13.21x |
+| having | **1.00x** | 2.47x | 1.80x | 3.61x | 3.24x |
 
 ## Absolute round timings (median / p95 ms)
 
 | Workload | node:sqlite median / p95 (ms) | @yydb/sqlite median / p95 (ms) | better-sqlite3 median / p95 (ms) | sql.js median / p95 (ms) | @yydb/sqlite-unknown-wasm32 median / p95 (ms) |
 |---------:|-------:|-------:|-------:|-------:|-------:|
-| batch | 6.58 / 6.95 | 11.39 / 13.49 | 6.04 / 7.41 | 24.30 / 41.94 | 35.77 / 74.79 |
-| batch_sql | 4.45 / 6.26 | 40.27 / 42.12 | 5.28 / 5.95 | 4.18 / 4.52 | n/a |
-| scan | 3.56 / 4.26 | 5.23 / 5.75 | 1.44 / 1.73 | 3.81 / 5.08 | 3.79 / 10.85 |
-| point | 24.85 / 26.06 | 6.37 / 6.58 | 23.98 / 24.01 | 13.15 / 18.27 | n/a |
-| point_sql | 24.85 / 26.06 | 20.39 / 22.50 | 23.98 / 24.01 | 13.15 / 18.27 | 14.61 / 18.72 |
-| point_param | 24.85 / 26.06 | 9.13 / 9.22 | 23.98 / 24.01 | 13.15 / 18.27 | n/a |
-| point_uk | 24.38 / 26.57 | 20.99 / 21.68 | 24.08 / 26.70 | 14.03 / 16.54 | n/a |
-| range | 9.45 / 9.62 | 10.41 / 15.17 | 9.41 / 9.51 | 26.70 / 33.14 | 12.67 / 15.42 |
-| indexed | 30.97 / 32.94 | 21.64 / 24.89 | 27.10 / 29.94 | 11.51 / 14.00 | n/a |
-| order_limit | 8.46 / 9.23 | 12.96 / 13.59 | 9.04 / 9.48 | 19.14 / 19.26 | 9.62 / 9.84 |
-| group_by | 21.44 / 22.06 | 46.52 / 47.82 | 20.90 / 24.87 | 56.51 / 65.84 | 42.99 / 44.56 |
-| join | 2.22 / 2.51 | 14.55 / 16.93 | 2.62 / 2.78 | 4.29 / 4.69 | 18.77 / 18.78 |
-| distinct | 7.42 / 8.00 | 22.04 / 22.08 | 6.08 / 8.63 | n/a | n/a |
-| aggregate | 6.86 / 7.83 | 23.82 / 25.31 | 8.09 / 8.19 | n/a | n/a |
-| subquery | 4.40 / 5.45 | 39.27 / 43.65 | 5.06 / 5.75 | n/a | n/a |
-| index_range | 30.45 / 30.54 | 163.55 / 179.94 | 35.74 / 41.26 | n/a | n/a |
-| insert_multi | 0.79 / 0.85 | 3.51 / 5.26 | 1.11 / 1.23 | n/a | n/a |
-| upsert | 0.91 / 9.44 | 11.33 / 13.70 | 0.85 / 17.26 | n/a | n/a |
-| upsert_param | 0.91 / 9.44 | 6.13 / 6.58 | 0.85 / 17.26 | n/a | n/a |
-| update | 0.52 / 7.69 | 4.42 / 4.48 | 0.68 / 7.04 | 2.05 / 2.05 | n/a |
-| update_sql | 0.52 / 7.69 | 12.39 / 14.01 | 0.68 / 7.04 | 2.05 / 2.05 | n/a |
-| update_idx | 0.88 / 1.56 | 13.47 / 15.65 | 1.13 / 1.59 | 1.20 / 1.61 | n/a |
-| delete | 7.85 / 8.40 | 2.97 / 3.74 | 8.17 / 9.70 | 1.85 / 2.27 | n/a |
-| delete_sql | 7.85 / 8.40 | 9.10 / 9.56 | 8.17 / 9.70 | 1.85 / 2.27 | n/a |
-| delete_idx | 0.83 / 0.92 | 11.01 / 12.31 | 1.12 / 1.49 | 1.30 / 1.66 | n/a |
-| txn | 0.65 / 0.67 | 10.26 / 12.75 | 1.01 / 1.39 | 6.71 / 6.83 | n/a |
-| rollback | 2.05 / 2.14 | 2.23 / 2.25 | 3.58 / 3.63 | 3.10 / 3.38 | n/a |
-| open | 0.11 / 0.11 | 0.11 / 0.16 | 0.11 / 0.22 | 0.05 / 0.13 | n/a |
-| in_list | 0.66 / 0.67 | 1.81 / 1.99 | 0.81 / 0.86 | n/a | 2.97 / 3.87 |
-| sort_mixed | 17.41 / 18.06 | 33.84 / 36.11 | 21.24 / 22.23 | n/a | 31.96 / 32.90 |
-| like_prefix | 4.38 / 4.40 | 16.63 / 16.92 | 6.45 / 6.54 | n/a | 25.88 / 26.09 |
-| delete_range | 0.10 / 0.13 | 1.78 / 1.80 | 0.07 / 0.09 | n/a | n/a |
-| update_expr | 0.33 / 0.35 | 10.93 / 11.87 | 0.41 / 0.53 | n/a | n/a |
-| cte | 3.42 / 4.49 | 31.00 / 31.50 | 3.85 / 4.17 | n/a | n/a |
-| projection_narrow | 11.76 / 13.18 | 29.36 / 30.68 | 9.25 / 9.79 | 35.03 / 41.27 | 15.93 / 15.97 |
-| projection_wide | 17.08 / 21.30 | 41.40 / 42.27 | 21.41 / 22.12 | 94.22 / 95.25 | 36.87 / 39.16 |
-| join_indexed | 0.25 / 0.26 | 0.63 / 0.64 | 0.33 / 0.35 | 0.10 / 0.10 | n/a |
-| delete_index_range | 0.02 / 0.04 | 0.60 / 1.16 | 0.02 / 0.05 | 0.12 / 0.21 | n/a |
-| or_filter | 1.57 / 1.63 | 19.02 / 19.15 | 2.85 / 3.47 | 4.07 / 4.16 | 27.85 / 31.63 |
-| insert_indexed | 1.86 / 2.41 | 19.94 / 21.10 | 2.55 / 2.76 | 2.60 / 4.26 | n/a |
-| update_expr_idx | 1.98 / 4.14 | 16.24 / 25.38 | 3.11 / 3.35 | 4.27 / 6.36 | n/a |
-| window_rank | 17.59 / 18.21 | 33.68 / 34.93 | 22.07 / 23.77 | 57.88 / 58.90 | 19.34 / 24.01 |
-| join_left | 0.22 / 0.24 | 0.46 / 0.51 | 0.23 / 0.26 | 0.22 / 0.43 | 16.58 / 19.22 |
-| exists_filter | 19.84 / 19.96 | 730.68 / 826.62 | 19.50 / 25.22 | 28.49 / 30.46 | 3888.49 / 4073.93 |
+| batch | 4.41 / 4.65 | 10.91 / 11.90 | 7.09 / 9.58 | 33.92 / 58.57 | 51.86 / 92.21 |
+| batch_sql | 2.49 / 2.82 | 35.47 / 37.58 | 6.56 / 7.45 | 7.06 / 7.41 | n/a |
+| scan | 1.73 / 3.39 | 5.05 / 5.42 | 3.52 / 4.51 | 6.43 / 7.74 | 5.20 / 12.69 |
+| point | 20.68 / 21.47 | 5.93 / 6.22 | 31.28 / 33.40 | 18.75 / 23.93 | n/a |
+| point_sql | 20.68 / 21.47 | 17.88 / 18.71 | 31.28 / 33.40 | 18.75 / 23.93 | 19.18 / 20.22 |
+| point_param | 20.68 / 21.47 | 8.64 / 9.06 | 31.28 / 33.40 | 18.75 / 23.93 | n/a |
+| point_uk | 20.56 / 22.01 | 19.71 / 21.18 | 33.60 / 38.60 | 19.29 / 20.31 | n/a |
+| range | 8.07 / 8.51 | 9.85 / 9.86 | 13.41 / 14.40 | 32.73 / 36.14 | 17.95 / 21.83 |
+| indexed | 21.85 / 22.72 | 20.68 / 20.91 | 33.16 / 33.26 | 16.71 / 17.73 | n/a |
+| order_limit | 7.97 / 8.00 | 11.93 / 12.46 | 11.67 / 12.18 | 26.18 / 26.36 | 13.73 / 15.71 |
+| group_by | 19.83 / 20.08 | 43.98 / 44.21 | 29.61 / 31.14 | 72.03 / 74.90 | 52.61 / 53.29 |
+| join | 2.02 / 2.12 | 13.36 / 14.49 | 3.54 / 4.17 | 6.45 / 6.54 | 21.88 / 22.88 |
+| distinct | 6.21 / 6.76 | 20.39 / 23.89 | 9.66 / 9.81 | n/a | n/a |
+| aggregate | 5.93 / 6.51 | 22.38 / 22.60 | 15.33 / 15.73 | n/a | n/a |
+| subquery | 4.39 / 4.39 | 35.54 / 36.23 | 7.48 / 7.49 | n/a | n/a |
+| index_range | 26.44 / 29.59 | 119.50 / 120.06 | 39.97 / 40.91 | n/a | n/a |
+| insert_multi | 0.69 / 0.97 | 2.30 / 2.70 | 1.17 / 1.39 | n/a | n/a |
+| upsert | 0.38 / 17.31 | 8.62 / 9.36 | 0.71 / 7.18 | n/a | n/a |
+| upsert_param | 0.38 / 17.31 | 4.25 / 4.51 | 0.71 / 7.18 | n/a | n/a |
+| update | 0.78 / 8.21 | 4.13 / 5.29 | 1.57 / 9.17 | 2.04 / 4.02 | n/a |
+| update_sql | 0.78 / 8.21 | 15.66 / 16.45 | 1.57 / 9.17 | 2.04 / 4.02 | n/a |
+| update_idx | 0.89 / 0.91 | 16.41 / 16.62 | 2.12 / 3.15 | 2.04 / 2.09 | n/a |
+| delete | 7.86 / 8.09 | 4.04 / 4.20 | 8.66 / 9.73 | 2.15 / 2.60 | n/a |
+| delete_sql | 7.86 / 8.09 | 11.51 / 15.52 | 8.66 / 9.73 | 2.15 / 2.60 | n/a |
+| delete_idx | 0.89 / 0.95 | 15.41 / 15.46 | 2.00 / 2.33 | 2.36 / 2.81 | n/a |
+| txn | 0.66 / 0.66 | 12.54 / 13.15 | 1.57 / 1.89 | 7.30 / 11.98 | n/a |
+| rollback | 2.05 / 2.23 | 1.98 / 2.05 | 4.16 / 5.21 | 4.12 / 4.90 | n/a |
+| open | 0.07 / 0.19 | 0.21 / 0.40 | 0.17 / 0.36 | 0.19 / 0.24 | n/a |
+| in_list | 0.64 / 0.75 | 1.61 / 1.65 | 1.59 / 1.79 | n/a | 3.74 / 4.19 |
+| sort_mixed | 18.02 / 18.71 | 31.59 / 31.68 | 31.19 / 31.74 | n/a | 41.71 / 45.33 |
+| like_prefix | 3.52 / 3.92 | 15.68 / 15.86 | 6.43 / 7.10 | n/a | 33.81 / 38.90 |
+| delete_range | 0.07 / 0.08 | 1.28 / 1.30 | 0.11 / 0.14 | n/a | n/a |
+| update_expr | 0.35 / 0.37 | 10.27 / 11.41 | 0.44 / 0.70 | n/a | n/a |
+| cte | 3.06 / 4.19 | 28.74 / 29.69 | 6.13 / 7.25 | n/a | n/a |
+| projection_narrow | 9.60 / 9.67 | 24.33 / 24.87 | 12.49 / 13.14 | 46.83 / 47.22 | 28.10 / 28.73 |
+| projection_wide | 16.52 / 17.95 | 34.75 / 35.20 | 23.61 / 24.29 | 117.06 / 117.58 | 43.84 / 45.44 |
+| join_indexed | 0.23 / 0.29 | 0.39 / 0.40 | 0.35 / 0.42 | 0.20 / 0.24 | n/a |
+| delete_index_range | 0.02 / 0.04 | 0.55 / 0.66 | 0.04 / 0.07 | 0.06 / 0.15 | n/a |
+| or_filter | 1.55 / 1.64 | 16.64 / 16.86 | 4.70 / 5.11 | 5.11 / 5.23 | 40.95 / 42.88 |
+| insert_indexed | 1.71 / 1.73 | 18.44 / 18.86 | 3.73 / 3.79 | 4.34 / 6.27 | n/a |
+| update_expr_idx | 2.73 / 3.32 | 13.78 / 21.53 | 4.05 / 7.59 | 6.74 / 8.11 | n/a |
+| window_rank | 15.62 / 17.13 | 29.55 / 29.86 | 30.56 / 30.88 | 69.69 / 73.71 | 27.38 / 28.97 |
+| join_left | 0.25 / 0.27 | 0.43 / 0.46 | 0.52 / 0.52 | 0.22 / 0.27 | 22.27 / 23.19 |
+| exists_filter | 18.47 / 18.54 | 158.90 / 163.08 | 32.50 / 34.34 | 41.05 / 43.50 | 5159.06 / 5193.67 |
+| savepoint | 0.46 / 0.62 | 3.97 / 4.04 | 1.02 / 1.32 | 1.11 / 2.31 | 5.89 / 6.66 |
+| insert_replace | 0.27 / 0.27 | 853.28 / 863.65 | 1.05 / 1.18 | 0.86 / 1.12 | 1339.30 / 1350.36 |
+| trigger_insert | 0.68 / 0.71 | 11.14 / 11.25 | 1.74 / 2.00 | 1.36 / 1.87 | 8.70 / 8.97 |
+| fk_cascade | 5.21 / 5.48 | 2.75 / 3.59 | 9.99 / 10.76 | 14.62 / 15.52 | 3.98 / 5.45 |
+| view_select | 3.11 / 3.27 | 50.14 / 54.38 | 6.20 / 6.53 | 8.43 / 8.67 | 41.07 / 41.96 |
+| having | 18.90 / 19.41 | 46.70 / 47.48 | 33.93 / 36.89 | 68.25 / 70.95 | 61.28 / 61.83 |
 
 ## Workloads
 
@@ -129,6 +141,8 @@ Ratio: subject_time / baseline_time (smaller is faster). Fastest cell in each ro
 - `aggregate`: `select count(*), sum(score), min(score), max(score) from items` (20 queries per round) — single-pass aggregate without grouping.
 - `subquery`: `select count(*) ... where id in (select id from items where score > 1000)` (20 queries per round, 1000 matches) — uncorrelated `IN` subquery.
 - `cte`: `with c as (select id, label, score from items where score > 1000) select count(*) from c` (20 queries per round, 1000 rows materialized) — non-recursive CTE materialization.
+- `having`: `select cast(score as integer), sum(score) ... group by cast(score as integer) having sum(score) > 1000` (20 queries per round, 1001 groups kept) — the aggregate rows are filtered after grouping.
+- `view_select`: `create view item_view as select ... where score > 1000`, then `select count(*) from item_view` (20 queries per round, 1000 rows) — the view body is re-run on every read.
 - `in_list`: `select count(*) ... where id in (<100 scattered rowids>)` (20 queries per round, 100 matches) — literal `IN` list planning and predicate dispatch.
 - `sort_mixed`: `select ... order by score desc, id desc limit 50` (20 queries per round) — unindexed sort plus truncation.
 - `like_prefix`: `select count(*) ... where label like 'row-1%'` (20 queries per round, 1111 matches) — prefix pattern over an unindexed full scan, with the row count asserted on every engine.
@@ -147,13 +161,17 @@ Ratio: subject_time / baseline_time (smaller is faster). Fastest cell in each ro
 - `insert_multi`: 10 statements of 100 literal rows in one transaction (1000 rows total).
 - `upsert`: 500 `insert ... on conflict(id) do update` statements in one transaction.
 - `upsert_param`: the same upsert through a prepared statement with bound values; peer cells reuse `upsert`. `upsert` re-parses interpolated SQL text, so the pair shows the parse cost separately from execution.
+- `insert_replace`: 500 `insert or replace` statements in one transaction over the seeded rows (row count and the rewritten `score` asserted) — the delete-then-insert conflict path instead of `ON CONFLICT`.
+- `trigger_insert`: 500 prepared INSERTs into an in-memory table carrying an `AFTER INSERT` trigger that writes one audit row each (both row counts asserted) — per-row trigger dispatch and the nested audit write.
+- `fk_cascade`: `delete from cascade_parent where id <= 500` on a database with foreign keys on and 500 parent/child pairs (both tables asserted empty) — `ON DELETE CASCADE` child removal per parent row.
+- `savepoint`: begin + 200 iterations of `savepoint sp1` / one INSERT / `rollback to sp1` / `release sp1` + commit, asserting nothing persists — savepoint bookkeeping separate from the plain `rollback`.
 - `update` / `delete`: 1000 mutations in one transaction + save (our writer) vs peers' prepared mutation in a transaction.
 - `update_sql` / `delete_sql`: 1000 prepared SQL mutations by bound rowid in one transaction on `new SQLite()`; peer cells reuse `update` / `delete`. These exercise the SQL write path (rowid narrowing) rather than the writer primitives.
 - `update_idx` / `delete_idx`: 1000 prepared mutations by an **indexed** `label` column in one transaction, on an in-memory database with the same index on every engine. This covers the indexed write path (probe candidates instead of a full decode) and has no peer-cell reuse.
 - `txn`: 1000 prepared INSERTs split into transactions of 10 (100 commits), on an in-memory database, so transaction boundaries rather than row count dominate.
 - `rollback`: begin + 1000 inserts + rollback (nothing persisted).
 - `open`: open + close of the main file, no reads.
-- `@yydb/sqlite-unknown-wasm32` is the in-memory SQL binding: it runs `batch` (inserts + snapshot export + file write), `scan`, `point_sql`, `range`, `order_limit`, `group_by`, `join`, `in_list`, `sort_mixed`, `like_prefix`, `projection_narrow`, `projection_wide` and `or_filter` through `exec`; it has no reader point API, no UPDATE/DELETE/indexes and no file open, so the remaining cells are `n/a`.
+- `@yydb/sqlite-unknown-wasm32` is the in-memory SQL binding: it runs `batch` (inserts + snapshot export + file write), `scan`, `point_sql`, `range`, `order_limit`, `group_by`, `join`, `in_list`, `sort_mixed`, `like_prefix`, `projection_narrow`, `projection_wide`, `or_filter`, `view_select`, `having`, `savepoint`, `insert_replace`, `trigger_insert` and `fk_cascade` through `exec`; it has no reader point API, no file open and no index-driven primitives, so the remaining cells are `n/a`.
 
 ## Intentional deltas
 
@@ -161,10 +179,10 @@ Ratio: subject_time / baseline_time (smaller is faster). Fastest cell in each ro
 - sql.js peer scan rebuilds the WASM DB from the serialized image each round; peer batch/update/delete timings include `export()`.
 - `point_sql` has no separate peer path — peers' prepared `get` is the reference.
 - The wasm column reads the same in-memory image every round (`SELECT` re-scans the image; the binding has no seek), and its `batch` includes `snapshot()` + the file write.
-- sql.js does not run the SQL-feature workloads (`distinct`, `aggregate`, `subquery`, `cte`, `index_range`, `insert_multi`, `upsert`, `in_list`, `sort_mixed`, `like_prefix`, `delete_range`, `update_expr`), so those cells stay `n/a`; the wasm binding runs `in_list`, `sort_mixed`, `like_prefix`, `projection_narrow`, `projection_wide`, `or_filter`, `window_rank`, `join_left` and `exists_filter` but not the mutation/index ones.
-- `insert_indexed`, `upsert`, `update_expr`, `update_expr_idx` and `delete_range` on our side run on an in-memory `new SQLite()`, while the two peer columns write through their pager; the row set is validated on both sides.
+- sql.js does not run the SQL-feature workloads (`distinct`, `aggregate`, `subquery`, `cte`, `index_range`, `insert_multi`, `upsert`, `in_list`, `sort_mixed`, `like_prefix`, `delete_range`, `update_expr`), so those cells stay `n/a`; the wasm binding runs `in_list`, `sort_mixed`, `like_prefix`, `projection_narrow`, `projection_wide`, `or_filter`, `window_rank`, `join_left`, `exists_filter`, `view_select`, `having`, `savepoint`, `insert_replace`, `trigger_insert` and `fk_cascade`, but not the index-driven mutation primitives (`insert_indexed`, `update_expr_idx`, `delete_index_range`).
+- `insert_indexed`, `upsert`, `update_expr`, `update_expr_idx`, `delete_range`, `savepoint`, `insert_replace`, `trigger_insert` and `fk_cascade` on our side run on an in-memory `new SQLite()`, while the two peer columns write through their pager; the row set is validated on both sides.
 - `batch_sql`, `update_idx`, `delete_idx`, `txn`, `update_expr` and `delete_range` run on an in-memory database on every engine, so no pager publication or file I/O is included. sql.js runs the SQL ones through its prepared-statement API; the wasm binding has no UPDATE/DELETE/index support and stays `n/a`.
-- The SQL-engine workloads (`point_param`, `point_uk`, `order_limit`, `group_by`, `join`, `distinct`, `aggregate`, `subquery`, `cte`, `in_list`, `sort_mixed`, `like_prefix`, `or_filter`, `projection_narrow`, `projection_wide`, `join_indexed`, `join_left`, `exists_filter`, `window_rank`, `insert_indexed`, `index_range`, `insert_multi`, `upsert`, `upsert_param`, `update_sql`, `delete_sql`, `update_expr`, `update_expr_idx`, `delete_range`, `delete_index_range`) run one untimed warmup round before `BENCH_ROUNDS` timed rounds; median/p95 come from the harness `benchSummary`, not local stats.
+- The SQL-engine workloads (`point_param`, `point_uk`, `order_limit`, `group_by`, `join`, `distinct`, `aggregate`, `subquery`, `cte`, `having`, `view_select`, `in_list`, `sort_mixed`, `like_prefix`, `or_filter`, `projection_narrow`, `projection_wide`, `join_indexed`, `join_left`, `exists_filter`, `window_rank`, `insert_indexed`, `index_range`, `insert_multi`, `upsert`, `upsert_param`, `insert_replace`, `trigger_insert`, `fk_cascade`, `savepoint`, `update_sql`, `delete_sql`, `update_expr`, `update_expr_idx`, `delete_range`, `delete_index_range`) run one untimed warmup round before `BENCH_ROUNDS` timed rounds; median/p95 come from the harness `benchSummary`, not local stats.
 - `batch`, `scan`, `point`, `range`, `update`, `delete`, `rollback` and `open` still use the format-3 writer/reader primitives. The public `SQLite` entry does not expose raw record decoding, `rowByRowid`/`range` rowid windows, or the full-image `save()` that these timings are defined on.
 
 ## Capabilities still missing from the public API

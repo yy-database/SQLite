@@ -6,7 +6,8 @@
 // Env: BENCH_ROWS (default 5000), BENCH_TXN (1000), BENCH_PAGE (4096), BENCH_ROUNDS (3),
 //      BENCH_POINT (1000), BENCH_RANGE (200), BENCH_MUTATE (1000), BENCH_SYNCHRONOUS (off|on),
 //      BENCH_LIMIT (200), BENCH_AGG (20), BENCH_JOIN (10), BENCH_DISTINCT (5), BENCH_SUBQUERY (20),
-//      BENCH_MULTI (10), BENCH_UPSERT (500), BENCH_PROJECTION (10), BENCH_JOIN_INDEXED (10)
+//      BENCH_MULTI (10), BENCH_UPSERT (500), BENCH_PROJECTION (10), BENCH_JOIN_INDEXED (10),
+//      BENCH_SAVEPOINT (200), BENCH_REPLACE (500), BENCH_TRIGGER (500), BENCH_CASCADE (500)
 
 import Database from "better-sqlite3";
 import { spawnSync } from "node:child_process";
@@ -105,6 +106,28 @@ const JOIN_LEFT_SQL = `select count(*) as matched from items as a left join item
 // 相关 EXISTS：外层每行都要探一次内层，内层只保留前 100 个 rowid。
 const EXISTS_INNER = 100;
 const EXISTS_SQL = `select count(*) as n from items as a where exists (select 1 from items as b where b.label = a.label and b.id <= ${EXISTS_INNER})`;
+// Savepoint churn：每个 op 开一个 savepoint、写一行、回滚到该点并释放，外层事务提交后一行不剩。
+const SAVEPOINT_OPS = Number(process.env.BENCH_SAVEPOINT ?? 200);
+const SAVEPOINT_INSERT_SQL = "insert into items (id, label, score) values (?, ?, ?)";
+// INSERT OR REPLACE：冲突行走“删旧行再写新行”，与 upsert 的 ON CONFLICT 路径不同。
+const REPLACE_OPS = Number(process.env.BENCH_REPLACE ?? 500);
+// AFTER INSERT 触发器：每插入一行就多一次审计表写入。
+const TRIGGER_ROWS = Number(process.env.BENCH_TRIGGER ?? 500);
+const TRIGGER_ITEMS_DDL = "create table trigger_items (id integer primary key, label text, score real)";
+const TRIGGER_AUDIT_DDL = "create table trigger_audit (item_id integer)";
+const TRIGGER_DDL = "create trigger trigger_audit_ai after insert on trigger_items begin insert into trigger_audit (item_id) values (new.id); end";
+const TRIGGER_INSERT_SQL = "insert into trigger_items (id, label, score) values (?, ?, ?)";
+// 外键 ON DELETE CASCADE：删掉每个父行就连带删掉对应子行。
+const CASCADE_ROWS = Number(process.env.BENCH_CASCADE ?? 500);
+const CASCADE_PARENT_DDL = "create table cascade_parent (id integer primary key)";
+const CASCADE_CHILD_DDL = "create table cascade_child (id integer primary key, pid integer references cascade_parent (id) on delete cascade)";
+const CASCADE_DELETE_SQL = "delete from cascade_parent where id <= ?";
+// 视图读取：视图体在每次 select 时重新执行。
+const VIEW_DDL = "create view item_view as select id, label, score from items where score > 1000";
+const VIEW_COUNT_SQL = "select count(*) as n from item_view";
+// HAVING：分组聚合之后再过滤分组。
+const HAVING_THRESHOLD = 1_000;
+const HAVING_SQL = `select cast(score as integer) as bucket, sum(score) as total from items group by cast(score as integer) having sum(score) > ${HAVING_THRESHOLD}`;
 
 function expectedLikePrefixRows(): number {
   let count = 0;
@@ -161,6 +184,18 @@ function expectedOrFilterRows(): number {
   return count;
 }
 
+/** Groups of `cast(score as integer)` whose `sum(score)` clears the HAVING threshold. */
+function expectedHavingGroups(): number {
+  const totals = new Map<number, number>();
+  for (let id = 1; id <= ROWS; id += 1) {
+    const bucket = Math.floor(id / 4);
+    totals.set(bucket, (totals.get(bucket) ?? 0) + id / 4);
+  }
+  let groups = 0;
+  for (const total of totals.values()) if (total > HAVING_THRESHOLD) groups += 1;
+  return groups;
+}
+
 const columns = JSON.stringify([
   { name: "id", declaredType: "INTEGER", primaryKey: true },
   { name: "label", declaredType: "TEXT" },
@@ -193,7 +228,8 @@ type WorkloadKey =
   | "update" | "update_sql" | "update_idx" | "delete" | "delete_sql" | "delete_idx" | "txn" | "rollback" | "open"
   | "in_list" | "sort_mixed" | "like_prefix" | "delete_range" | "update_expr" | "cte"
   | "projection_narrow" | "projection_wide" | "join_indexed" | "delete_index_range" | "or_filter"
-  | "insert_indexed" | "update_expr_idx" | "window_rank" | "join_left" | "exists_filter";
+  | "insert_indexed" | "update_expr_idx" | "window_rank" | "join_left" | "exists_filter"
+  | "savepoint" | "insert_replace" | "trigger_insert" | "fk_cascade" | "view_select" | "having";
 const WORKLOADS: WorkloadKey[] = [
   "batch", "batch_sql", "scan", "point", "point_sql", "point_param", "point_uk", "range", "indexed",
   "order_limit", "group_by", "join",
@@ -202,6 +238,7 @@ const WORKLOADS: WorkloadKey[] = [
   "in_list", "sort_mixed", "like_prefix", "delete_range", "update_expr", "cte",
   "projection_narrow", "projection_wide", "join_indexed", "delete_index_range", "or_filter",
   "insert_indexed", "update_expr_idx", "window_rank", "join_left", "exists_filter",
+  "savepoint", "insert_replace", "trigger_insert", "fk_cascade", "view_select", "having",
 ];
 
 // Ops per workload for throughput normalization (batch/scan count rows; the rest count queries/mutations/opens).
@@ -209,9 +246,13 @@ function workloadOps(workload: WorkloadKey): number {
   if (workload === "batch" || workload === "batch_sql" || workload === "scan") return ROWS;
   if (workload === "range" || workload === "index_range") return RANGE_OPS;
   if (workload === "order_limit") return LIMIT_OPS;
-  if (workload === "group_by" || workload === "aggregate" || workload === "in_list" || workload === "sort_mixed" || workload === "like_prefix" || workload === "or_filter" || workload === "exists_filter" || workload === "cte") {
+  if (workload === "group_by" || workload === "aggregate" || workload === "in_list" || workload === "sort_mixed" || workload === "like_prefix" || workload === "or_filter" || workload === "exists_filter" || workload === "cte" || workload === "view_select" || workload === "having") {
     return AGG_OPS;
   }
+  if (workload === "savepoint") return SAVEPOINT_OPS;
+  if (workload === "insert_replace") return REPLACE_OPS;
+  if (workload === "trigger_insert") return TRIGGER_ROWS;
+  if (workload === "fk_cascade") return CASCADE_ROWS;
   if (workload === "projection_narrow" || workload === "projection_wide") return PROJECTION_OPS;
   if (workload === "join_indexed" || workload === "join_left") return JOIN_INDEXED_OPS;
   if (workload === "window_rank") return WINDOW_OPS;
@@ -875,6 +916,160 @@ function nativeExists(factory: (path: string, readOnly?: boolean) => PeerHandle,
     for (let op = 0; op < AGG_OPS; op += 1) {
       const row = select.get() as { n: number } | undefined;
       if (!row || Number(row.n) !== EXISTS_INNER) throw new Error(`exists_filter returned ${JSON.stringify(row)}, expected ${EXISTS_INNER}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function nativeSavepoint(factory: () => PeerHandle): number[] {
+  const database = factory();
+  database.exec("create table items (id integer primary key, label text, score real)");
+  const insert = database.prepare(SAVEPOINT_INSERT_SQL);
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    for (let op = 0; op < SAVEPOINT_OPS; op += 1) {
+      database.exec("savepoint sp1");
+      insert.run(2_000_000 + op, `savepoint-${op}`, 0);
+      database.exec("rollback to sp1");
+      database.exec("release sp1");
+    }
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+  }
+  const count = database.prepare("select count(*) as n from items").get() as { n: number } | undefined;
+  if (!count || Number(count.n) !== 0) throw new Error(`savepoint rows ${JSON.stringify(count)}, expected 0`);
+  database.close();
+  return samples;
+}
+
+function nativeInsertReplace(factory: () => PeerHandle): number[] {
+  const database = factory();
+  database.exec("create table items (id integer primary key, label text, score real)");
+  const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+  database.exec("begin");
+  for (let row = 1; row <= ROWS; row += 1) insert.run(row, `row-${row}`, row / 4);
+  database.exec("commit");
+  const replace = database.prepare("insert or replace into items (id, label, score) values (?, ?, ?)");
+  const run = () => {
+    for (let op = 0; op < REPLACE_OPS; op += 1) {
+      const id = (op % ROWS) + 1;
+      replace.run(id, `row-${id}`, 7.25);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    run();
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+  }
+  const count = database.prepare("select count(*) as n from items").get() as { n: number } | undefined;
+  if (!count || Number(count.n) !== ROWS) throw new Error(`insert_replace rows ${JSON.stringify(count)}, expected ${ROWS}`);
+  const row = database.prepare("select score from items where id = 1").get() as { score: number } | undefined;
+  if (!row || Number(row.score) !== 7.25) throw new Error(`insert_replace did not replace: ${JSON.stringify(row)}`);
+  database.close();
+  return samples;
+}
+
+function nativeTriggerInsert(factory: () => PeerHandle): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = factory();
+    database.exec(TRIGGER_ITEMS_DDL);
+    database.exec(TRIGGER_AUDIT_DDL);
+    database.exec(TRIGGER_DDL);
+    const insert = database.prepare(TRIGGER_INSERT_SQL);
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    for (let row = 1; row <= TRIGGER_ROWS; row += 1) insert.run(row, `row-${row}`, row / 4);
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+    const items = database.prepare("select count(*) as n from trigger_items").get() as { n: number } | undefined;
+    const audit = database.prepare("select count(*) as n from trigger_audit").get() as { n: number } | undefined;
+    if (!items || Number(items.n) !== TRIGGER_ROWS) throw new Error(`trigger_insert rows ${JSON.stringify(items)}, expected ${TRIGGER_ROWS}`);
+    if (!audit || Number(audit.n) !== TRIGGER_ROWS) throw new Error(`trigger_insert audit ${JSON.stringify(audit)}, expected ${TRIGGER_ROWS}`);
+    database.close();
+  }
+  return samples;
+}
+
+function nativeFkCascade(factory: () => PeerHandle): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = factory();
+    database.exec("pragma foreign_keys = on");
+    database.exec(CASCADE_PARENT_DDL);
+    database.exec(CASCADE_CHILD_DDL);
+    const insertParent = database.prepare("insert into cascade_parent (id) values (?)");
+    const insertChild = database.prepare("insert into cascade_child (id, pid) values (?, ?)");
+    database.exec("begin");
+    for (let row = 1; row <= CASCADE_ROWS; row += 1) {
+      insertParent.run(row);
+      insertChild.run(row, row);
+    }
+    database.exec("commit");
+    const remove = database.prepare(CASCADE_DELETE_SQL);
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    remove.run(CASCADE_ROWS);
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+    const parents = database.prepare("select count(*) as n from cascade_parent").get() as { n: number } | undefined;
+    const children = database.prepare("select count(*) as n from cascade_child").get() as { n: number } | undefined;
+    if (!parents || Number(parents.n) !== 0) throw new Error(`fk_cascade parents ${JSON.stringify(parents)}, expected 0`);
+    if (!children || Number(children.n) !== 0) throw new Error(`fk_cascade children ${JSON.stringify(children)}, expected 0`);
+    database.close();
+  }
+  return samples;
+}
+
+function nativeViewSelect(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  const writable = factory(path);
+  writable.exec(VIEW_DDL);
+  writable.close();
+  const database = factory(path, true);
+  const select = database.prepare(VIEW_COUNT_SQL);
+  const expected = expectedSubqueryRows();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const row = select.get() as { n: number } | undefined;
+      if (!row || Number(row.n) !== expected) throw new Error(`view_select returned ${JSON.stringify(row)}, expected ${expected}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function nativeHaving(factory: (path: string, readOnly?: boolean) => PeerHandle, path: string): number[] {
+  const database = factory(path, true);
+  const select = database.prepare(HAVING_SQL);
+  const expected = expectedHavingGroups();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const rows = select.all() as { bucket: number; total: number }[];
+      if (rows.length !== expected) throw new Error(`having returned ${rows.length} groups, expected ${expected}`);
+      for (const row of rows) {
+        if (Number(row.total) <= HAVING_THRESHOLD) throw new Error(`having kept ${JSON.stringify(row)}, expected total > ${HAVING_THRESHOLD}`);
+      }
     }
   };
   run();
@@ -1708,6 +1903,155 @@ function ourExists(database: SQLite): number[] {
   return samples;
 }
 
+function ourSavepoint(): number[] {
+  const database = new SQLite();
+  database.exec("create table items (id integer primary key, label text, score real)");
+  const insert = database.prepare(SAVEPOINT_INSERT_SQL);
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    for (let op = 0; op < SAVEPOINT_OPS; op += 1) {
+      database.exec("savepoint sp1");
+      insert.run([BigInt(2_000_000 + op), `savepoint-${op}`, 0]);
+      database.exec("rollback to sp1");
+      database.exec("release sp1");
+    }
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+  }
+  const count = database.get<{ n: bigint }>("select count(*) as n from items");
+  if (!count || Number(count.n) !== 0) throw new Error(`savepoint rows ${JSON.stringify(count)}, expected 0`);
+  insert.close();
+  database.close();
+  return samples;
+}
+
+function ourInsertReplace(): number[] {
+  const database = buildDatabase();
+  const replace = database.prepare("insert or replace into items (id, label, score) values (?, ?, ?)");
+  const run = () => {
+    for (let op = 0; op < REPLACE_OPS; op += 1) {
+      const id = (op % ROWS) + 1;
+      replace.run([BigInt(id), `row-${id}`, 7.25]);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    run();
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+  }
+  const count = database.get<{ n: bigint }>("select count(*) as n from items");
+  if (!count || Number(count.n) !== ROWS) throw new Error(`insert_replace rows ${JSON.stringify(count)}, expected ${ROWS}`);
+  const row = database.get<{ score: number }>("select score from items where id = 1");
+  if (!row || Number(row.score) !== 7.25) throw new Error(`insert_replace did not replace: ${JSON.stringify(row)}`);
+  replace.close();
+  database.close();
+  return samples;
+}
+
+function ourTriggerInsert(): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = new SQLite();
+    database.exec(TRIGGER_ITEMS_DDL);
+    database.exec(TRIGGER_AUDIT_DDL);
+    database.exec(TRIGGER_DDL);
+    const insert = database.prepare(TRIGGER_INSERT_SQL);
+    const start = process.hrtime.bigint();
+    database.transaction(() => {
+      for (let row = 1; row <= TRIGGER_ROWS; row += 1) insert.run([BigInt(row), `row-${row}`, row / 4]);
+    });
+    samples.push(elapsedMs(start));
+    const items = database.get<{ n: bigint }>("select count(*) as n from trigger_items");
+    const audit = database.get<{ n: bigint }>("select count(*) as n from trigger_audit");
+    if (!items || Number(items.n) !== TRIGGER_ROWS) throw new Error(`trigger_insert rows ${JSON.stringify(items)}, expected ${TRIGGER_ROWS}`);
+    if (!audit || Number(audit.n) !== TRIGGER_ROWS) throw new Error(`trigger_insert audit ${JSON.stringify(audit)}, expected ${TRIGGER_ROWS}`);
+    insert.close();
+    database.close();
+  }
+  return samples;
+}
+
+function ourFkCascade(): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = new SQLite();
+    database.pragma("foreign_keys", { value: true });
+    database.exec(CASCADE_PARENT_DDL);
+    database.exec(CASCADE_CHILD_DDL);
+    const insertParent = database.prepare("insert into cascade_parent (id) values (?)");
+    const insertChild = database.prepare("insert into cascade_child (id, pid) values (?, ?)");
+    database.transaction(() => {
+      for (let row = 1; row <= CASCADE_ROWS; row += 1) {
+        insertParent.run([BigInt(row)]);
+        insertChild.run([BigInt(row), BigInt(row)]);
+      }
+    });
+    const remove = database.prepare(CASCADE_DELETE_SQL);
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    remove.run([BigInt(CASCADE_ROWS)]);
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+    const parents = database.get<{ n: bigint }>("select count(*) as n from cascade_parent");
+    const children = database.get<{ n: bigint }>("select count(*) as n from cascade_child");
+    if (!parents || Number(parents.n) !== 0) throw new Error(`fk_cascade parents ${JSON.stringify(parents)}, expected 0`);
+    if (!children || Number(children.n) !== 0) throw new Error(`fk_cascade children ${JSON.stringify(children)}, expected 0`);
+    insertParent.close();
+    insertChild.close();
+    remove.close();
+    database.close();
+  }
+  return samples;
+}
+
+function ourViewSelect(): number[] {
+  const database = buildDatabase();
+  database.exec(VIEW_DDL);
+  const expected = expectedSubqueryRows();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const row = database.get<{ n: bigint }>(VIEW_COUNT_SQL);
+      if (!row || Number(row.n) !== expected) throw new Error(`view_select returned ${JSON.stringify(row)}, expected ${expected}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  database.close();
+  return samples;
+}
+
+function ourHaving(database: SQLite): number[] {
+  const expected = expectedHavingGroups();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const rows = database.all<{ bucket: bigint; total: number }>(HAVING_SQL);
+      if (rows.length !== expected) throw new Error(`having returned ${rows.length} groups, expected ${expected}`);
+      for (const row of rows) {
+        if (Number(row.total) <= HAVING_THRESHOLD) throw new Error(`having kept ${JSON.stringify(row)}, expected total > ${HAVING_THRESHOLD}`);
+      }
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
 function ourUpdateExpr(): number[] {
   const database = buildDatabase();
   const samples: number[] = [];
@@ -2527,9 +2871,175 @@ function sqlJsExists(SQL: SqlJsStatic, path: string): number[] {
   return samples;
 }
 
+function sqlJsSavepoint(SQL: SqlJsStatic): number[] {
+  const database = new SQL.Database();
+  database.run("create table items (id integer primary key, label text, score real)");
+  const insert = database.prepare(SAVEPOINT_INSERT_SQL);
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.run("begin");
+    for (let op = 0; op < SAVEPOINT_OPS; op += 1) {
+      database.run("savepoint sp1");
+      insert.run([2_000_000 + op, `savepoint-${op}`, 0]);
+      database.run("rollback to sp1");
+      database.run("release sp1");
+    }
+    database.run("commit");
+    samples.push(elapsedMs(start));
+  }
+  const rows = database.exec("select count(*) as n from items")[0]?.values ?? [];
+  if (Number(rows[0]?.[0]) !== 0) throw new Error(`savepoint rows ${JSON.stringify(rows)}, expected 0`);
+  insert.free();
+  database.close();
+  return samples;
+}
+
+function sqlJsInsertReplace(SQL: SqlJsStatic): number[] {
+  const database = new SQL.Database();
+  database.run("create table items (id integer primary key, label text, score real)");
+  const insert = database.prepare("insert into items (id, label, score) values (?, ?, ?)");
+  database.run("begin");
+  for (let row = 1; row <= ROWS; row += 1) insert.run([row, `row-${row}`, row / 4]);
+  database.run("commit");
+  insert.free();
+  const replace = database.prepare("insert or replace into items (id, label, score) values (?, ?, ?)");
+  const run = () => {
+    for (let op = 0; op < REPLACE_OPS; op += 1) {
+      const id = (op % ROWS) + 1;
+      replace.run([id, `row-${id}`, 7.25]);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.run("begin");
+    run();
+    database.run("commit");
+    samples.push(elapsedMs(start));
+  }
+  const count = database.exec("select count(*) as n from items")[0]?.values ?? [];
+  if (Number(count[0]?.[0]) !== ROWS) throw new Error(`insert_replace rows ${JSON.stringify(count)}, expected ${ROWS}`);
+  const row = database.exec("select score from items where id = 1")[0]?.values ?? [];
+  if (Number(row[0]?.[0]) !== 7.25) throw new Error(`insert_replace did not replace: ${JSON.stringify(row)}`);
+  replace.free();
+  database.close();
+  return samples;
+}
+
+function sqlJsTriggerInsert(SQL: SqlJsStatic): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = new SQL.Database();
+    database.run(TRIGGER_ITEMS_DDL);
+    database.run(TRIGGER_AUDIT_DDL);
+    database.run(TRIGGER_DDL);
+    const insert = database.prepare(TRIGGER_INSERT_SQL);
+    const start = process.hrtime.bigint();
+    database.run("begin");
+    for (let row = 1; row <= TRIGGER_ROWS; row += 1) insert.run([row, `row-${row}`, row / 4]);
+    database.run("commit");
+    samples.push(elapsedMs(start));
+    const items = database.exec("select count(*) as n from trigger_items")[0]?.values ?? [];
+    const audit = database.exec("select count(*) as n from trigger_audit")[0]?.values ?? [];
+    if (Number(items[0]?.[0]) !== TRIGGER_ROWS) throw new Error(`trigger_insert rows ${JSON.stringify(items)}, expected ${TRIGGER_ROWS}`);
+    if (Number(audit[0]?.[0]) !== TRIGGER_ROWS) throw new Error(`trigger_insert audit ${JSON.stringify(audit)}, expected ${TRIGGER_ROWS}`);
+    insert.free();
+    database.close();
+  }
+  return samples;
+}
+
+function sqlJsFkCascade(SQL: SqlJsStatic): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = new SQL.Database();
+    database.run("pragma foreign_keys = on");
+    database.run(CASCADE_PARENT_DDL);
+    database.run(CASCADE_CHILD_DDL);
+    const insertParent = database.prepare("insert into cascade_parent (id) values (?)");
+    const insertChild = database.prepare("insert into cascade_child (id, pid) values (?, ?)");
+    database.run("begin");
+    for (let row = 1; row <= CASCADE_ROWS; row += 1) {
+      insertParent.run([row]);
+      insertChild.run([row, row]);
+    }
+    database.run("commit");
+    insertParent.free();
+    insertChild.free();
+    const remove = database.prepare(CASCADE_DELETE_SQL);
+    const start = process.hrtime.bigint();
+    database.run("begin");
+    remove.run([CASCADE_ROWS]);
+    database.run("commit");
+    samples.push(elapsedMs(start));
+    const parents = database.exec("select count(*) as n from cascade_parent")[0]?.values ?? [];
+    const children = database.exec("select count(*) as n from cascade_child")[0]?.values ?? [];
+    if (Number(parents[0]?.[0]) !== 0) throw new Error(`fk_cascade parents ${JSON.stringify(parents)}, expected 0`);
+    if (Number(children[0]?.[0]) !== 0) throw new Error(`fk_cascade children ${JSON.stringify(children)}, expected 0`);
+    remove.free();
+    database.close();
+  }
+  return samples;
+}
+
+function sqlJsViewSelect(SQL: SqlJsStatic, path: string): number[] {
+  const database = new SQL.Database(readFileSync(path));
+  database.run(VIEW_DDL);
+  const statement = database.prepare(VIEW_COUNT_SQL);
+  const expected = expectedSubqueryRows();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      if (!statement.step()) throw new Error("view_select returned no row");
+      const row = statement.getAsObject() as { n?: number };
+      if (Number(row.n) !== expected) throw new Error(`view_select returned ${JSON.stringify(row)}, expected ${expected}`);
+      statement.reset();
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  statement.free();
+  database.close();
+  return samples;
+}
+
+function sqlJsHaving(SQL: SqlJsStatic, path: string): number[] {
+  const database = new SQL.Database(readFileSync(path));
+  const statement = database.prepare(HAVING_SQL);
+  const expected = expectedHavingGroups();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      let rows = 0;
+      while (statement.step()) {
+        const row = statement.getAsObject() as { total?: number };
+        if (Number(row.total) <= HAVING_THRESHOLD) throw new Error(`having kept ${JSON.stringify(row)}, expected total > ${HAVING_THRESHOLD}`);
+        rows += 1;
+      }
+      statement.reset();
+      if (rows !== expected) throw new Error(`having returned ${rows} groups, expected ${expected}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  statement.free();
+  database.close();
+  return samples;
+}
+
 // ---------------------------------------------------------------------------
 // `@yydb/sqlite-unknown-wasm32` (in-memory SQL binding; no reader point API,
-// no UPDATE/DELETE/indexes/file open — unsupported workloads report `n/a`)
+// no file open — unsupported workloads report `n/a`)
 // ---------------------------------------------------------------------------
 
 type WasmDatabase = {
@@ -2822,6 +3332,143 @@ function wasmExists(database: WasmDatabase): number[] {
   return samples;
 }
 
+function wasmSavepoint(): number[] {
+  const database = new wasmMemoryDatabase!(PAGE_SIZE);
+  database.exec("create table items (id integer primary key, label text, score real)");
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    for (let op = 0; op < SAVEPOINT_OPS; op += 1) {
+      database.exec("savepoint sp1");
+      database.exec(`insert into items (id, label, score) values (${2_000_000 + op}, 'savepoint-${op}', 0)`);
+      database.exec("rollback to sp1");
+      database.exec("release sp1");
+    }
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+  }
+  const rows = wasmExecRows(database, "select count(*) as n from items");
+  if (Number(rows[0]?.[0]) !== 0) throw new Error(`savepoint rows ${JSON.stringify(rows)}, expected 0`);
+  database.free();
+  return samples;
+}
+
+function wasmInsertReplace(): number[] {
+  const database = wasmReadDatabase();
+  const run = () => {
+    for (let op = 0; op < REPLACE_OPS; op += 1) {
+      const id = (op % ROWS) + 1;
+      database.exec(`insert or replace into items (id, label, score) values (${id}, 'row-${id}', 7.25)`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    run();
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+  }
+  const count = wasmExecRows(database, "select count(*) as n from items");
+  if (Number(count[0]?.[0]) !== ROWS) throw new Error(`insert_replace rows ${JSON.stringify(count)}, expected ${ROWS}`);
+  const row = wasmExecRows(database, "select score from items where id = 1");
+  if (Number(row[0]?.[0]) !== 7.25) throw new Error(`insert_replace did not replace: ${JSON.stringify(row)}`);
+  database.free();
+  return samples;
+}
+
+function wasmTriggerInsert(): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = new wasmMemoryDatabase!(PAGE_SIZE);
+    database.exec(TRIGGER_ITEMS_DDL);
+    database.exec(TRIGGER_AUDIT_DDL);
+    database.exec(TRIGGER_DDL);
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    for (let row = 1; row <= TRIGGER_ROWS; row += 1) {
+      database.exec(`insert into trigger_items (id, label, score) values (${row}, 'row-${row}', ${row / 4})`);
+    }
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+    const items = wasmExecRows(database, "select count(*) as n from trigger_items");
+    const audit = wasmExecRows(database, "select count(*) as n from trigger_audit");
+    if (Number(items[0]?.[0]) !== TRIGGER_ROWS) throw new Error(`trigger_insert rows ${JSON.stringify(items)}, expected ${TRIGGER_ROWS}`);
+    if (Number(audit[0]?.[0]) !== TRIGGER_ROWS) throw new Error(`trigger_insert audit ${JSON.stringify(audit)}, expected ${TRIGGER_ROWS}`);
+    database.free();
+  }
+  return samples;
+}
+
+function wasmFkCascade(): number[] {
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const database = new wasmMemoryDatabase!(PAGE_SIZE);
+    database.exec("pragma foreign_keys = on");
+    database.exec(CASCADE_PARENT_DDL);
+    database.exec(CASCADE_CHILD_DDL);
+    database.exec("begin");
+    for (let row = 1; row <= CASCADE_ROWS; row += 1) {
+      database.exec(`insert into cascade_parent (id) values (${row})`);
+      database.exec(`insert into cascade_child (id, pid) values (${row}, ${row})`);
+    }
+    database.exec("commit");
+    const start = process.hrtime.bigint();
+    database.exec("begin");
+    database.exec(`delete from cascade_parent where id <= ${CASCADE_ROWS}`);
+    database.exec("commit");
+    samples.push(elapsedMs(start));
+    const parents = wasmExecRows(database, "select count(*) as n from cascade_parent");
+    const children = wasmExecRows(database, "select count(*) as n from cascade_child");
+    if (Number(parents[0]?.[0]) !== 0) throw new Error(`fk_cascade parents ${JSON.stringify(parents)}, expected 0`);
+    if (Number(children[0]?.[0]) !== 0) throw new Error(`fk_cascade children ${JSON.stringify(children)}, expected 0`);
+    database.free();
+  }
+  return samples;
+}
+
+function wasmViewSelect(database: WasmDatabase): number[] {
+  database.exec(VIEW_DDL);
+  const expected = expectedSubqueryRows();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const rows = wasmExecRows(database, VIEW_COUNT_SQL);
+      if (Number(rows[0]?.[0]) !== expected) throw new Error(`view_select returned ${JSON.stringify(rows)}, expected ${expected}`);
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
+function wasmHaving(database: WasmDatabase): number[] {
+  const expected = expectedHavingGroups();
+  const run = () => {
+    for (let op = 0; op < AGG_OPS; op += 1) {
+      const rows = wasmExecRows(database, HAVING_SQL);
+      if (rows.length !== expected) throw new Error(`having returned ${rows.length} groups, expected ${expected}`);
+      for (const row of rows) {
+        if (Number(row[1]) <= HAVING_THRESHOLD) throw new Error(`having kept ${JSON.stringify(row)}, expected total > ${HAVING_THRESHOLD}`);
+      }
+    }
+  };
+  run();
+  const samples: number[] = [];
+  for (let round = 0; round < ROUNDS; round += 1) {
+    const start = process.hrtime.bigint();
+    run();
+    samples.push(elapsedMs(start));
+  }
+  return samples;
+}
+
 // ---------------------------------------------------------------------------
 // rates + report
 // ---------------------------------------------------------------------------
@@ -2850,7 +3497,7 @@ function printRelativeTable(libraries: LibraryRates[], baseline: Partial<Record<
   const header = ["Workload".padEnd(workloadWidth), ...names.map((name) => name.padStart(colWidth))].join("  ");
   console.log("vs-js-libraries — relative to `node:sqlite` baseline (time ratio; * = fastest)");
   console.log(
-    `Defaults: BENCH_ROWS=${ROWS}, BENCH_TXN=${ROWS_PER_TXN}, BENCH_PAGE=${PAGE_SIZE}, BENCH_ROUNDS=${ROUNDS}, BENCH_POINT=${POINT_OPS}, BENCH_RANGE=${RANGE_OPS}, BENCH_MUTATE=${MUTATE_OPS}, BENCH_LIMIT=${LIMIT_OPS}, BENCH_AGG=${AGG_OPS}, BENCH_JOIN=${JOIN_OPS}, BENCH_SYNCHRONOUS=${SYNC}`,
+    `Defaults: BENCH_ROWS=${ROWS}, BENCH_TXN=${ROWS_PER_TXN}, BENCH_PAGE=${PAGE_SIZE}, BENCH_ROUNDS=${ROUNDS}, BENCH_POINT=${POINT_OPS}, BENCH_RANGE=${RANGE_OPS}, BENCH_MUTATE=${MUTATE_OPS}, BENCH_LIMIT=${LIMIT_OPS}, BENCH_AGG=${AGG_OPS}, BENCH_JOIN=${JOIN_OPS}, BENCH_SAVEPOINT=${SAVEPOINT_OPS}, BENCH_REPLACE=${REPLACE_OPS}, BENCH_TRIGGER=${TRIGGER_ROWS}, BENCH_CASCADE=${CASCADE_ROWS}, BENCH_SYNCHRONOUS=${SYNC}`,
   );
   console.log(header);
   for (const workload of WORKLOADS) {
@@ -2939,7 +3586,7 @@ function provenanceLines(): string {
     `- rustc: \`${commandOutput("rustc", ["-V"])}\``,
     `- repo rev: \`${commandOutput("git", ["rev-parse", "--short", "HEAD"], repoRoot)}\``,
     `- binding rev (\`database.rs\` pin in \`projects/sqlite.rs/Cargo.toml\`): \`${bindingPinnedRev()}\``,
-    `- data: \`${ROWS}\` rows (page \`${PAGE_SIZE}\`), \`BENCH_ROUNDS=${ROUNDS}\`, point/indexed \`${POINT_OPS}\`, range \`${RANGE_OPS}\`, order_limit \`${LIMIT_OPS}\`, group_by \`${AGG_OPS}\`, join \`${JOIN_OPS}\`, distinct \`${DISTINCT_OPS}\`, subquery \`${SUBQUERY_OPS}\`, multi \`${MULTI_STATEMENTS}x${MULTI_ROWS_PER_STATEMENT}\`, upsert \`${UPSERT_OPS}\`, mutate \`${MUTATE_OPS}\`, projection \`${PROJECTION_OPS}\`, join_indexed \`${JOIN_INDEXED_OPS}\``,
+    `- data: \`${ROWS}\` rows (page \`${PAGE_SIZE}\`), \`BENCH_ROUNDS=${ROUNDS}\`, point/indexed \`${POINT_OPS}\`, range \`${RANGE_OPS}\`, order_limit \`${LIMIT_OPS}\`, group_by \`${AGG_OPS}\`, join \`${JOIN_OPS}\`, distinct \`${DISTINCT_OPS}\`, subquery \`${SUBQUERY_OPS}\`, multi \`${MULTI_STATEMENTS}x${MULTI_ROWS_PER_STATEMENT}\`, upsert \`${UPSERT_OPS}\`, mutate \`${MUTATE_OPS}\`, projection \`${PROJECTION_OPS}\`, join_indexed \`${JOIN_INDEXED_OPS}\`, savepoint \`${SAVEPOINT_OPS}\`, replace \`${REPLACE_OPS}\`, trigger \`${TRIGGER_ROWS}\`, cascade \`${CASCADE_ROWS}\``,
   ].join("\n");
 }
 
@@ -3008,6 +3655,12 @@ try {
     window_rank: nativeWindow(openNode, nodeSpace.path),
     join_left: nativeJoinLeft(openNode, nodeSpace.path),
     exists_filter: nativeExists(openNode, nodeSpace.path),
+    savepoint: nativeSavepoint(() => openNode(":memory:")),
+    insert_replace: nativeInsertReplace(() => openNode(":memory:")),
+    trigger_insert: nativeTriggerInsert(() => openNode(":memory:")),
+    fk_cascade: nativeFkCascade(() => openNode(":memory:")),
+    view_select: nativeViewSelect(openNode, nodeSpace.path),
+    having: nativeHaving(openNode, nodeSpace.path),
   };
   nodeSamples.point_sql = nodeSamples.point;
   nodeSamples.point_param = nodeSamples.point;
@@ -3045,6 +3698,7 @@ try {
   oursSamples.projection_wide = ourProjection(analyticDatabase, PROJECTION_WIDE_SQL, 3);
   oursSamples.or_filter = ourOrFilter(analyticDatabase);
   oursSamples.window_rank = ourWindow(analyticDatabase);
+  oursSamples.having = ourHaving(analyticDatabase);
   analyticDatabase.close();
   oursSamples.update_expr = ourUpdateExpr();
   oursSamples.delete_range = ourDeleteRange();
@@ -3060,6 +3714,11 @@ try {
   oursSamples.insert_multi = ourInsertMulti();
   oursSamples.upsert = ourUpsert();
   oursSamples.upsert_param = ourUpsertParam();
+  oursSamples.savepoint = ourSavepoint();
+  oursSamples.insert_replace = ourInsertReplace();
+  oursSamples.trigger_insert = ourTriggerInsert();
+  oursSamples.fk_cascade = ourFkCascade();
+  oursSamples.view_select = ourViewSelect();
   ourBatchLoad(oursMutateSpace.path);
   oursSamples.update = ourUpdate(oursMutateSpace.path);
   oursSamples.update_sql = ourUpdateSql();
@@ -3115,6 +3774,12 @@ try {
     window_rank: nativeWindow(openBetter, betterSpace.path),
     join_left: nativeJoinLeft(openBetter, betterSpace.path),
     exists_filter: nativeExists(openBetter, betterSpace.path),
+    savepoint: nativeSavepoint(() => openBetter(":memory:")),
+    insert_replace: nativeInsertReplace(() => openBetter(":memory:")),
+    trigger_insert: nativeTriggerInsert(() => openBetter(":memory:")),
+    fk_cascade: nativeFkCascade(() => openBetter(":memory:")),
+    view_select: nativeViewSelect(openBetter, betterSpace.path),
+    having: nativeHaving(openBetter, betterSpace.path),
   };
   betterSamples.point_sql = betterSamples.point;
   betterSamples.point_param = betterSamples.point;
@@ -3156,6 +3821,12 @@ try {
     window_rank: sqlJsWindow(SQL, sqlJsSpace.path),
     join_left: sqlJsJoinLeft(SQL),
     exists_filter: sqlJsExists(SQL, sqlJsSpace.path),
+    savepoint: sqlJsSavepoint(SQL),
+    insert_replace: sqlJsInsertReplace(SQL),
+    trigger_insert: sqlJsTriggerInsert(SQL),
+    fk_cascade: sqlJsFkCascade(SQL),
+    view_select: sqlJsViewSelect(SQL, sqlJsSpace.path),
+    having: sqlJsHaving(SQL, sqlJsSpace.path),
   };
   sqlJsSamples.point_sql = sqlJsSamples.point;
   sqlJsSamples.point_param = sqlJsSamples.point;
@@ -3186,6 +3857,12 @@ try {
     wasmSamples.window_rank = wasmWindow(readDatabase);
     wasmSamples.join_left = wasmJoinLeft(readDatabase);
     wasmSamples.exists_filter = wasmExists(readDatabase);
+    wasmSamples.view_select = wasmViewSelect(readDatabase);
+    wasmSamples.having = wasmHaving(readDatabase);
+    wasmSamples.savepoint = wasmSavepoint();
+    wasmSamples.insert_replace = wasmInsertReplace();
+    wasmSamples.trigger_insert = wasmTriggerInsert();
+    wasmSamples.fk_cascade = wasmFkCascade();
     readDatabase.free();
     wasmRates = ratesFromSamples(wasmSamples);
   } else {
@@ -3204,7 +3881,7 @@ try {
   const report = `# Benchmark report
 
 Command: \`pnpm --dir projects/sqlite.ts/examples/vs-js-libraries benchmark\`
-Defaults: \`BENCH_ROWS=${ROWS}\`, \`BENCH_TXN=${ROWS_PER_TXN}\`, \`BENCH_PAGE=${PAGE_SIZE}\`, \`BENCH_ROUNDS=${ROUNDS}\`, \`BENCH_POINT=${POINT_OPS}\`, \`BENCH_RANGE=${RANGE_OPS}\`, \`BENCH_MUTATE=${MUTATE_OPS}\`, \`BENCH_LIMIT=${LIMIT_OPS}\`, \`BENCH_AGG=${AGG_OPS}\`, \`BENCH_JOIN=${JOIN_OPS}\`, \`BENCH_DISTINCT=${DISTINCT_OPS}\`, \`BENCH_SUBQUERY=${SUBQUERY_OPS}\`, \`BENCH_MULTI=${MULTI_STATEMENTS}\`, \`BENCH_UPSERT=${UPSERT_OPS}\`, \`BENCH_SYNCHRONOUS=${SYNC}\`
+Defaults: \`BENCH_ROWS=${ROWS}\`, \`BENCH_TXN=${ROWS_PER_TXN}\`, \`BENCH_PAGE=${PAGE_SIZE}\`, \`BENCH_ROUNDS=${ROUNDS}\`, \`BENCH_POINT=${POINT_OPS}\`, \`BENCH_RANGE=${RANGE_OPS}\`, \`BENCH_MUTATE=${MUTATE_OPS}\`, \`BENCH_LIMIT=${LIMIT_OPS}\`, \`BENCH_AGG=${AGG_OPS}\`, \`BENCH_JOIN=${JOIN_OPS}\`, \`BENCH_DISTINCT=${DISTINCT_OPS}\`, \`BENCH_SUBQUERY=${SUBQUERY_OPS}\`, \`BENCH_MULTI=${MULTI_STATEMENTS}\`, \`BENCH_UPSERT=${UPSERT_OPS}\`, \`BENCH_SAVEPOINT=${SAVEPOINT_OPS}\`, \`BENCH_REPLACE=${REPLACE_OPS}\`, \`BENCH_TRIGGER=${TRIGGER_ROWS}\`, \`BENCH_CASCADE=${CASCADE_ROWS}\`, \`BENCH_SYNCHRONOUS=${SYNC}\`
 Baseline: \`node:sqlite\` (\`DatabaseSync\`) = \`1.00x\`
 Ratio: subject_time / baseline_time (smaller is faster). Fastest cell in each row is bold.
 
@@ -3244,6 +3921,8 @@ ${markdownAbsoluteTable([
 - \`aggregate\`: \`select count(*), sum(score), min(score), max(score) from items\` (${AGG_OPS} queries per round) — single-pass aggregate without grouping.
 - \`subquery\`: \`select count(*) ... where id in (select id from items where score > ${SUBQUERY_THRESHOLD})\` (${SUBQUERY_OPS} queries per round, ${expectedSubqueryRows()} matches) — uncorrelated \`IN\` subquery.
 - \`cte\`: \`with c as (select id, label, score from items where score > ${SUBQUERY_THRESHOLD}) select count(*) from c\` (${AGG_OPS} queries per round, ${expectedSubqueryRows()} rows materialized) — non-recursive CTE materialization.
+- \`having\`: \`select cast(score as integer), sum(score) ... group by cast(score as integer) having sum(score) > ${HAVING_THRESHOLD}\` (${AGG_OPS} queries per round, ${expectedHavingGroups()} groups kept) — the aggregate rows are filtered after grouping.
+- \`view_select\`: \`create view item_view as select ... where score > 1000\`, then \`select count(*) from item_view\` (${AGG_OPS} queries per round, ${expectedSubqueryRows()} rows) — the view body is re-run on every read.
 - \`in_list\`: \`select count(*) ... where id in (<${IN_LIST_SIZE} scattered rowids>)\` (${AGG_OPS} queries per round, ${IN_LIST_ROWS} matches) — literal \`IN\` list planning and predicate dispatch.
 - \`sort_mixed\`: \`select ... order by score desc, id desc limit ${SORT_MIXED_ROWS}\` (${AGG_OPS} queries per round) — unindexed sort plus truncation.
 - \`like_prefix\`: \`select count(*) ... where label like 'row-1%'\` (${AGG_OPS} queries per round, ${expectedLikePrefixRows()} matches) — prefix pattern over an unindexed full scan, with the row count asserted on every engine.
@@ -3262,13 +3941,17 @@ ${markdownAbsoluteTable([
 - \`insert_multi\`: ${MULTI_STATEMENTS} statements of ${MULTI_ROWS_PER_STATEMENT} literal rows in one transaction (${MULTI_STATEMENTS * MULTI_ROWS_PER_STATEMENT} rows total).
 - \`upsert\`: ${UPSERT_OPS} \`insert ... on conflict(id) do update\` statements in one transaction.
 - \`upsert_param\`: the same upsert through a prepared statement with bound values; peer cells reuse \`upsert\`. \`upsert\` re-parses interpolated SQL text, so the pair shows the parse cost separately from execution.
+- \`insert_replace\`: ${REPLACE_OPS} \`insert or replace\` statements in one transaction over the seeded rows (row count and the rewritten \`score\` asserted) — the delete-then-insert conflict path instead of \`ON CONFLICT\`.
+- \`trigger_insert\`: ${TRIGGER_ROWS} prepared INSERTs into an in-memory table carrying an \`AFTER INSERT\` trigger that writes one audit row each (both row counts asserted) — per-row trigger dispatch and the nested audit write.
+- \`fk_cascade\`: \`delete from cascade_parent where id <= ${CASCADE_ROWS}\` on a database with foreign keys on and ${CASCADE_ROWS} parent/child pairs (both tables asserted empty) — \`ON DELETE CASCADE\` child removal per parent row.
+- \`savepoint\`: begin + ${SAVEPOINT_OPS} iterations of \`savepoint sp1\` / one INSERT / \`rollback to sp1\` / \`release sp1\` + commit, asserting nothing persists — savepoint bookkeeping separate from the plain \`rollback\`.
 - \`update\` / \`delete\`: ${MUTATE_OPS} mutations in one transaction + save (our writer) vs peers' prepared mutation in a transaction.
 - \`update_sql\` / \`delete_sql\`: ${MUTATE_OPS} prepared SQL mutations by bound rowid in one transaction on \`new SQLite()\`; peer cells reuse \`update\` / \`delete\`. These exercise the SQL write path (rowid narrowing) rather than the writer primitives.
 - \`update_idx\` / \`delete_idx\`: ${MUTATE_OPS} prepared mutations by an **indexed** \`label\` column in one transaction, on an in-memory database with the same index on every engine. This covers the indexed write path (probe candidates instead of a full decode) and has no peer-cell reuse.
 - \`txn\`: ${MUTATE_OPS} prepared INSERTs split into transactions of 10 (100 commits), on an in-memory database, so transaction boundaries rather than row count dominate.
 - \`rollback\`: begin + ${MUTATE_OPS} inserts + rollback (nothing persisted).
 - \`open\`: open + close of the main file, no reads.
-- \`@yydb/sqlite-unknown-wasm32\` is the in-memory SQL binding: it runs \`batch\` (inserts + snapshot export + file write), \`scan\`, \`point_sql\`, \`range\`, \`order_limit\`, \`group_by\`, \`join\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`projection_narrow\`, \`projection_wide\` and \`or_filter\` through \`exec\`; it has no reader point API, no UPDATE/DELETE/indexes and no file open, so the remaining cells are \`n/a\`.
+- \`@yydb/sqlite-unknown-wasm32\` is the in-memory SQL binding: it runs \`batch\` (inserts + snapshot export + file write), \`scan\`, \`point_sql\`, \`range\`, \`order_limit\`, \`group_by\`, \`join\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`projection_narrow\`, \`projection_wide\`, \`or_filter\`, \`view_select\`, \`having\`, \`savepoint\`, \`insert_replace\`, \`trigger_insert\` and \`fk_cascade\` through \`exec\`; it has no reader point API, no file open and no index-driven primitives, so the remaining cells are \`n/a\`.
 
 ## Intentional deltas
 
@@ -3276,10 +3959,10 @@ ${markdownAbsoluteTable([
 - sql.js peer scan rebuilds the WASM DB from the serialized image each round; peer batch/update/delete timings include \`export()\`.
 - \`point_sql\` has no separate peer path — peers' prepared \`get\` is the reference.
 - The wasm column reads the same in-memory image every round (\`SELECT\` re-scans the image; the binding has no seek), and its \`batch\` includes \`snapshot()\` + the file write.
-- sql.js does not run the SQL-feature workloads (\`distinct\`, \`aggregate\`, \`subquery\`, \`cte\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`delete_range\`, \`update_expr\`), so those cells stay \`n/a\`; the wasm binding runs \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`projection_narrow\`, \`projection_wide\`, \`or_filter\`, \`window_rank\`, \`join_left\` and \`exists_filter\` but not the mutation/index ones.
-- \`insert_indexed\`, \`upsert\`, \`update_expr\`, \`update_expr_idx\` and \`delete_range\` on our side run on an in-memory \`new SQLite()\`, while the two peer columns write through their pager; the row set is validated on both sides.
+- sql.js does not run the SQL-feature workloads (\`distinct\`, \`aggregate\`, \`subquery\`, \`cte\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`delete_range\`, \`update_expr\`), so those cells stay \`n/a\`; the wasm binding runs \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`projection_narrow\`, \`projection_wide\`, \`or_filter\`, \`window_rank\`, \`join_left\`, \`exists_filter\`, \`view_select\`, \`having\`, \`savepoint\`, \`insert_replace\`, \`trigger_insert\` and \`fk_cascade\`, but not the index-driven mutation primitives (\`insert_indexed\`, \`update_expr_idx\`, \`delete_index_range\`).
+- \`insert_indexed\`, \`upsert\`, \`update_expr\`, \`update_expr_idx\`, \`delete_range\`, \`savepoint\`, \`insert_replace\`, \`trigger_insert\` and \`fk_cascade\` on our side run on an in-memory \`new SQLite()\`, while the two peer columns write through their pager; the row set is validated on both sides.
 - \`batch_sql\`, \`update_idx\`, \`delete_idx\`, \`txn\`, \`update_expr\` and \`delete_range\` run on an in-memory database on every engine, so no pager publication or file I/O is included. sql.js runs the SQL ones through its prepared-statement API; the wasm binding has no UPDATE/DELETE/index support and stays \`n/a\`.
-- The SQL-engine workloads (\`point_param\`, \`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`, \`distinct\`, \`aggregate\`, \`subquery\`, \`cte\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`or_filter\`, \`projection_narrow\`, \`projection_wide\`, \`join_indexed\`, \`join_left\`, \`exists_filter\`, \`window_rank\`, \`insert_indexed\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`upsert_param\`, \`update_sql\`, \`delete_sql\`, \`update_expr\`, \`update_expr_idx\`, \`delete_range\`, \`delete_index_range\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
+- The SQL-engine workloads (\`point_param\`, \`point_uk\`, \`order_limit\`, \`group_by\`, \`join\`, \`distinct\`, \`aggregate\`, \`subquery\`, \`cte\`, \`having\`, \`view_select\`, \`in_list\`, \`sort_mixed\`, \`like_prefix\`, \`or_filter\`, \`projection_narrow\`, \`projection_wide\`, \`join_indexed\`, \`join_left\`, \`exists_filter\`, \`window_rank\`, \`insert_indexed\`, \`index_range\`, \`insert_multi\`, \`upsert\`, \`upsert_param\`, \`insert_replace\`, \`trigger_insert\`, \`fk_cascade\`, \`savepoint\`, \`update_sql\`, \`delete_sql\`, \`update_expr\`, \`update_expr_idx\`, \`delete_range\`, \`delete_index_range\`) run one untimed warmup round before \`BENCH_ROUNDS\` timed rounds; median/p95 come from the harness \`benchSummary\`, not local stats.
 - \`batch\`, \`scan\`, \`point\`, \`range\`, \`update\`, \`delete\`, \`rollback\` and \`open\` still use the format-3 writer/reader primitives. The public \`SQLite\` entry does not expose raw record decoding, \`rowByRowid\`/\`range\` rowid windows, or the full-image \`save()\` that these timings are defined on.
 
 ## Capabilities still missing from the public API
