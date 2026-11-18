@@ -1,0 +1,10 @@
+[package]
+name = "sqlite-conformance"
+description = "SQLite engine detailed correctness matrix: conformance suite migrated from the upstream facade inline tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dev-dependencies]
+sqlite = { workspace = true }
