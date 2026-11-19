@@ -35,10 +35,13 @@ import { emit, renderTable, type CliOptions } from "../cli/util.ts";
 import {
   checkBaseline as harnessCheckBaseline,
   digestJson,
+  fuzzGenerate,
+  fuzzRender,
   type Baseline,
   type BaselineIdentity,
   type BaselineVerdict,
   type DifferenceObservation,
+  type Grammar,
 } from "../native/binding.ts";
 
 // digest 与 baseline 判定走上游 `database.harness` 标准面（与产品共用 `.node`），
@@ -156,22 +159,6 @@ const EDGE_EXPRESSIONS: Spec[] = [
 const USERS_DUMP = "select id, name, age, score, grp, note from users order by id";
 const SCRATCH_DUMP = "select a, b from scratch order by a, b";
 
-function makeRng(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    return state / 0x100000000;
-  };
-}
-
-function pick<T>(random: () => number, values: readonly T[]): T {
-  return values[Math.floor(random() * values.length)];
-}
-
-function between(random: () => number, low: number, high: number): number {
-  return low + Math.floor(random() * (high - low + 1));
-}
-
 function distribute(count: number): Record<Cluster, number> {
   const result = {} as Record<Cluster, number>;
   const remainders: Array<{ name: Cluster; fraction: number; order: number }> = [];
@@ -191,236 +178,359 @@ function distribute(count: number): Record<Cluster, number> {
   return result;
 }
 
-function ddlSpec(random: () => number): Spec {
-  const supported: Spec[] = [
-    {
-      sql: `create table probe (id integer primary key autoincrement, name text not null unique default 'x', score real check (score between 0 and ${between(random, 5, 10)}))`,
-      check: "select count(*) from probe",
-      tables: [],
-    },
-    { sql: "create table probe (a integer, b text, primary key (a, b))", check: "select count(*) from probe", tables: [] },
-    {
-      sql: "create table probe (id integer primary key, tag text unique, n integer default 7)",
-      check: "select count(*) from sqlite_master where name = 'probe'",
-      tables: [],
-    },
-    {
-      sql: `create index probe on users (${pick(random, ["age", "score", "grp"])})`,
-      check: "select count(*) from sqlite_master where name = 'probe'",
-      tables: ["users"],
-    },
-    {
-      sql: `alter table users add column extra_${between(random, 1, 3)} integer not null default ${between(random, 0, 9)}`,
-      check: "select id, note from users order by id",
-      tables: ["users"],
-    },
-    { sql: "drop index users_age", check: "select count(*) from sqlite_master where name = 'users_age'", tables: ["users"] },
-    { sql: "drop table scratch", check: "select count(*) from sqlite_master where name = 'scratch'", tables: ["scratch"] },
-  ];
-  const unsupported: Spec[] = [
-    { sql: "create temp table probe (a integer)", check: "select count(*) from probe", tables: [] },
-    { sql: "create view probe as select id from users where age > 30", check: "select id from probe order by id", tables: ["users"] },
-    {
-      sql: "create trigger probe after insert on scratch begin insert into scratch values (1, 'x'); end",
-      check: "select count(*) from scratch",
-      tables: ["scratch"],
-    },
-    { sql: "create table probe (a text primary key) without rowid", check: "select count(*) from probe", tables: [] },
-    { sql: "create table probe (a integer) strict", check: "select count(*) from probe", tables: [] },
-    {
-      sql: "create index probe on users (age) where age > 30",
-      check: "select count(*) from sqlite_master where name = 'probe'",
-      tables: ["users"],
-    },
-    {
-      sql: "create index probe on users (age + 1)",
-      check: "select count(*) from sqlite_master where name = 'probe'",
-      tables: ["users"],
-    },
-    { sql: "alter table users drop column note", check: "select id from users order by id", tables: ["users"] },
-  ];
-  return pick(random, random() < 0.7 ? supported : unsupported);
+// 语料内容由 `database.harness` 的 fuzz 引擎生成：模板是 `Grammar` 数据，
+// 随机取值是槽位池，语句文本经 `native/binding.ts` 的 `fuzzGenerate` /
+// `fuzzRender` 产出。supported / unsupported 配比由配额切分保持，钉选边界例
+// （EDGE）保留为显式前缀。每条模板的 check / mode / tables 元数据按
+// alternative 下标对齐，从复现信封的 trace 派生——引擎只生成输入文本，
+// 期望值仍由双真机裁决。
+type Token = { readonly literal: string } | { readonly slot: { readonly pool: string } };
+interface PoolJson {
+  readonly name: string;
+  readonly values: readonly string[];
+}
+interface TemplateMeta {
+  readonly check?: string;
+  readonly mode?: "select" | "mutation";
+  readonly tables?: string[];
+}
+interface GroupSource {
+  readonly grammar: Grammar;
+  readonly metas: readonly TemplateMeta[];
 }
 
-function dmlSpec(random: () => number): Spec {
-  const supported: Spec[] = [
-    {
-      sql: `insert into users values (${between(random, 7, 9)}, 'k${between(random, 1, 9)}', ${between(random, 18, 60)}, ${between(random, 5, 10)}.25, ${between(random, 1, 3)}, null)`,
-      check: USERS_DUMP,
-      tables: ["users"],
+const lit = (text: string): Token => ({ literal: text });
+const slot = (pool: string): Token => ({ slot: { pool } });
+const intPool = (name: string, low: number, high: number): PoolJson => ({
+  name,
+  values: Array.from({ length: high - low + 1 }, (_, index) => String(low + index)),
+});
+const valPool = (name: string, values: readonly string[]): PoolJson => ({ name, values });
+
+function groupOf(templates: ReadonlyArray<{ tokens: readonly Token[]; meta: TemplateMeta }>, pools: readonly PoolJson[]): GroupSource {
+  return {
+    grammar: {
+      version: 1,
+      start: "spec",
+      rules: [{ id: "spec", type_tag: "spec", alternatives: templates.map((template) => template.tokens) }],
+      pools,
     },
-    {
-      sql: `insert into users (name, age) values ('n${between(random, 1, 9)}', ${between(random, 18, 60)})`,
-      check: USERS_DUMP,
-      tables: ["users"],
-    },
-    { sql: "insert into scratch default values", check: SCRATCH_DUMP, tables: ["scratch"] },
-    {
-      sql: `insert into users (name, age, grp) values ('r${between(random, 1, 9)}', ${between(random, 18, 60)}, ${between(random, 1, 3)}) returning id, name, age`,
-      mode: "select",
-      check: USERS_DUMP,
-      tables: ["users"],
-    },
-    {
-      sql: `update users set score = score + ${between(random, 0, 9) / 4} where grp = ${between(random, 1, 3)}`,
-      check: USERS_DUMP,
-      tables: ["users"],
-    },
-    {
-      sql: `update users set age = age + ${between(random, 1, 5)} where id = ${between(random, 1, 6)} returning id, age`,
-      mode: "select",
-      check: USERS_DUMP,
-      tables: ["users"],
-    },
-    { sql: "delete from users where age > 40 returning id, name", mode: "select", check: USERS_DUMP, tables: ["users"] },
-    {
-      sql: `delete from users where grp = ${between(random, 1, 3)}`,
-      check: USERS_DUMP,
-      tables: ["users"],
-    },
-    { sql: "delete from scratch as x where x.a = 1", check: SCRATCH_DUMP, tables: ["scratch"] },
-  ];
-  const unsupported: Spec[] = [
-    { sql: "insert or replace into users values (1, 'z', 20, 1.0, 1, null)", check: USERS_DUMP, tables: ["users"] },
-    {
-      sql: "insert into users values (1, 'z', 20, 1.0, 1, null) on conflict (id) do update set age = excluded.age",
-      check: USERS_DUMP,
-      tables: ["users"],
-    },
-    { sql: "insert into users (name) select name from users where id = 1", check: USERS_DUMP, tables: ["users"] },
-    { sql: "replace into users values (1, 'z', 20, 1.0, 1, null)", check: USERS_DUMP, tables: ["users"] },
-    { sql: "insert into users values (1 + 1, 'z', 20, 1.0, 1, null)", check: USERS_DUMP, tables: ["users"] },
-    { sql: "update users set name = orders.amount from orders where users.id = orders.user_id", check: USERS_DUMP, tables: ["users", "orders"] },
-    { sql: "update users set (name, age) = ('z', 20) where id = 1", check: USERS_DUMP, tables: ["users"] },
-  ];
-  return pick(random, random() < 0.7 ? supported : unsupported);
+    metas: templates.map((template) => template.meta),
+  };
 }
 
-function expressionSpec(random: () => number): Spec {
-  const id = between(random, 1, 6);
-  const supported: Array<() => Spec> = [
-    () => ({ sql: `select ${between(random, -9, 9)} + ${between(random, -9, 9)} * ${between(random, 1, 9)} from users where id = ${id}`, tables: ["users"] }),
-    () => ({ sql: `select (${between(random, 1, 9)} + ${between(random, 1, 9)}) * ${between(random, 1, 9)}, ${between(random, 1, 9)} - ${between(random, 1, 9)} - ${between(random, 1, 9)} from users where id = ${id}`, tables: ["users"] }),
-    () => ({ sql: `select ${between(random, 1, 20)} / ${between(random, 1, 6)}, ${between(random, 0, 5)} / 0 from users where id = ${id}`, tables: ["users"] }),
-    () => ({ sql: "select ~5, 5 & 3, 5 | 2, 5 << 1, -8 >> 1 from users where id = 1", tables: ["users"] }),
-    () => ({ sql: "select 'ab' || 'cd', 'a' || 1 || 2.5 from users where id = 1", tables: ["users"] }),
-    () => ({ sql: "select null = null, null is null, 2 between 1 and 3, null between 1 and 2 from users where id = 1", tables: ["users"] }),
-    () => ({ sql: "select true, false, true = 1, false = 0, 0x1f, 1e3 from users where id = 1", tables: ["users"] }),
-    () => ({ sql: "select cast('12abc' as integer), cast(1.9 as integer), cast('1.5' as real), typeof(1), typeof(1.5), typeof('x') from users where id = 1", tables: ["users"] }),
-    () => ({
-      sql: `select length('hello'), upper('ab'), lower('AB'), substr('abcdef', ${between(random, -3, 6)}, ${between(random, 0, 5)}) from users where id = 1`,
-      tables: ["users"],
-    }),
-    () => ({ sql: "select abs(-7), coalesce(null, 7), round(2.5), round(-2.5) from users where id = 1", tables: ["users"] }),
-    () => ({
-      sql: `select round(${between(random, 0, 9)}.${between(random, 0, 9)}${between(random, 0, 9)}${between(random, 0, 9)}, ${between(random, -1, 3)}) from users where id = 1`,
-      tables: ["users"],
-    }),
-    () => ({ sql: "select hex('abc'), quote('a''b'), quote(null), quote(1.5) from users where id = 1", tables: ["users"] }),
-    () => ({ sql: "select 'a_b' like 'a!_b' escape '!', 'abc' like 'A%' from users where id = 1", tables: ["users"] }),
-    () => ({ sql: "select case when 1 then 'a' else 'b' end, case 2 when 1 then 'a' when 2 then 'b' else 'c' end from users where id = 1", tables: ["users"] }),
-    () => ({ sql: `select name, age, score from users where age >= ${between(random, 20, 50)} order by id`, tables: ["users"] }),
-    () => ({ sql: "select id from users where age in (19, 36, 52) order by id", tables: ["users"] }),
-    () => ({ sql: "select id, note from users where note is null", tables: ["users"] }),
-    () => ({ sql: "select id, typeof(score), typeof(note) from users order by id", tables: ["users"] }),
-    () => ({ sql: "select id, score from users order by score desc, id asc limit 3", tables: ["users"] }),
-  ];
-  const unsupported: Array<() => Spec> = [
-    () => ({ sql: `select ${between(random, 1, 9)} % 3 from users where id = 1`, tables: ["users"] }),
-    () => ({ sql: "select 'abc' glob 'a*' from users where id = 1", tables: ["users"] }),
-    () => ({ sql: "select 'a' = 'A' collate nocase from users where id = 1", tables: ["users"] }),
-    () => ({ sql: "select 1 is distinct from 2 from users where id = 1", tables: ["users"] }),
-    () => ({ sql: "select distinct grp from users order by grp", tables: ["users"] }),
-    () => ({ sql: "select id from users order by score nulls first", tables: ["users"] }),
-  ];
-  if (random() < 0.25) return pick(random, EDGE_EXPRESSIONS);
-  const pool = random() < 0.8 ? supported : unsupported;
-  return pick(random, pool)();
+function renderFromGroup(source: GroupSource, seed: number): Spec {
+  const envelope = fuzzGenerate(source.grammar, { seed, depth: 1, count: 1 });
+  const text = fuzzRender(source.grammar, envelope)[0];
+  return { sql: text, ...source.metas[envelope.trace[0].alternative] };
 }
 
-function aggregateSpec(random: () => number): Spec {
-  const supported: Spec[] = [
-    { sql: "select count(*), sum(age), avg(score), min(age), max(score), total(age) from users", tables: ["users"] },
-    { sql: "select grp, count(*), sum(age) from users group by grp order by grp", tables: ["users"] },
-    { sql: "select grp, avg(score), min(age) from users group by grp having count(*) > 1 order by grp", tables: ["users"] },
-    { sql: "select count(*) from empty", tables: ["empty"] },
-    { sql: "select avg(v), min(v), max(v), count(v) from empty", tables: ["empty"] },
-    { sql: "select group_concat(name, '|') from users", tables: ["users"] },
-    { sql: "select group_concat(v, '|') from empty", tables: ["empty"] },
-    { sql: "select sum(age) from users where 0", tables: ["users"] },
-  ];
-  const unsupported: Spec[] = [
-    { sql: "select count(distinct grp) from users", tables: ["users"] },
-    { sql: "select sum(age) filter (where age > 30) from users", tables: ["users"] },
-    { sql: "select group_concat(name, '|' order by name) from users", tables: ["users"] },
-    { sql: "select min(3, 1, 2), max(3, 1, 2)", tables: [] },
-    { sql: `select grp, sum(age) from users group by grp having sum(age) > ${between(random, 40, 90)} order by grp`, tables: ["users"] },
-  ];
-  return pick(random, random() < 0.8 ? supported : unsupported);
+function caseSeed(seed: number, id: number): number {
+  return (seed >>> 0) * 4096 + id;
 }
 
-function windowSpec(random: () => number): Spec {
-  const supported: Spec[] = [
-    { sql: "select id, row_number() over (partition by grp order by score) from users order by id", tables: ["users"] },
-    { sql: "select id, rank() over (order by age), dense_rank() over (order by age) from users order by id", tables: ["users"] },
-    { sql: "select id, lag(age, 1, 99) over (order by id), lead(age, 1, -1) over (order by id) from users order by id", tables: ["users"] },
-    { sql: "select id, first_value(age) over (order by score), last_value(age) over (order by score), nth_value(age, 2) over (order by score) from users order by id", tables: ["users"] },
-    { sql: "select id, sum(age) over (partition by grp) from users order by id", tables: ["users"] },
-    {
-      sql: `select id, sum(age) over (order by id rows between ${between(random, 1, 2)} preceding and ${between(random, 0, 2)} following) from users order by id`,
-      tables: ["users"],
-    },
-    {
-      sql: `select id, sum(age) over (order by age range between ${between(random, 1, 3)} preceding and ${between(random, 1, 3)} following) from users order by id`,
-      tables: ["users"],
-    },
-    { sql: "select id, count(*) over (), sum(age) over () from users order by id", tables: ["users"] },
-    { sql: "select id, percent_rank() over (order by score), cume_dist() over (order by score), ntile(2) over (order by score) from users order by id", tables: ["users"] },
-    { sql: "select id, row_number() over (order by score) from empty", tables: ["empty"] },
-  ];
-  const unsupported: Spec[] = [
-    { sql: "select id, sum(age) over (order by id groups between 1 preceding and current row) from users order by id", tables: ["users"] },
-    {
-      sql: "select id, sum(age) over (order by id rows between 1 preceding and 1 following exclude ties) from users order by id",
-      tables: ["users"],
-    },
-  ];
-  return pick(random, random() < 0.85 ? supported : unsupported);
-}
+const USERS_DUMP_SPEC: TemplateMeta = { check: USERS_DUMP, tables: ["users"] };
+const SCRATCH_DUMP_SPEC: TemplateMeta = { check: SCRATCH_DUMP, tables: ["scratch"] };
+const SQLITE_MASTER_PROBE: TemplateMeta = { check: "select count(*) from sqlite_master where name = 'probe'" };
 
-function transactionSpec(random: () => number): Spec {
-  const statements = ["begin", "begin immediate", "begin exclusive", "commit", "rollback", "savepoint sp1", "release sp1", "rollback to sp1"];
-  return { sql: pick(random, statements), tables: [] };
-}
-
-const BUILDERS: Record<Cluster, (random: () => number) => Spec> = {
-  ddl: ddlSpec,
-  dml: dmlSpec,
-  expression: expressionSpec,
-  aggregate: aggregateSpec,
-  window: windowSpec,
-  transaction: transactionSpec,
+const CLUSTER_SOURCES: Record<Cluster, { ratio: number; supported: GroupSource; unsupported: GroupSource }> = {
+  ddl: {
+    ratio: 0.7,
+    supported: groupOf(
+      [
+        {
+          tokens: [lit("create table probe (id integer primary key autoincrement, name text not null unique default 'x', score real check (score between 0 and"), slot("cbound"), lit("))")],
+          meta: { check: "select count(*) from probe", tables: [] },
+        },
+        { tokens: [lit("create table probe (a integer, b text, primary key (a, b))")], meta: { check: "select count(*) from probe", tables: [] } },
+        { tokens: [lit("create table probe (id integer primary key, tag text unique, n integer default 7)")], meta: { ...SQLITE_MASTER_PROBE, tables: [] } },
+        { tokens: [lit("create index probe on users ("), slot("idxcol"), lit(")")], meta: { ...SQLITE_MASTER_PROBE, tables: ["users"] } },
+        {
+          tokens: [lit("alter table users add column"), slot("extracol"), lit("integer not null default"), slot("edef")],
+          meta: { check: "select id, note from users order by id", tables: ["users"] },
+        },
+        { tokens: [lit("drop index users_age")], meta: { check: "select count(*) from sqlite_master where name = 'users_age'", tables: ["users"] } },
+        { tokens: [lit("drop table scratch")], meta: { check: "select count(*) from sqlite_master where name = 'scratch'", tables: ["scratch"] } },
+      ],
+      [intPool("cbound", 5, 10), valPool("idxcol", ["age", "score", "grp"]), valPool("extracol", ["extra_1", "extra_2", "extra_3"]), intPool("edef", 0, 9)],
+    ),
+    unsupported: groupOf(
+      [
+        { tokens: [lit("create temp table probe (a integer)")], meta: { check: "select count(*) from probe", tables: [] } },
+        { tokens: [lit("create view probe as select id from users where age > 30")], meta: { check: "select id from probe order by id", tables: ["users"] } },
+        {
+          tokens: [lit("create trigger probe after insert on scratch begin insert into scratch values (1, 'x'); end")],
+          meta: { check: "select count(*) from scratch", tables: ["scratch"] },
+        },
+        { tokens: [lit("create table probe (a text primary key) without rowid")], meta: { check: "select count(*) from probe", tables: [] } },
+        { tokens: [lit("create table probe (a integer) strict")], meta: { check: "select count(*) from probe", tables: [] } },
+        { tokens: [lit("create index probe on users (age) where age > 30")], meta: { ...SQLITE_MASTER_PROBE, tables: ["users"] } },
+        { tokens: [lit("create index probe on users (age + 1)")], meta: { ...SQLITE_MASTER_PROBE, tables: ["users"] } },
+        { tokens: [lit("alter table users drop column note")], meta: { check: "select id from users order by id", tables: ["users"] } },
+      ],
+      [],
+    ),
+  },
+  dml: {
+    ratio: 0.7,
+    supported: groupOf(
+      [
+        {
+          tokens: [lit("insert into users values ("), slot("did"), lit(","), slot("dname"), lit(","), slot("dage"), lit(","), slot("dscore"), lit(","), slot("dgrp"), lit(",null)")],
+          meta: USERS_DUMP_SPEC,
+        },
+        { tokens: [lit("insert into users (name, age) values ("), slot("rname"), lit(","), slot("rage"), lit(")")], meta: USERS_DUMP_SPEC },
+        { tokens: [lit("insert into scratch default values")], meta: SCRATCH_DUMP_SPEC },
+        {
+          tokens: [lit("insert into users (name, age, grp) values ("), slot("nname"), lit(","), slot("nage"), lit(","), slot("ngrps"), lit(") returning id, name, age")],
+          meta: { mode: "select", ...USERS_DUMP_SPEC },
+        },
+        { tokens: [lit("update users set score = score +"), slot("sinc"), lit("where grp ="), slot("wgrp")], meta: USERS_DUMP_SPEC },
+        {
+          tokens: [lit("update users set age = age +"), slot("ainc"), lit("where id ="), slot("aid"), lit("returning id, age")],
+          meta: { mode: "select", ...USERS_DUMP_SPEC },
+        },
+        { tokens: [lit("delete from users where age > 40 returning id, name")], meta: { mode: "select", ...USERS_DUMP_SPEC } },
+        { tokens: [lit("delete from users where grp ="), slot("dgrp2")], meta: USERS_DUMP_SPEC },
+        { tokens: [lit("delete from scratch as x where x.a = 1")], meta: SCRATCH_DUMP_SPEC },
+      ],
+      [
+        intPool("did", 7, 9),
+        valPool("dname", ["'k1'", "'k2'", "'k3'", "'k4'", "'k5'", "'k6'", "'k7'", "'k8'", "'k9'"]),
+        intPool("dage", 18, 60),
+        valPool("dscore", ["5.25", "6.25", "7.25", "8.25", "9.25", "10.25"]),
+        intPool("dgrp", 1, 3),
+        valPool("rname", ["'n1'", "'n2'", "'n3'", "'n4'", "'n5'", "'n6'", "'n7'", "'n8'", "'n9'"]),
+        intPool("rage", 18, 60),
+        valPool("nname", ["'r1'", "'r2'", "'r3'", "'r4'", "'r5'", "'r6'", "'r7'", "'r8'", "'r9'"]),
+        intPool("nage", 18, 60),
+        intPool("ngrps", 1, 3),
+        valPool("sinc", ["0", "0.25", "0.5", "0.75", "1", "1.25", "1.5", "1.75", "2", "2.25"]),
+        intPool("wgrp", 1, 3),
+        intPool("ainc", 1, 5),
+        intPool("aid", 1, 6),
+        intPool("dgrp2", 1, 3),
+      ],
+    ),
+    unsupported: groupOf(
+      [
+        { tokens: [lit("insert or replace into users values (1, 'z', 20, 1.0, 1, null)")], meta: USERS_DUMP_SPEC },
+        { tokens: [lit("insert into users values (1, 'z', 20, 1.0, 1, null) on conflict (id) do update set age = excluded.age")], meta: USERS_DUMP_SPEC },
+        { tokens: [lit("insert into users (name) select name from users where id = 1")], meta: USERS_DUMP_SPEC },
+        { tokens: [lit("replace into users values (1, 'z', 20, 1.0, 1, null)")], meta: USERS_DUMP_SPEC },
+        { tokens: [lit("insert into users values (1 + 1, 'z', 20, 1.0, 1, null)")], meta: USERS_DUMP_SPEC },
+        {
+          tokens: [lit("update users set name = orders.amount from orders where users.id = orders.user_id")],
+          meta: { check: USERS_DUMP, tables: ["users", "orders"] },
+        },
+        { tokens: [lit("update users set (name, age) = ('z', 20) where id = 1")], meta: USERS_DUMP_SPEC },
+      ],
+      [],
+    ),
+  },
+  expression: {
+    ratio: 0.8,
+    supported: groupOf(
+      [
+        {
+          tokens: [lit("select"), slot("e1"), lit("+"), slot("e2"), lit("*"), slot("e3"), lit("from users where id ="), slot("eid")],
+          meta: { tables: ["users"] },
+        },
+        {
+          tokens: [lit("select ("), slot("f1"), lit("+"), slot("f2"), lit(")*"), slot("f3"), lit(","), slot("f4"), lit("-"), slot("f5"), lit("-"), slot("f6"), lit("from users where id ="), slot("eid2")],
+          meta: { tables: ["users"] },
+        },
+        {
+          tokens: [lit("select"), slot("d1"), lit("/"), slot("d2"), lit(","), slot("d3"), lit("/ 0 from users where id ="), slot("eid3")],
+          meta: { tables: ["users"] },
+        },
+        { tokens: [lit("select ~5, 5 & 3, 5 | 2, 5 << 1, -8 >> 1 from users where id = 1")], meta: { tables: ["users"] } },
+        { tokens: [lit("select 'ab' || 'cd', 'a' || 1 || 2.5 from users where id = 1")], meta: { tables: ["users"] } },
+        { tokens: [lit("select null = null, null is null, 2 between 1 and 3, null between 1 and 2 from users where id = 1")], meta: { tables: ["users"] } },
+        { tokens: [lit("select true, false, true = 1, false = 0, 0x1f, 1e3 from users where id = 1")], meta: { tables: ["users"] } },
+        {
+          tokens: [lit("select cast('12abc' as integer), cast(1.9 as integer), cast('1.5' as real), typeof(1), typeof(1.5), typeof('x') from users where id = 1")],
+          meta: { tables: ["users"] },
+        },
+        {
+          tokens: [lit("select length('hello'), upper('ab'), lower('AB'), substr('abcdef',"), slot("spos"), lit(","), slot("slen"), lit(") from users where id = 1")],
+          meta: { tables: ["users"] },
+        },
+        { tokens: [lit("select abs(-7), coalesce(null, 7), round(2.5), round(-2.5) from users where id = 1")], meta: { tables: ["users"] } },
+        {
+          tokens: [lit("select round("), slot("rval"), lit(","), slot("rdig"), lit(") from users where id = 1")],
+          meta: { tables: ["users"] },
+        },
+        { tokens: [lit("select hex('abc'), quote('a''b'), quote(null), quote(1.5) from users where id = 1")], meta: { tables: ["users"] } },
+        { tokens: [lit("select 'a_b' like 'a!_b' escape '!', 'abc' like 'A%' from users where id = 1")], meta: { tables: ["users"] } },
+        {
+          tokens: [lit("select case when 1 then 'a' else 'b' end, case 2 when 1 then 'a' when 2 then 'b' else 'c' end from users where id = 1")],
+          meta: { tables: ["users"] },
+        },
+        {
+          tokens: [lit("select name, age, score from users where age >="), slot("agelow"), lit("order by id")],
+          meta: { tables: ["users"] },
+        },
+        { tokens: [lit("select id from users where age in (19, 36, 52) order by id")], meta: { tables: ["users"] } },
+        { tokens: [lit("select id, note from users where note is null")], meta: { tables: ["users"] } },
+        { tokens: [lit("select id, typeof(score), typeof(note) from users order by id")], meta: { tables: ["users"] } },
+        { tokens: [lit("select id, score from users order by score desc, id asc limit 3")], meta: { tables: ["users"] } },
+      ],
+      [
+        intPool("e1", -9, 9),
+        intPool("e2", -9, 9),
+        intPool("e3", 1, 9),
+        intPool("eid", 1, 6),
+        intPool("f1", 1, 9),
+        intPool("f2", 1, 9),
+        intPool("f3", 1, 9),
+        intPool("f4", 1, 9),
+        intPool("f5", 1, 9),
+        intPool("f6", 1, 9),
+        intPool("eid2", 1, 6),
+        intPool("d1", 1, 20),
+        intPool("d2", 1, 6),
+        intPool("d3", 0, 5),
+        intPool("eid3", 1, 6),
+        intPool("spos", -3, 6),
+        intPool("slen", 0, 5),
+        valPool("rval", ["0.012", "1.345", "2.789", "3.012", "4.567", "5.678", "6.789", "7.890", "8.123", "9.456"]),
+        intPool("rdig", -1, 3),
+        intPool("agelow", 20, 50),
+      ],
+    ),
+    unsupported: groupOf(
+      [
+        { tokens: [lit("select"), slot("m1"), lit("% 3 from users where id = 1")], meta: { tables: ["users"] } },
+        { tokens: [lit("select 'abc' glob 'a*' from users where id = 1")], meta: { tables: ["users"] } },
+        { tokens: [lit("select 'a' = 'A' collate nocase from users where id = 1")], meta: { tables: ["users"] } },
+        { tokens: [lit("select 1 is distinct from 2 from users where id = 1")], meta: { tables: ["users"] } },
+        { tokens: [lit("select distinct grp from users order by grp")], meta: { tables: ["users"] } },
+        { tokens: [lit("select id from users order by score nulls first")], meta: { tables: ["users"] } },
+      ],
+      [intPool("m1", 1, 9)],
+    ),
+  },
+  aggregate: {
+    ratio: 0.8,
+    supported: groupOf(
+      [
+        { tokens: [lit("select count(*), sum(age), avg(score), min(age), max(score), total(age) from users")], meta: { tables: ["users"] } },
+        { tokens: [lit("select grp, count(*), sum(age) from users group by grp order by grp")], meta: { tables: ["users"] } },
+        { tokens: [lit("select grp, avg(score), min(age) from users group by grp having count(*) > 1 order by grp")], meta: { tables: ["users"] } },
+        { tokens: [lit("select count(*) from empty")], meta: { tables: ["empty"] } },
+        { tokens: [lit("select avg(v), min(v), max(v), count(v) from empty")], meta: { tables: ["empty"] } },
+        { tokens: [lit("select group_concat(name, '|') from users")], meta: { tables: ["users"] } },
+        { tokens: [lit("select group_concat(v, '|') from empty")], meta: { tables: ["empty"] } },
+        { tokens: [lit("select sum(age) from users where 0")], meta: { tables: ["users"] } },
+      ],
+      [],
+    ),
+    unsupported: groupOf(
+      [
+        { tokens: [lit("select count(distinct grp) from users")], meta: { tables: ["users"] } },
+        { tokens: [lit("select sum(age) filter (where age > 30) from users")], meta: { tables: ["users"] } },
+        { tokens: [lit("select group_concat(name, '|' order by name) from users")], meta: { tables: ["users"] } },
+        { tokens: [lit("select min(3, 1, 2), max(3, 1, 2)")], meta: { tables: [] } },
+        {
+          tokens: [lit("select grp, sum(age) from users group by grp having sum(age) >"), slot("hbound"), lit("order by grp")],
+          meta: { tables: ["users"] },
+        },
+      ],
+      [intPool("hbound", 40, 90)],
+    ),
+  },
+  window: {
+    ratio: 0.85,
+    supported: groupOf(
+      [
+        { tokens: [lit("select id, row_number() over (partition by grp order by score) from users order by id")], meta: { tables: ["users"] } },
+        { tokens: [lit("select id, rank() over (order by age), dense_rank() over (order by age) from users order by id")], meta: { tables: ["users"] } },
+        {
+          tokens: [lit("select id, lag(age, 1, 99) over (order by id), lead(age, 1, -1) over (order by id) from users order by id")],
+          meta: { tables: ["users"] },
+        },
+        {
+          tokens: [
+            lit("select id, first_value(age) over (order by score), last_value(age) over (order by score), nth_value(age, 2) over (order by score) from users order by id"),
+          ],
+          meta: { tables: ["users"] },
+        },
+        { tokens: [lit("select id, sum(age) over (partition by grp) from users order by id")], meta: { tables: ["users"] } },
+        {
+          tokens: [
+            lit("select id, sum(age) over (order by id rows between"), slot("rpre"), lit("preceding and"), slot("rfol"), lit("following) from users order by id"),
+          ],
+          meta: { tables: ["users"] },
+        },
+        {
+          tokens: [
+            lit("select id, sum(age) over (order by age range between"), slot("gpre"), lit("preceding and"), slot("gfol"), lit("following) from users order by id"),
+          ],
+          meta: { tables: ["users"] },
+        },
+        { tokens: [lit("select id, count(*) over (), sum(age) over () from users order by id")], meta: { tables: ["users"] } },
+        {
+          tokens: [lit("select id, percent_rank() over (order by score), cume_dist() over (order by score), ntile(2) over (order by score) from users order by id")],
+          meta: { tables: ["users"] },
+        },
+        { tokens: [lit("select id, row_number() over (order by score) from empty")], meta: { tables: ["empty"] } },
+      ],
+      [intPool("rpre", 1, 2), intPool("rfol", 0, 2), intPool("gpre", 1, 3), intPool("gfol", 1, 3)],
+    ),
+    unsupported: groupOf(
+      [
+        {
+          tokens: [lit("select id, sum(age) over (order by id groups between 1 preceding and current row) from users order by id")],
+          meta: { tables: ["users"] },
+        },
+        {
+          tokens: [lit("select id, sum(age) over (order by id rows between 1 preceding and 1 following exclude ties) from users order by id")],
+          meta: { tables: ["users"] },
+        },
+      ],
+      [],
+    ),
+  },
+  transaction: {
+    ratio: 1,
+    supported: groupOf(
+      [
+        { tokens: [lit("begin")], meta: { tables: [] } },
+        { tokens: [lit("begin immediate")], meta: { tables: [] } },
+        { tokens: [lit("begin exclusive")], meta: { tables: [] } },
+        { tokens: [lit("commit")], meta: { tables: [] } },
+        { tokens: [lit("rollback")], meta: { tables: [] } },
+        { tokens: [lit("savepoint sp1")], meta: { tables: [] } },
+        { tokens: [lit("release sp1")], meta: { tables: [] } },
+        { tokens: [lit("rollback to sp1")], meta: { tables: [] } },
+      ],
+      [],
+    ),
+    unsupported: groupOf([{ tokens: [lit("begin")], meta: { tables: [] } }], []),
+  },
 };
 
 export function generate(seed: number, count: number): CorpusCase[] {
-  const random = makeRng(seed);
   const counts = distribute(count);
   const cases: CorpusCase[] = [];
   let id = 1;
   for (const cluster of CLUSTERS) {
+    const source = CLUSTER_SOURCES[cluster.name];
+    const supportedQuota = Math.floor(counts[cluster.name] * source.ratio);
+    const reads = cluster.name === "expression" || cluster.name === "aggregate" || cluster.name === "window";
     for (let index = 0; index < counts[cluster.name]; index += 1) {
       const spec =
         cluster.name === "expression" && index % 10 === 0
           ? EDGE_EXPRESSIONS[(index / 10) % EDGE_EXPRESSIONS.length]
-          : BUILDERS[cluster.name](random);
-      const reads = cluster.name === "expression" || cluster.name === "aggregate" || cluster.name === "window";
+          : renderFromGroup(index < supportedQuota ? source.supported : source.unsupported, caseSeed(seed, id));
       cases.push({
         id,
         cluster: cluster.name,
         sql: spec.sql,
         check: spec.check,
         mode: spec.mode ?? (reads ? "select" : "mutation"),
-        tables: spec.tables ?? [],
+        tables: [...(spec.tables ?? [])],
       });
       id += 1;
     }

@@ -2,28 +2,72 @@
   "version": 1,
   "seed": 20261106,
   "count": 200,
-  "digest": "e3d6c1d1baf823086965286e4725e7921b79e6406ec29e72a96d03b08c1456b1",
+  "digest": "d5b88d8e1215be5f53321b371df0b96c57ecdf96271c0fd9364136d8c1614c7b",
   "engines": {
     "better": "3.53.2",
     "python": "3.49.1"
   },
   "entries": [
     {
-      "id": 184,
+      "id": 75,
+      "cluster": "dml",
+      "sql": "update users set name = orders.amount from orders where users.id = orders.user_id",
+      "check": "select id, name, age, score, grp, note from users order by id",
+      "kind": "mismatch",
+      "reason": "known-drift",
+      "detail": "same result shape, different value: checkRows row 1 column 2: t:1.205e+2 vs t:80.0",
+      "coordinates": "sql.rs:3450 (insert), sql.rs:3590 (update), sql.rs:3618 (delete)",
+      "signal": [
+        "ours check [[\"n:1\",\"t:1.205e+2\",\"n:36\",\"n:9.5\",\"n:1\",\"t:alpha\"],[\"n:2\",\"t:1.525e+1\",\"n:28\",\"n:7.25\",\"n:1\",\"null\"],[\"n:3\",\"t:2e+2\",\"n:45\",\"n:8\",\"n:2\",\"t:beta\"],[\"n:4\",\"t:dan\",\"n:19\",\"n:6.5\",\"n:2\",\"t:\"],[\"n:5\",\"t:9.9e+1\",\"n:52\",\"n:9\",\"n:3\",\"t:gamma\"],[\"n:6\",\"t:fay\",\"n:31\",\"n:7.75\",\"n:3\",\"t:delta\"]]",
+        "better check [[\"n:1\",\"t:80.0\",\"n:36\",\"n:9.5\",\"n:1\",\"t:alpha\"],[\"n:2\",\"t:15.25\",\"n:28\",\"n:7.25\",\"n:1\",\"null\"],[\"n:3\",\"t:45.5\",\"n:45\",\"n:8\",\"n:2\",\"t:beta\"],[\"n:4\",\"t:dan\",\"n:19\",\"n:6.5\",\"n:2\",\"t:\"],[\"n:5\",\"t:99.0\",\"n:52\",\"n:9\",\"n:3\",\"t:gamma\"],[\"n:6\",\"t:fay\",\"n:31\",\"n:7.75\",\"n:3\",\"t:delta\"]]",
+        "python check [[\"n:1\",\"t:80.0\",\"n:36\",\"n:9.5\",\"n:1\",\"t:alpha\"],[\"n:2\",\"t:15.25\",\"n:28\",\"n:7.25\",\"n:1\",\"null\"],[\"n:3\",\"t:45.5\",\"n:45\",\"n:8\",\"n:2\",\"t:beta\"],[\"n:4\",\"t:dan\",\"n:19\",\"n:6.5\",\"n:2\",\"t:\"],[\"n:5\",\"t:99.0\",\"n:52\",\"n:9\",\"n:3\",\"t:gamma\"],[\"n:6\",\"t:fay\",\"n:31\",\"n:7.75\",\"n:3\",\"t:delta\"]]"
+      ]
+    },
+    {
+      "id": 80,
+      "cluster": "dml",
+      "sql": "update users set name = orders.amount from orders where users.id = orders.user_id",
+      "check": "select id, name, age, score, grp, note from users order by id",
+      "kind": "mismatch",
+      "reason": "known-drift",
+      "detail": "same result shape, different value: checkRows row 1 column 2: t:1.205e+2 vs t:80.0",
+      "coordinates": "sql.rs:3450 (insert), sql.rs:3590 (update), sql.rs:3618 (delete)",
+      "signal": [
+        "ours check [[\"n:1\",\"t:1.205e+2\",\"n:36\",\"n:9.5\",\"n:1\",\"t:alpha\"],[\"n:2\",\"t:1.525e+1\",\"n:28\",\"n:7.25\",\"n:1\",\"null\"],[\"n:3\",\"t:2e+2\",\"n:45\",\"n:8\",\"n:2\",\"t:beta\"],[\"n:4\",\"t:dan\",\"n:19\",\"n:6.5\",\"n:2\",\"t:\"],[\"n:5\",\"t:9.9e+1\",\"n:52\",\"n:9\",\"n:3\",\"t:gamma\"],[\"n:6\",\"t:fay\",\"n:31\",\"n:7.75\",\"n:3\",\"t:delta\"]]",
+        "better check [[\"n:1\",\"t:80.0\",\"n:36\",\"n:9.5\",\"n:1\",\"t:alpha\"],[\"n:2\",\"t:15.25\",\"n:28\",\"n:7.25\",\"n:1\",\"null\"],[\"n:3\",\"t:45.5\",\"n:45\",\"n:8\",\"n:2\",\"t:beta\"],[\"n:4\",\"t:dan\",\"n:19\",\"n:6.5\",\"n:2\",\"t:\"],[\"n:5\",\"t:99.0\",\"n:52\",\"n:9\",\"n:3\",\"t:gamma\"],[\"n:6\",\"t:fay\",\"n:31\",\"n:7.75\",\"n:3\",\"t:delta\"]]",
+        "python check [[\"n:1\",\"t:80.0\",\"n:36\",\"n:9.5\",\"n:1\",\"t:alpha\"],[\"n:2\",\"t:15.25\",\"n:28\",\"n:7.25\",\"n:1\",\"null\"],[\"n:3\",\"t:45.5\",\"n:45\",\"n:8\",\"n:2\",\"t:beta\"],[\"n:4\",\"t:dan\",\"n:19\",\"n:6.5\",\"n:2\",\"t:\"],[\"n:5\",\"t:99.0\",\"n:52\",\"n:9\",\"n:3\",\"t:gamma\"],[\"n:6\",\"t:fay\",\"n:31\",\"n:7.75\",\"n:3\",\"t:delta\"]]"
+      ]
+    },
+    {
+      "id": 182,
       "cluster": "transaction",
-      "sql": "commit",
+      "sql": "begin exclusive",
       "check": null,
       "kind": "discarded",
       "reason": "oracle-disagreement",
       "detail": "CPython sqlite3 keeps the fixture inserts inside an implicit transaction while better-sqlite3 autocommits, so the transaction state differs",
       "coordinates": "n/a (oracle self-disagreement)",
       "signal": [
-        "better error cannot commit - no transaction is active",
-        "python no rows"
+        "better no rows",
+        "python error cannot start a transaction within a transaction"
       ]
     },
     {
-      "id": 185,
+      "id": 184,
+      "cluster": "transaction",
+      "sql": "begin exclusive",
+      "check": null,
+      "kind": "discarded",
+      "reason": "oracle-disagreement",
+      "detail": "CPython sqlite3 keeps the fixture inserts inside an implicit transaction while better-sqlite3 autocommits, so the transaction state differs",
+      "coordinates": "n/a (oracle self-disagreement)",
+      "signal": [
+        "better no rows",
+        "python error cannot start a transaction within a transaction"
+      ]
+    },
+    {
+      "id": 187,
       "cluster": "transaction",
       "sql": "commit",
       "check": null,
@@ -39,21 +83,7 @@
     {
       "id": 188,
       "cluster": "transaction",
-      "sql": "commit",
-      "check": null,
-      "kind": "discarded",
-      "reason": "oracle-disagreement",
-      "detail": "CPython sqlite3 keeps the fixture inserts inside an implicit transaction while better-sqlite3 autocommits, so the transaction state differs",
-      "coordinates": "n/a (oracle self-disagreement)",
-      "signal": [
-        "better error cannot commit - no transaction is active",
-        "python no rows"
-      ]
-    },
-    {
-      "id": 189,
-      "cluster": "transaction",
-      "sql": "begin",
+      "sql": "begin immediate",
       "check": null,
       "kind": "discarded",
       "reason": "oracle-disagreement",
@@ -65,7 +95,7 @@
       ]
     },
     {
-      "id": 190,
+      "id": 191,
       "cluster": "transaction",
       "sql": "commit",
       "check": null,
@@ -79,37 +109,9 @@
       ]
     },
     {
-      "id": 191,
+      "id": 192,
       "cluster": "transaction",
-      "sql": "rollback",
-      "check": null,
-      "kind": "discarded",
-      "reason": "oracle-disagreement",
-      "detail": "CPython sqlite3 keeps the fixture inserts inside an implicit transaction while better-sqlite3 autocommits, so the transaction state differs",
-      "coordinates": "n/a (oracle self-disagreement)",
-      "signal": [
-        "better error cannot rollback - no transaction is active",
-        "python no rows"
-      ]
-    },
-    {
-      "id": 193,
-      "cluster": "transaction",
-      "sql": "rollback",
-      "check": null,
-      "kind": "discarded",
-      "reason": "oracle-disagreement",
-      "detail": "CPython sqlite3 keeps the fixture inserts inside an implicit transaction while better-sqlite3 autocommits, so the transaction state differs",
-      "coordinates": "n/a (oracle self-disagreement)",
-      "signal": [
-        "better error cannot rollback - no transaction is active",
-        "python no rows"
-      ]
-    },
-    {
-      "id": 194,
-      "cluster": "transaction",
-      "sql": "begin",
+      "sql": "begin exclusive",
       "check": null,
       "kind": "discarded",
       "reason": "oracle-disagreement",
@@ -123,7 +125,7 @@
     {
       "id": 195,
       "cluster": "transaction",
-      "sql": "begin",
+      "sql": "begin immediate",
       "check": null,
       "kind": "discarded",
       "reason": "oracle-disagreement",
@@ -137,15 +139,57 @@
     {
       "id": 196,
       "cluster": "transaction",
-      "sql": "rollback",
+      "sql": "commit",
       "check": null,
       "kind": "discarded",
       "reason": "oracle-disagreement",
       "detail": "CPython sqlite3 keeps the fixture inserts inside an implicit transaction while better-sqlite3 autocommits, so the transaction state differs",
       "coordinates": "n/a (oracle self-disagreement)",
       "signal": [
-        "better error cannot rollback - no transaction is active",
+        "better error cannot commit - no transaction is active",
         "python no rows"
+      ]
+    },
+    {
+      "id": 197,
+      "cluster": "transaction",
+      "sql": "commit",
+      "check": null,
+      "kind": "discarded",
+      "reason": "oracle-disagreement",
+      "detail": "CPython sqlite3 keeps the fixture inserts inside an implicit transaction while better-sqlite3 autocommits, so the transaction state differs",
+      "coordinates": "n/a (oracle self-disagreement)",
+      "signal": [
+        "better error cannot commit - no transaction is active",
+        "python no rows"
+      ]
+    },
+    {
+      "id": 199,
+      "cluster": "transaction",
+      "sql": "begin exclusive",
+      "check": null,
+      "kind": "discarded",
+      "reason": "oracle-disagreement",
+      "detail": "CPython sqlite3 keeps the fixture inserts inside an implicit transaction while better-sqlite3 autocommits, so the transaction state differs",
+      "coordinates": "n/a (oracle self-disagreement)",
+      "signal": [
+        "better no rows",
+        "python error cannot start a transaction within a transaction"
+      ]
+    },
+    {
+      "id": 200,
+      "cluster": "transaction",
+      "sql": "begin exclusive",
+      "check": null,
+      "kind": "discarded",
+      "reason": "oracle-disagreement",
+      "detail": "CPython sqlite3 keeps the fixture inserts inside an implicit transaction while better-sqlite3 autocommits, so the transaction state differs",
+      "coordinates": "n/a (oracle self-disagreement)",
+      "signal": [
+        "better no rows",
+        "python error cannot start a transaction within a transaction"
       ]
     }
   ]
