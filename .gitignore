@@ -44,3 +44,6 @@ projects/sqlite.ts/platforms/*/*.node
 
 # Nifty local cache
 .cache/
+
+# npm secrets (nifty)
+.secrets/
