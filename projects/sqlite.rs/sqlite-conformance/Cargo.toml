@@ -8,3 +8,6 @@ publish = false
 
 [dev-dependencies]
 sqlite = { workspace = true }
+database-storage = { workspace = true }
+database-formats = { workspace = true }
+database-types = { workspace = true }
